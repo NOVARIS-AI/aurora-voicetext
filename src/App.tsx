@@ -189,18 +189,10 @@ function App() {
             const response = await fetch('/api/transcribe', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                audioBase64: wavChunkToBase64(chunk, sampleRate),
-                mimeType: 'audio/wav',
-                chunkNumber: index + 1,
-                totalChunks,
-                languageHint: 'English and Nigerian Pidgin',
-              }),
+              body: JSON.stringify({ audioBase64: wavChunkToBase64(chunk, sampleRate), mimeType: 'audio/wav', chunkNumber: index + 1, totalChunks, languageHint: 'English and Nigerian Pidgin' }),
             });
             const responseData = await response.json().catch(() => ({}));
-            if (!response.ok) {
-              throw new Error(typeof responseData.error === 'string' ? responseData.error : 'Transcription service returned HTTP ' + response.status);
-            }
+            if (!response.ok) throw new Error(typeof responseData.error === 'string' ? responseData.error : 'Transcription service returned HTTP ' + response.status);
             part = typeof responseData.text === 'string' ? responseData.text.trim() : '';
           } catch (requestError) {
             const detail = requestError && typeof requestError === 'object' && 'message' in requestError
