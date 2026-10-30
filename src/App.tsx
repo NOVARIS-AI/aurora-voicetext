@@ -89,7 +89,9 @@ async function transcribeOnline(audio: Float32Array, index: number, total: numbe
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Online transcription returned HTTP ' + response.status);
-  return typeof data.text === 'string' ? data.text.trim() : '';
+  const transcript = typeof data.text === 'string' ? data.text.trim() : '';
+  if (!transcript) throw new Error('Groq returned an empty transcript for this audio section.');
+  return transcript;
 }
 
 async function getWhisper(onProgress: (message: string) => void): Promise<Engine> {
