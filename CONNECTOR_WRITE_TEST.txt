@@ -1,0 +1,3 @@
+AURORA VoiceText GitHub connector write-access test.
+
+This file confirms that ChatGPT can create a file in this private repository. It does not contain or replace application source code.
