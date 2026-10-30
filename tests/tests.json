@@ -1,0 +1,95 @@
+[
+  {
+    "name": "Transcribe using online mode and edit the result",
+    "sanity": true,
+    "viewport": "mobile",
+    "covers": [
+      "audio file import",
+      "online cloud transcription",
+      "audio chunk upload",
+      "transcript editing",
+      "visible progress and completion status"
+    ],
+    "description": "Verifies the online mode sends an imported audio recording to the hosted transcription endpoint and displays editable transcript text.",
+    "steps": [
+      "Open Transcribe",
+      "Choose a supported audio file",
+      "Select Online",
+      "Tap Transcribe online",
+      "Review or edit the transcript"
+    ],
+    "expected": "The app shows section progress and the returned transcript appears in the editor, or a visible connection/service error appears while manual editing remains available."
+  },
+  {
+    "name": "Transcribe on-device without sending audio to the cloud",
+    "viewport": "mobile",
+    "covers": [
+      "offline Whisper transcription",
+      "on-device privacy mode",
+      "transcript editing"
+    ],
+    "description": "Verifies the user can choose on-device Whisper mode for local transcription after the model is available.",
+    "steps": [
+      "Open Transcribe",
+      "Choose a supported audio file",
+      "Select On-device",
+      "Tap Transcribe on this device",
+      "Review or edit the transcript"
+    ],
+    "expected": "The app shows local model progress and an editable transcript or a visible model/audio error."
+  },
+  {
+    "name": "Save, search, export, and delete a library transcript",
+    "viewport": "mobile",
+    "covers": [
+      "local transcript persistence",
+      "library search",
+      "TXT export",
+      "saved transcript deletion"
+    ],
+    "description": "Verifies a transcript can be saved to local browser storage, found in the library, exported, and deleted.",
+    "steps": [
+      "Transcribe or type text for an audio recording",
+      "Tap Save to library",
+      "Open Library and search for part of the recording name",
+      "Export the saved transcript",
+      "Delete the saved transcript"
+    ],
+    "expected": "The saved transcript appears in search, export starts, and the deleted item no longer appears."
+  },
+  {
+    "name": "Read text aloud with Voice Studio controls",
+    "viewport": "mobile",
+    "covers": [
+      "browser text-to-speech",
+      "voice studio text entry",
+      "speech speed and pitch controls",
+      "stop speaking"
+    ],
+    "description": "Verifies text can be entered into Voice Studio and played or stopped using browser speech synthesis.",
+    "steps": [
+      "Open Voice Studio",
+      "Enter a short sentence",
+      "Adjust speed or pitch",
+      "Tap Read aloud and then Stop reading"
+    ],
+    "expected": "The browser starts speaking the entered text when speech synthesis is available and the stop control cancels playback."
+  },
+  {
+    "name": "Show a helpful error when transcription cannot run",
+    "viewport": "mobile",
+    "covers": [
+      "transcription failure handling",
+      "visible error state",
+      "manual transcript editing fallback"
+    ],
+    "description": "Verifies a failed model download or unsupported audio is explained and manual editing remains available.",
+    "steps": [
+      "Open Transcribe",
+      "Choose a supported but unreadable or unsupported audio recording",
+      "Tap a transcription mode and transcribe",
+      "Read the error and enter transcript text manually"
+    ],
+    "expected": "A visible error message explains the problem and the transcript editor remains usable."
+  }
+]
