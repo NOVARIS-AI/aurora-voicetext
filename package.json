@@ -12,7 +12,8 @@
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@huggingface/transformers": "^3.7.2"
+    "@huggingface/transformers": "^3.7.2",
+    "vosk-browser": "^0.0.8"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.0.0"

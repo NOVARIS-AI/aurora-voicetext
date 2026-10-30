@@ -9,10 +9,11 @@ type Recording = { id: string; name: string; transcript: string; updatedAt: numb
 type AudioFile = { id: string; file: File; url: string; transcript: string };
 type Page = 'home' | 'transcribe' | 'library' | 'studio' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
-type TranscriptionMode = 'offline' | 'online';
+type TranscriptionMode = 'auto' | 'offline' | 'online';
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
 let pipelinePromise: Promise<Engine> | null = null;
+let voskModelPromise: Promise<any> | null = null;
 
 function readLibrary(): Recording[] {
   try {
@@ -40,6 +41,55 @@ function makeSummary(text: string) {
       (sentence.match(/\b(?:need|must|please|tomorrow|today|meeting|remember|send|call|pay|deadline|important|decide|agree|follow)\b/gi) || []).length * 2,
   }));
   return ranked.sort((a, b) => b.score - a.score).slice(0, Math.min(4, ranked.length)).sort((a, b) => a.index - b.index).map(item => '• ' + item.sentence).join('\n');
+}
+
+
+async function transcribeWithVosk(audio: Float32Array): Promise<string> {
+  const modelUrl = import.meta.env.VITE_VOSK_MODEL_URL as string | undefined;
+  if (!modelUrl) throw new Error('Vosk model URL is not configured.');
+  if (!voskModelPromise) {
+    voskModelPromise = (async () => {
+      const vosk = await import('vosk-browser');
+      return vosk.createModel(modelUrl);
+    })().catch(error => { voskModelPromise = null; throw error; });
+  }
+  const model = await voskModelPromise;
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextClass) throw new Error('AudioContext is unavailable.');
+  const context = new AudioContextClass({ sampleRate: 16000 });
+  const recognizer = new model.KaldiRecognizer();
+  try {
+    const buffer = context.createBuffer(1, audio.length, 16000);
+    buffer.copyToChannel(audio, 0);
+    const transcript = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const timer = window.setTimeout(() => finish(''), 6000);
+      const finish = (value: string, error?: Error) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        error ? reject(error) : resolve(value);
+      };
+      recognizer.on('result', (message: any) => finish(message.result?.text?.trim() || ''));
+      recognizer.acceptWaveform(buffer);
+    });
+    if (!transcript) throw new Error('Vosk returned no final speech segment.');
+    return transcript;
+  } finally {
+    recognizer.remove();
+    await context.close();
+  }
+}
+
+async function transcribeOnline(audio: Float32Array, index: number, total: number): Promise<string> {
+  const response = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audioBase64: wavChunkToBase64(audio, 16000), mimeType: 'audio/wav', chunkNumber: index + 1, totalChunks: total, languageHint: 'English and Nigerian Pidgin' }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Online transcription returned HTTP ' + response.status);
+  return typeof data.text === 'string' ? data.text.trim() : '';
 }
 
 async function getWhisper(onProgress: (message: string) => void): Promise<Engine> {
@@ -120,7 +170,7 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [library, setLibrary] = useState<Recording[]>(readLibrary);
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<TranscriptionMode>('online');
+  const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [exportType, setExportType] = useState('txt');
@@ -149,71 +199,48 @@ function App() {
     setError('');
   }
 
+
   async function transcribe() {
     if (!active || busy) return;
     setBusy(true); setError(''); setStatus('Preparing audio…');
     try {
       const audio = await decodeAudio(active.file);
-      const whisper = mode === 'offline' ? await getWhisper(setStatus) : null;
-      // Sequential 20-second chunks keep cloud payloads small and reduce peak memory use.
-      const sampleRate = 16000;
-      const chunkSeconds = 20;
-      const overlapSeconds = 2;
-      const chunkSamples = chunkSeconds * sampleRate;
-      const overlapSamples = overlapSeconds * sampleRate;
+      const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
       const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
       const parts: string[] = [];
-
-      function appendWithoutOverlap(previous: string, next: string) {
-        const left = previous.trim().split(/\\s+/);
-        const right = next.trim().split(/\\s+/);
-        const maxOverlap = Math.min(12, left.length, right.length);
-        for (let size = maxOverlap; size > 0; size--) {
-          const a = left.slice(-size).join(' ').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, '');
-          const b = right.slice(0, size).join(' ').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, '');
-          if (a && a === b) return [...left, ...right.slice(size)].join(' ');
-        }
-        return [previous.trim(), next.trim()].filter(Boolean).join(' ');
-      }
-
       for (let index = 0, start = 0; start < audio.length; index++, start += chunkSamples - overlapSamples) {
-        const end = Math.min(audio.length, start + chunkSamples);
-        const chunk = audio.slice(start, end);
-        setStatus((mode === 'online' ? 'Sending section ' : 'Transcribing section ') + (index + 1) + ' of ' + totalChunks + '…');
+        const chunk = audio.slice(start, Math.min(audio.length, start + chunkSamples));
         let part = '';
-        if (mode === 'offline' && whisper) {
-          const result = await whisper(chunk, { sampling_rate: sampleRate });
-          part = result.text?.trim() ?? '';
+        if (mode === 'online') {
+          setStatus('Groq Whisper: section ' + (index + 1) + ' of ' + totalChunks + '…');
+          part = await transcribeOnline(chunk, index, totalChunks);
         } else {
           try {
-            const response = await fetch('/api/transcribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ audioBase64: wavChunkToBase64(chunk, sampleRate), mimeType: 'audio/wav', chunkNumber: index + 1, totalChunks, languageHint: 'English and Nigerian Pidgin' }),
-            });
-            const responseData = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(typeof responseData.error === 'string' ? responseData.error : 'Transcription service returned HTTP ' + response.status);
-            part = typeof responseData.text === 'string' ? responseData.text.trim() : '';
-          } catch (requestError) {
-            const detail = requestError && typeof requestError === 'object' && 'message' in requestError
-              ? String((requestError as { message?: unknown }).message || '')
-              : '';
-            throw new Error(detail ? 'Online transcription failed: ' + detail : 'Online transcription could not connect. Check your internet and try again, or switch to On-device mode.');
+            setStatus('Whisper Tiny: section ' + (index + 1) + ' of ' + totalChunks + '…');
+            const whisper = await getWhisper(setStatus);
+            const result = await whisper(chunk, { sampling_rate: sampleRate });
+            part = result.text?.trim() || '';
+            if (!part) throw new Error('Whisper Tiny returned no text.');
+          } catch (whisperError) {
+            setStatus('Whisper Tiny unavailable. Trying Vosk offline…');
+            try {
+              part = await transcribeWithVosk(chunk);
+            } catch (voskError) {
+              if (mode === 'offline') throw new Error('Offline engines failed. Whisper: ' + String(whisperError) + ' | Vosk: ' + String(voskError));
+              setStatus('Offline engines unavailable. Falling back to Groq Whisper…');
+              part = await transcribeOnline(chunk, index, totalChunks);
+            }
           }
         }
-        if (part) {
-          if (parts.length) parts[parts.length - 1] = appendWithoutOverlap(parts[parts.length - 1], part);
-          else parts.push(part);
-        }
+        if (part) parts.push(part);
         await new Promise<void>(resolve => window.setTimeout(resolve, 0));
       }
-
       const text = parts.join(' ').trim();
-      if (!text) throw new Error('No speech was detected. Try a clearer recording or type the transcript manually.');
+      if (!text) throw new Error('No speech was detected. Try a clearer recording.');
       setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
-      setStatus('Transcription complete. Please review names and Nigerian Pidgin for accuracy.');
+      setStatus('Transcription complete. Review names and Nigerian Pidgin for accuracy.');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Transcription failed. Please try again.');
+      setError(reason instanceof Error ? reason.message : 'Transcription failed.');
       setStatus('');
     } finally { setBusy(false); }
   }
@@ -331,11 +358,13 @@ function App() {
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
               <audio className="audio-player" controls preload="metadata" src={active.url}/>
               <div className="mode-switch" role="group" aria-label="Transcription mode">
-                <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Uses internet</small></button>
-                <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>On-device</strong><small>Private after download</small></button>
+                <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Smart fallback</small></button>
+                <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Whisper → Vosk</small></button>
+                <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
               </div>
-              {mode === 'online' && <p className="privacy-hint"><ShieldCheck size={15}/> Online mode sends audio sections to the hosted AI service for transcription. Usage is subject to the app owner's shared free AI quota.</p>}
-              <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'online' ? 'Transcribe online' : 'Transcribe on this device'}</button>
+              {mode === 'auto' && <p className="privacy-hint">Auto tries Whisper Tiny, then Vosk offline, then Groq online if offline engines fail.</p>}
+              {mode === 'online' && <p className="privacy-hint"><ShieldCheck size={15}/> Online mode sends audio sections to the hosted AI service.</p>}
+              <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               <label className="field-label" htmlFor="transcript">Transcript text</label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your transcript will appear here. You can also type or paste text manually."/>

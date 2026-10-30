@@ -35,3 +35,10 @@ The transcript library is stored in the current browser's local storage. Online 
 ## Migration status
 
 The AppDeploy snapshot source files discovered during migration were copied into this repository. The original AppDeploy project was not deleted or modified. This repository is not yet a verified production deployment: install dependencies, run a build, configure the provider key, and test transcription on mobile before relying on it.
+
+
+## AMET — AURORA Multi-Engine Transcription
+
+Auto mode tries Whisper Tiny in-browser, then Vosk Browser offline, then Groq Whisper online. Offline mode never sends audio to the server. Online mode uses the existing Vercel transcription endpoint.
+
+Vosk requires a compatible gzipped Vosk model archive hosted with browser CORS and worker access. Configure `VITE_VOSK_MODEL_URL` in the deployment environment before rebuilding. The model is not bundled in this repository. Vosk model compatibility and Nigerian English/Pidgin accuracy still require real-device testing.
