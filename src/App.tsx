@@ -151,17 +151,64 @@ async function decodeAudio(file: File): Promise<Float32Array> {
   try {
     const decoded = await context.decodeAudioData(await file.arrayBuffer());
     const targetRate = 16000;
-    const outputLength = Math.ceil(decoded.duration * targetRate);
+    const outputLength = Math.max(1, Math.ceil(decoded.duration * targetRate));
+    const OfflineContext = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+    if (OfflineContext) {
+      const offline = new OfflineContext(1, outputLength, targetRate);
+      const mono = offline.createBuffer(1, decoded.length, decoded.sampleRate);
+      const destination = mono.getChannelData(0);
+      for (let i = 0; i < decoded.length; i++) {
+        let sample = 0;
+        for (let channel = 0; channel < decoded.numberOfChannels; channel++) sample += decoded.getChannelData(channel)[i] || 0;
+        destination[i] = sample / decoded.numberOfChannels;
+      }
+      const source = offline.createBufferSource();
+      source.buffer = mono;
+      source.connect(offline.destination);
+      source.start(0);
+      const rendered = await offline.startRendering();
+      return rendered.getChannelData(0).slice();
+    }
     const output = new Float32Array(outputLength);
-    const channels = Array.from({ length: decoded.numberOfChannels }, (_, index) => decoded.getChannelData(index));
     for (let i = 0; i < outputLength; i++) {
-      const sourceIndex = Math.min(decoded.length - 1, Math.floor(i * decoded.sampleRate / targetRate));
+      const position = i * decoded.sampleRate / targetRate;
+      const left = Math.min(decoded.length - 1, Math.floor(position));
+      const right = Math.min(decoded.length - 1, left + 1);
+      const fraction = position - left;
       let sample = 0;
-      for (const channel of channels) sample += channel[sourceIndex] || 0;
-      output[i] = sample / channels.length;
+      for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
+        const data = decoded.getChannelData(channel);
+        sample += data[left] * (1 - fraction) + data[right] * fraction;
+      }
+      output[i] = sample / decoded.numberOfChannels;
     }
     return output;
   } finally { await context.close(); }
+}
+
+function mergeTranscriptParts(parts: string[]): string {
+  const merged: string[] = [];
+  for (const part of parts) {
+    const next = part.trim().split(/\s+/).filter(Boolean);
+    if (!next.length) continue;
+    if (!merged.length) { merged.push(...next); continue; }
+    const current = merged.map(word => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ''));
+    const incoming = next.map(word => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ''));
+    let overlap = 0;
+    const limit = Math.min(30, current.length, incoming.length);
+    for (let size = limit; size >= 2; size--) {
+      if (current.slice(-size).every((word, index) => word && word === incoming[index])) { overlap = size; break; }
+    }
+    merged.push(...next.slice(overlap));
+  }
+  return merged.join(' ').replace(/\s+([,.;!?])/g, '$1').trim();
+}
+
+function audioRms(audio: Float32Array): number {
+  if (!audio.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < audio.length; i++) sum += audio[i] * audio[i];
+  return Math.sqrt(sum / audio.length);
 }
 
 function App() {
@@ -202,7 +249,7 @@ function App() {
 
   async function transcribe() {
     if (!active || busy) return;
-    setBusy(true); setError(''); setStatus('Preparing audio…');
+    setBusy(true); setError(''); setStatus('Preparing and cleaning audio…');
     try {
       const audio = await decodeAudio(active.file);
       const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
@@ -210,41 +257,61 @@ function App() {
       const parts: string[] = [];
       for (let index = 0, start = 0; start < audio.length; index++, start += chunkSamples - overlapSamples) {
         const chunk = audio.slice(start, Math.min(audio.length, start + chunkSamples));
+        if (audioRms(chunk) < 0.0015) {
+          setStatus('Skipping a quiet section ' + (index + 1) + ' of ' + totalChunks + ' to avoid invented words…');
+          continue;
+        }
         let part = '';
-        if (mode === 'online') {
-          setStatus('Groq Whisper: section ' + (index + 1) + ' of ' + totalChunks + '…');
-          part = await transcribeOnline(chunk, index, totalChunks);
-        } else {
+        const runOffline = async (): Promise<string> => {
+          let whisperProblem = '';
           try {
-            setStatus('Whisper Tiny: section ' + (index + 1) + ' of ' + totalChunks + '…');
+            setStatus('Offline backup · Whisper Tiny · section ' + (index + 1) + ' of ' + totalChunks + '…');
             const whisper = await getWhisper(setStatus);
             const result = await whisper(chunk, { sampling_rate: sampleRate });
-            part = result.text?.trim() || '';
-            if (!part) throw new Error('Whisper Tiny returned no text.');
-          } catch (whisperError) {
-            setStatus('Whisper Tiny unavailable. Trying Vosk offline…');
+            const text = result.text?.trim() || '';
+            if (!text) throw new Error('Whisper Tiny returned an empty result.');
+            return text;
+          } catch (reason) {
+            whisperProblem = reason instanceof Error ? reason.message : String(reason);
+          }
+          try {
+            setStatus('Whisper Tiny unavailable. Trying the Vosk offline backup…');
+            return await transcribeWithVosk(chunk);
+          } catch (voskProblem) {
+            throw new Error('Offline backup unavailable. Whisper: ' + whisperProblem + ' Vosk: ' + (voskProblem instanceof Error ? voskProblem.message : String(voskProblem)));
+          }
+        };
+
+        if (mode === 'online') {
+          setStatus('Groq Whisper · section ' + (index + 1) + ' of ' + totalChunks + '…');
+          part = await transcribeOnline(chunk, index, totalChunks);
+        } else if (mode === 'offline') {
+          part = await runOffline();
+        } else {
+          try {
+            setStatus('Auto · using Groq Whisper for the clearest transcript · section ' + (index + 1) + ' of ' + totalChunks + '…');
+            part = await transcribeOnline(chunk, index, totalChunks);
+          } catch (onlineProblem) {
+            setStatus('Online service unavailable. Switching to on-device transcription…');
             try {
-              part = await transcribeWithVosk(chunk);
-            } catch (voskError) {
-              if (mode === 'offline') throw new Error('Offline engines failed. Whisper: ' + String(whisperError) + ' | Vosk: ' + String(voskError));
-              setStatus('Offline engines unavailable. Falling back to Groq Whisper…');
-              part = await transcribeOnline(chunk, index, totalChunks);
+              part = await runOffline();
+            } catch (offlineProblem) {
+              throw new Error('Automatic transcription could not complete. Online: ' + (onlineProblem instanceof Error ? onlineProblem.message : String(onlineProblem)) + ' · Offline: ' + (offlineProblem instanceof Error ? offlineProblem.message : String(offlineProblem)));
             }
           }
         }
-        if (part) parts.push(part);
+        if (part.trim()) parts.push(part.trim());
         await new Promise<void>(resolve => window.setTimeout(resolve, 0));
       }
-      const text = parts.join(' ').trim();
-      if (!text) throw new Error('No speech was detected. Try a clearer recording.');
+      const text = mergeTranscriptParts(parts);
+      if (!text) throw new Error('No clear speech was detected. Try a louder recording with less background noise, or check that the audio contains speech.');
       setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
-      setStatus('Transcription complete. Review names and Nigerian Pidgin for accuracy.');
+      setStatus('Transcription complete. Check names and Nigerian Pidgin before sharing.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Transcription failed.');
       setStatus('');
     } finally { setBusy(false); }
   }
-
   function updateTranscript(text: string) {
     if (!active) return;
     setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
@@ -333,7 +400,7 @@ function App() {
           <button className="primary" onClick={() => { setPage('transcribe'); inputRef.current?.click(); }} type="button"><Upload size={17}/> Choose voice notes</button>
           <button className="secondary" onClick={() => setPage('library')} type="button"><BookOpen size={17}/> Open my library</button>
         </div>
-        <div className="info-strip"><ShieldCheck size={18}/><div><strong>Private by default</strong><p>On-device transcription runs in your browser after downloading Whisper Tiny. The first run needs internet and can be slow on lower-memory phones.</p></div></div>
+        <div className="info-strip"><ShieldCheck size={18}/><div><strong>Private by default</strong><p>Auto uses Groq Whisper first for better accuracy, then tries on-device Whisper Tiny and Vosk if the online service fails. Offline mode keeps audio on your device.</p></div></div>
         <div className="feature-grid">
           <button onClick={() => setPage('transcribe')} type="button"><FileAudio/><strong>Transcribe</strong><span>Import, listen and correct audio text.</span></button>
           <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
@@ -350,7 +417,7 @@ function App() {
             <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => addFiles(event.target.files)}/>
             <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round(item.file.size / 1024))} KB · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => inputRef.current?.click()}><Plus size={16}/> Add more audio</button>}
-            <p className="privacy-hint"><ShieldCheck size={15}/> On-device mode keeps audio processing in your browser after the model downloads. Online mode sends audio to the hosted service.</p>
+            <p className="privacy-hint"><ShieldCheck size={15}/> Auto sends audio to Groq first, then uses on-device backups if needed. Offline never uploads audio. Online always uses Groq.</p>
           </section>
           <section className="card">
             <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">EN + PIDGIN</span></div>
@@ -358,16 +425,16 @@ function App() {
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
               <audio className="audio-player" controls preload="metadata" src={active.url}/>
               <div className="mode-switch" role="group" aria-label="Transcription mode">
-                <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Smart fallback</small></button>
-                <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Whisper → Vosk</small></button>
+                <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Groq first · offline backup</small></button>
+                <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Device only · Whisper → Vosk</small></button>
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
               </div>
-              {mode === 'auto' && <p className="privacy-hint">Auto tries Whisper Tiny, then Vosk offline, then Groq online if offline engines fail.</p>}
-              {mode === 'online' && <p className="privacy-hint"><ShieldCheck size={15}/> Online mode sends audio sections to the hosted AI service.</p>}
+              {mode === 'auto' && <p className="mode-explainer"><strong>Recommended · Best available quality</strong><span>Tries Groq Whisper first. If the connection or API fails, AURORA switches to Whisper Tiny, then Vosk on your device. Online processing sends audio to the server.</span></p>}
+              {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny, then Vosk if a compatible Vosk model is configured. The first model download needs internet.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               <label className="field-label" htmlFor="transcript">Transcript text</label>
-              <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your transcript will appear here. You can also type or paste text manually."/>
+              <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
               <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript')}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
