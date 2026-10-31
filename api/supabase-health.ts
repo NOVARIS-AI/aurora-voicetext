@@ -10,8 +10,8 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
   }
 
   try {
-    // List buckets and match by ID to give a clearer diagnosis than a single-bucket lookup.
-    const response = await fetch(url.replace(/\/$/, '') + '/storage/v1/bucket', {
+    // Supabase Storage's documented list-buckets route uses a trailing slash.
+    const response = await fetch(url.replace(/\/$/, '') + '/storage/v1/bucket/', {
       method: 'GET',
       headers: { apikey: key, Authorization: 'Bearer ' + key },
     });
@@ -26,12 +26,19 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
         // Keep bounded response text for diagnosis.
       }
       console.error('Supabase bucket list failed', response.status, detail);
+      let basePath = '';
+      try {
+        basePath = new URL(url).pathname || '';
+      } catch {
+        basePath = 'invalid URL';
+      }
       return res.status(502).json({
         ok: false,
         configured: true,
         bucket,
         storage_status: response.status,
         storage_error: detail || 'Supabase rejected the bucket-list request.',
+        supabase_url_path: basePath,
         error: 'Supabase responded, but the server could not list storage buckets. Check the project URL and service-role key.',
       });
     }
