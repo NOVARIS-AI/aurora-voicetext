@@ -10,9 +10,8 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
   }
 
   try {
-    // List buckets and match by ID. This gives a clearer diagnosis than a
-    // single-bucket lookup, which can return an ambiguous 404.
-    const response = await fetch(url.replace(/\\/$/, '') + '/storage/v1/bucket', {
+    // List buckets and match by ID to give a clearer diagnosis than a single-bucket lookup.
+    const response = await fetch(url.replace(/\/$/, '') + '/storage/v1/bucket', {
       method: 'GET',
       headers: { apikey: key, Authorization: 'Bearer ' + key },
     });
@@ -24,7 +23,7 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
         const parsed = JSON.parse(raw);
         detail = String(parsed.message || parsed.error || parsed.msg || detail).slice(0, 240);
       } catch {
-        // Keep the bounded response text for diagnosis.
+        // Keep bounded response text for diagnosis.
       }
       console.error('Supabase bucket list failed', response.status, detail);
       return res.status(502).json({
