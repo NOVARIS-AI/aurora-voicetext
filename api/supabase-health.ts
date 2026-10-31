@@ -10,23 +10,59 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
   }
 
   try {
-    const response = await fetch(url.replace(/\/$/, '') + '/storage/v1/bucket/' + encodeURIComponent(bucket), {
+    // List buckets and match by ID. This gives a clearer diagnosis than a
+    // single-bucket lookup, which can return an ambiguous 404.
+    const response = await fetch(url.replace(/\\/$/, '') + '/storage/v1/bucket', {
       method: 'GET',
       headers: { apikey: key, Authorization: 'Bearer ' + key },
     });
+    const raw = await response.text().catch(() => '');
+
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      console.error('Supabase bucket check failed', response.status, detail.slice(0, 300));
+      let detail = raw.slice(0, 240);
+      try {
+        const parsed = JSON.parse(raw);
+        detail = String(parsed.message || parsed.error || parsed.msg || detail).slice(0, 240);
+      } catch {
+        // Keep the bounded response text for diagnosis.
+      }
+      console.error('Supabase bucket list failed', response.status, detail);
       return res.status(502).json({
         ok: false,
         configured: true,
-        bucket: bucket,
-        error: response.status === 404
-          ? 'Supabase is reachable, but the configured private recording bucket was not found.'
-          : 'Supabase could not verify the recording bucket. Check the project URL, server key, and bucket permissions.',
+        bucket,
+        storage_status: response.status,
+        storage_error: detail || 'Supabase rejected the bucket-list request.',
+        error: 'Supabase responded, but the server could not list storage buckets. Check the project URL and service-role key.',
       });
     }
-    return res.status(200).json({ ok: true, configured: true, bucket: bucket, storage: 'reachable' });
+
+    let buckets: Array<{ id?: string; name?: string }> = [];
+    try {
+      const parsed = JSON.parse(raw);
+      buckets = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return res.status(502).json({
+        ok: false,
+        configured: true,
+        bucket,
+        error: 'Supabase returned an unexpected response while listing storage buckets.',
+      });
+    }
+
+    const found = buckets.some((item) => item.id === bucket || item.name === bucket);
+    if (!found) {
+      return res.status(502).json({
+        ok: false,
+        configured: true,
+        bucket,
+        storage_status: response.status,
+        visible_bucket_count: buckets.length,
+        error: 'Supabase accepted the server credentials, but this project returned no bucket with the configured name.',
+      });
+    }
+
+    return res.status(200).json({ ok: true, configured: true, bucket, storage: 'reachable' });
   } catch (error) {
     console.error('Supabase connection check failed', error);
     return res.status(502).json({ ok: false, configured: true, error: 'Could not reach Supabase from the server.' });
