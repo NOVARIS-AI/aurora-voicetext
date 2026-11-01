@@ -269,7 +269,7 @@ async function transcribeOpusInSegments(
       '-reset_timestamps', '1', '-segment_format', 'mp3', 'aurora-part-%03d.mp3',
     ]);
     const entries = await ffmpeg.listDir('/');
-    const totalParts = entries.filter(entry => /^aurora-part-\\d{3}\\.mp3$/.test(entry.name)).length;
+    const totalParts = entries.filter(entry => entry.name.startsWith('aurora-part-') && entry.name.endsWith('.mp3')).length;
     for (let index = 0; index < totalParts; index++) {
       const name = 'aurora-part-' + String(index).padStart(3, '0') + '.mp3';
       let bytes: Uint8Array;
