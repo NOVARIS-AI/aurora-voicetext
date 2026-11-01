@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
   ShieldCheck, Clock3, Check, WandSparkles, LoaderCircle, FileText,
@@ -237,6 +239,70 @@ async function decodeAudio(file: File): Promise<Float32Array> {
   } finally { await context.close(); }
 }
 
+
+async function transcribeOpusInSegments(
+  file: File,
+  onProgress: (completed: number, total: number) => void,
+  onPart: (parts: string[]) => void,
+): Promise<string[]> {
+  const ffmpeg = new FFmpeg();
+  const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
+  const inputName = 'aurora-input.' + extension;
+  const parts: string[] = [];
+  const toBase64 = (bytes: Uint8Array) => {
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 0x8000)));
+    }
+    return btoa(binary);
+  };
+  try {
+    await ffmpeg.load({
+      coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
+    });
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    await ffmpeg.exec([
+      '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+      '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', '20',
+      '-reset_timestamps', '1', '-segment_format', 'wav', 'aurora-part-%03d.wav',
+    ]);
+    for (let index = 0; ; index++) {
+      const name = 'aurora-part-' + String(index).padStart(3, '0') + '.wav';
+      let bytes: Uint8Array;
+      try {
+        const output = await ffmpeg.readFile(name);
+        if (typeof output === 'string') throw new Error('Unexpected text audio output.');
+        bytes = output;
+      } catch {
+        break;
+      }
+      const response = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64: toBase64(bytes),
+          mimeType: 'audio/wav',
+          chunkNumber: index + 1,
+          languageHint: 'English and Nigerian Pidgin',
+        }),
+      });
+      const result = await response.json().catch(() => ({})) as { text?: string; error?: string };
+      if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
+      if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
+      onProgress(index + 1, index + 1);
+      onPart(parts);
+      await ffmpeg.deleteFile(name);
+    }
+    if (!parts.length) throw new Error('The audio decoder found no transcribable speech sections.');
+    return parts;
+  } finally {
+    try { await ffmpeg.deleteFile(inputName); } catch { /* Input may not have been created. */ }
+    ffmpeg.terminate();
+  }
+}
+
 function mergeTranscriptParts(parts: string[]): string {
   const merged: string[] = [];
   for (const part of parts) {
@@ -304,7 +370,33 @@ function App() {
     if (!active || busy) return;
     setBusy(true); setError(''); setStatus('Preparing audio…');
     try {
-      const audio = await decodeAudio(active.file);
+      let audio: Float32Array;
+      try {
+        audio = await decodeAudio(active.file);
+      } catch (decodeProblem) {
+        if (mode === 'offline') {
+          throw new Error('This browser could not decode the original audio. Switch to Auto or Online so AURORA can use its compatible audio decoder and Groq transcription.');
+        }
+        setStatus('Using AURORA compatibility decoder · preparing audio sections…');
+        setProgress({ completed: 0, total: 0 });
+        const parts = await transcribeOpusInSegments(
+          active.file,
+          (completed, total) => {
+            setProgress({ completed, total });
+            setStatus('Groq transcription · completed ' + completed + ' audio sections…');
+          },
+          currentParts => {
+            const partial = mergeTranscriptParts(currentParts);
+            if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
+          },
+        );
+        const completedText = mergeTranscriptParts(parts);
+        if (!completedText) throw new Error('No clear speech was detected in this recording.');
+        setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
+        setStatus('Transcription complete. Review names, numbers and Nigerian Pidgin before sharing.');
+        setProgress({ completed: parts.length, total: parts.length });
+        return;
+      }
       const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
       const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
       const previous = checkpointRef.current;
