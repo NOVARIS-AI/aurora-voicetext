@@ -242,6 +242,77 @@ async function decodeAudio(file: File): Promise<Float32Array> {
 }
 
 
+
+async function transcribeOpusOfflineInSegments(
+  file: File,
+  onProgress: (completed: number, total: number) => void,
+  onPart: (parts: string[]) => void,
+  onStatus: (message: string) => void,
+): Promise<string[]> {
+  const ffmpeg = new FFmpeg();
+  const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
+  const inputName = 'aurora-offline-input.' + extension;
+  const parts: string[] = [];
+  const pcmToFloat = (bytes: Uint8Array): Float32Array => {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let offset = 12;
+    let dataStart = -1;
+    let dataLength = 0;
+    while (offset + 8 <= bytes.length) {
+      const id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+      const size = view.getUint32(offset + 4, true);
+      if (id === 'data') { dataStart = offset + 8; dataLength = Math.min(size, bytes.length - dataStart); break; }
+      offset += 8 + size + (size % 2);
+    }
+    if (dataStart < 0 || dataLength < 2) throw new Error('The offline decoder produced an invalid PCM audio section.');
+    const samples = Math.floor(dataLength / 2);
+    const audio = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) audio[i] = view.getInt16(dataStart + i * 2, true) / 32768;
+    return audio;
+  };
+  try {
+    onStatus('Loading on-device audio compatibility decoder…');
+    await ffmpeg.load({
+      coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
+    });
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    await ffmpeg.exec([
+      '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+      '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', '120',
+      '-reset_timestamps', '1', '-segment_format', 'wav', 'aurora-offline-%03d.wav',
+    ]);
+    const entries = await ffmpeg.listDir('/');
+    const total = entries.filter(entry => entry.name.startsWith('aurora-offline-') && entry.name.endsWith('.wav')).length;
+    if (!total) throw new Error('The decoder could not find any audio sections.');
+    const whisper = await getWhisper(onStatus);
+    for (let index = 0; index < total; index++) {
+      const name = 'aurora-offline-' + String(index).padStart(3, '0') + '.wav';
+      const output = await ffmpeg.readFile(name);
+      if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
+      const audio = pcmToFloat(output);
+      if (audioRms(audio) < 0.0015) {
+        parts.push('');
+      } else {
+        onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
+        const result = await whisper(audio, { sampling_rate: 16000 });
+        const text = result.text?.trim() || '';
+        if (!text) throw new Error('Whisper Tiny returned no transcript for section ' + (index + 1) + '.');
+        parts.push(text);
+      }
+      onProgress(index + 1, total);
+      onPart(parts.filter(Boolean));
+      try { await ffmpeg.deleteFile(name); } catch { /* Continue cleanup. */ }
+    }
+    if (!parts.some(Boolean)) throw new Error('No clear speech was detected in this recording.');
+    return parts.filter(Boolean);
+  } finally {
+    try { await ffmpeg.deleteFile(inputName); } catch { /* Input may not have been created. */ }
+    ffmpeg.terminate();
+  }
+}
+
 async function transcribeOpusInSegments(
   file: File,
   onProgress: (completed: number, total: number) => void,
@@ -379,7 +450,26 @@ function App() {
         audio = await decodeAudio(active.file);
       } catch (decodeProblem) {
         if (mode === 'offline') {
-          throw new Error('This browser could not decode the original audio. Switch to Auto or Online so AURORA can use its compatible audio decoder and Groq transcription.');
+          setStatus('Offline mode · decoding audio into local sections…');
+          setProgress({ completed: 0, total: 0 });
+          const parts = await transcribeOpusOfflineInSegments(
+            active.file,
+            (completed, total) => {
+              setProgress({ completed, total });
+              setStatus('On-device transcription · completed ' + completed + ' audio sections…');
+            },
+            currentParts => {
+              const partial = mergeTranscriptParts(currentParts);
+              if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
+            },
+            setStatus,
+          );
+          const completedText = mergeTranscriptParts(parts);
+          if (!completedText) throw new Error('No clear speech was detected in this recording.');
+          setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
+          setStatus('Offline transcription complete. Audio was processed on this device.');
+          setProgress({ completed: parts.length, total: parts.length });
+          return;
         }
         setStatus('Using AURORA compatibility decoder · preparing audio sections…');
         setProgress({ completed: 0, total: 0 });
