@@ -64,6 +64,8 @@ h1 span{color:#73cde4;background:linear-gradient(90deg,#71e0e8,#b79cff);-webkit-
 .active-file{display:flex;align-items:center;gap:8px;min-width:0;margin:0 0 11px;color:#9ce1e9;font-size:11px}.active-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .audio-player{width:100%;height:42px;margin-bottom:12px}
 .full-button{width:100%;margin-bottom:9px}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.progress-wrap{margin:12px 0 16px;padding:13px 14px;border:1px solid var(--border,rgba(255,255,255,.1));border-radius:14px;background:rgba(255,255,255,.025)}
+.progress-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px;font-size:13px}.progress-track{height:7px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.1)}.progress-track span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2dd4e6,#8b7cff);transition:width .2s ease}.progress-wrap small{display:block;margin-top:8px;color:var(--muted,#9aa4b8);font-size:11px;line-height:1.5}
 .status-message{margin:4px 0 12px;padding:10px 11px;border-radius:10px;color:#9ddce1;background:rgba(67,198,216,.06);font-size:11px;line-height:1.6}
 .field-label{display:flex;flex-direction:column;gap:7px;color:#a9bad3;font-size:11px;font-weight:700}
 .transcript-input{display:block;width:100%;min-height:205px;margin-top:8px;padding:13px;border:1px solid rgba(145,171,216,.19);border-radius:12px;resize:vertical;color:#eaf0ff;background:rgba(3,7,15,.48);font-size:13px;line-height:1.7}
