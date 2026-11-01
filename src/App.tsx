@@ -15,6 +15,8 @@ type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number };
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
+const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\\/+$/, '');
+const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
 let pipelinePromise: Promise<Engine> | null = null;
 let voskModelPromise: Promise<any> | null = null;
 
@@ -133,7 +135,7 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
 }
 
 async function transcribeOnline(audio: Float32Array, index: number, total: number): Promise<string> {
-  const response = await fetch('/api/transcribe', {
+  const response = await fetch(transcriptionApiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audioBase64: wavChunkToBase64(audio, 16000), mimeType: 'audio/wav', chunkNumber: index + 1, totalChunks: total, languageHint: 'English and Nigerian Pidgin' }),
@@ -280,7 +282,7 @@ async function transcribeOpusInSegments(
       } catch {
         break;
       }
-      const response = await fetch('/api/transcribe', {
+      const response = await fetch(transcriptionApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
