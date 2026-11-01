@@ -27,8 +27,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const audioBytes = Buffer.from(input.audioBase64, 'base64');
+    const audioBuffer = new ArrayBuffer(audioBytes.byteLength);
+    new Uint8Array(audioBuffer).set(audioBytes);
     const form = new FormData();
-    form.append('file', new Blob([audioBytes], { type: mimeType }), 'audio-chunk.wav');
+    form.append('file', new Blob([audioBuffer], { type: mimeType }), 'audio-chunk.wav');
     form.append('model', 'whisper-large-v3-turbo');
     form.append('response_format', 'json');
     form.append('temperature', '0');
