@@ -10,6 +10,7 @@ type AudioFile = { id: string; file: File; url: string; transcript: string };
 type Page = 'home' | 'transcribe' | 'library' | 'studio' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
+type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number };
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
 let pipelinePromise: Promise<Engine> | null = null;
@@ -221,6 +222,8 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [status, setStatus] = useState('');
+  const [progress, setProgress] = useState({ completed: 0, total: 0 });
+  const checkpointRef = useRef<TranscriptionCheckpoint | null>(null);
   const [error, setError] = useState('');
   const [exportType, setExportType] = useState('txt');
   const [studioText, setStudioText] = useState('');
@@ -251,16 +254,25 @@ function App() {
 
   async function transcribe() {
     if (!active || busy) return;
-    setBusy(true); setError(''); setStatus('Preparing and cleaning audio…');
+    setBusy(true); setError(''); setStatus('Preparing audio…');
     try {
       const audio = await decodeAudio(active.file);
       const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
       const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
-      const parts: string[] = [];
-      for (let index = 0, start = 0; start < audio.length; index++, start += chunkSamples - overlapSamples) {
+      const previous = checkpointRef.current;
+      const checkpoint = previous?.fileId === active.id && previous.totalChunks === totalChunks
+        ? previous
+        : { fileId: active.id, parts: [] as string[], nextChunk: 0, totalChunks };
+      checkpointRef.current = checkpoint;
+      const parts = checkpoint.parts;
+      setProgress({ completed: checkpoint.nextChunk, total: totalChunks });
+      if (checkpoint.nextChunk > 0) setStatus('Resuming from section ' + (checkpoint.nextChunk + 1) + ' of ' + totalChunks + '…');
+      for (let index = checkpoint.nextChunk, start = checkpoint.nextChunk * (chunkSamples - overlapSamples); start < audio.length; index++, start += chunkSamples - overlapSamples) {
         const chunk = audio.slice(start, Math.min(audio.length, start + chunkSamples));
         if (audioRms(chunk) < 0.0015) {
-          setStatus('Skipping a quiet section ' + (index + 1) + ' of ' + totalChunks + ' to avoid invented words…');
+          setStatus('Skipping quiet section ' + (index + 1) + ' of ' + totalChunks + '…');
+          checkpoint.nextChunk = index + 1;
+          setProgress({ completed: index + 1, total: totalChunks });
           continue;
         }
         let part = '';
@@ -303,15 +315,30 @@ function App() {
           }
         }
         if (part.trim()) parts.push(part.trim());
+        checkpoint.nextChunk = index + 1;
+        setProgress({ completed: index + 1, total: totalChunks });
+        const partialText = mergeTranscriptParts(parts);
+        if (partialText) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partialText } : item));
+        setStatus('Completed section ' + (index + 1) + ' of ' + totalChunks + '. Progress is saved for this session.');
         await new Promise<void>(resolve => window.setTimeout(resolve, 0));
       }
       const text = mergeTranscriptParts(parts);
       if (!text) throw new Error('No clear speech was detected. Try a louder recording with less background noise, or check that the audio contains speech.');
       setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
+      checkpointRef.current = null;
+      setProgress({ completed: totalChunks, total: totalChunks });
       setStatus('Transcription complete. Check names and Nigerian Pidgin before sharing.');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Transcription failed.');
-      setStatus('');
+      const saved = checkpointRef.current;
+      if (saved?.fileId === active.id && saved.parts.length) {
+        const partialText = mergeTranscriptParts(saved.parts);
+        setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partialText } : item));
+        setError('A section failed. ' + saved.nextChunk + ' of ' + saved.totalChunks + ' sections are complete; tap Transcribe again to resume. ' + (reason instanceof Error ? reason.message : String(reason)));
+        setStatus('Partial transcript preserved for this session.');
+      } else {
+        setError(reason instanceof Error ? reason.message : 'Transcription failed.');
+        setStatus('');
+      }
     } finally { setBusy(false); }
   }
   function updateTranscript(text: string) {
@@ -435,6 +462,7 @@ function App() {
               {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny, then Vosk if a compatible Vosk model is configured. The first model download needs internet.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
+              {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · unfinished sections can resume while this page stays open</small></div>}
               <label className="field-label" htmlFor="transcript">Transcript text</label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
