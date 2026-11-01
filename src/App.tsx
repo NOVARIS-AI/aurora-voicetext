@@ -5,8 +5,9 @@ import {
   Settings2, Mic2, Volume2, BookOpen, Trash2, Play, Pause, Save,
 } from 'lucide-react';
 
-type Recording = { id: string; name: string; transcript: string; updatedAt: number };
-type AudioFile = { id: string; file: File; url: string; transcript: string };
+type TimedSegment = { start: number; end: number; text: string };
+type Recording = { id: string; name: string; transcript: string; updatedAt: number; segments?: TimedSegment[] };
+type AudioFile = { id: string; file: File; url: string; transcript: string; segments?: TimedSegment[] };
 type Page = 'home' | 'transcribe' | 'library' | 'studio' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
@@ -81,7 +82,7 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
   }
 }
 
-async function transcribeOnline(audio: Float32Array, index: number, total: number): Promise<string> {
+async function transcribeOnline(audio: Float32Array, index: number, total: number): Promise<{ text: string; segments: TimedSegment[] }> {
   const response = await fetch('/api/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -91,7 +92,10 @@ async function transcribeOnline(audio: Float32Array, index: number, total: numbe
   if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Online transcription returned HTTP ' + response.status);
   const transcript = typeof data.text === 'string' ? data.text.trim() : '';
   if (!transcript) throw new Error('Groq returned an empty transcript for this audio section.');
-  return transcript;
+  const segments: TimedSegment[] = Array.isArray(data.segments) ? data.segments
+    .filter((item: any) => Number.isFinite(item.start) && Number.isFinite(item.end) && typeof item.text === 'string')
+    .map((item: any) => ({ start: Math.max(0, item.start), end: Math.max(item.start, item.end), text: item.text.trim() })) : [];
+  return { text: transcript, segments };
 }
 
 async function getWhisper(onProgress: (message: string) => void): Promise<Engine> {
@@ -255,15 +259,25 @@ function App() {
     try {
       const audio = await decodeAudio(active.file);
       const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
-      const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
-      const parts: string[] = [];
-      for (let index = 0, start = 0; start < audio.length; index++, start += chunkSamples - overlapSamples) {
+      const stride = chunkSamples - overlapSamples;
+      const totalChunks = Math.ceil(audio.length / stride);
+      const resumeKey = 'aurora-voicetext-job-v1:' + [active.file.name, active.file.size, active.file.lastModified].join(':');
+      let savedJob: any = null;
+      try { savedJob = JSON.parse(localStorage.getItem(resumeKey) || 'null'); } catch { savedJob = null; }
+      const resumable = savedJob && savedJob.fileName === active.file.name && savedJob.fileSize === active.file.size && savedJob.lastModified === active.file.lastModified;
+      const parts: string[] = resumable && Array.isArray(savedJob.parts) ? savedJob.parts : [];
+      const timedSegments: TimedSegment[] = resumable && Array.isArray(savedJob.segments) ? savedJob.segments : [];
+      const firstChunk = resumable && Number.isInteger(savedJob.nextChunk) ? Math.min(totalChunks, Math.max(0, savedJob.nextChunk)) : 0;
+      if (firstChunk > 0) setStatus('Resuming saved progress from section ' + (firstChunk + 1) + ' of ' + totalChunks + '…');
+      for (let index = firstChunk, start = firstChunk * stride; start < audio.length; index++, start += stride) {
         const chunk = audio.slice(start, Math.min(audio.length, start + chunkSamples));
         if (audioRms(chunk) < 0.0015) {
           setStatus('Skipping a quiet section ' + (index + 1) + ' of ' + totalChunks + ' to avoid invented words…');
+          localStorage.setItem(resumeKey, JSON.stringify({ fileName: active.file.name, fileSize: active.file.size, lastModified: active.file.lastModified, parts, segments: timedSegments, nextChunk: index + 1 }));
           continue;
         }
         let part = '';
+        let chunkSegments: TimedSegment[] = [];
         const runOffline = async (): Promise<string> => {
           let whisperProblem = '';
           try {
@@ -286,13 +300,17 @@ function App() {
 
         if (mode === 'online') {
           setStatus('Groq Whisper · section ' + (index + 1) + ' of ' + totalChunks + '…');
-          part = await transcribeOnline(chunk, index, totalChunks);
+          const onlineResult = await transcribeOnline(chunk, index, totalChunks);
+          part = onlineResult.text;
+          chunkSegments = onlineResult.segments.map(segment => ({ ...segment, start: segment.start + start / sampleRate, end: segment.end + start / sampleRate }));
         } else if (mode === 'offline') {
           part = await runOffline();
         } else {
           try {
             setStatus('Auto · using Groq Whisper for the clearest transcript · section ' + (index + 1) + ' of ' + totalChunks + '…');
-            part = await transcribeOnline(chunk, index, totalChunks);
+            const onlineResult = await transcribeOnline(chunk, index, totalChunks);
+            part = onlineResult.text;
+            chunkSegments = onlineResult.segments.map(segment => ({ ...segment, start: segment.start + start / sampleRate, end: segment.end + start / sampleRate }));
           } catch (onlineProblem) {
             setStatus('Online service unavailable. Switching to on-device transcription…');
             try {
@@ -303,12 +321,16 @@ function App() {
           }
         }
         if (part.trim()) parts.push(part.trim());
+        timedSegments.push(...chunkSegments);
+        try { localStorage.setItem(resumeKey, JSON.stringify({ fileName: active.file.name, fileSize: active.file.size, lastModified: active.file.lastModified, parts, segments: timedSegments, nextChunk: index + 1 })); } catch { setStatus('Progress could not be saved in browser storage; continuing this session…'); }
+        setStatus('Processed ' + Math.min(index + 1, totalChunks) + ' of ' + totalChunks + ' sections (' + Math.round(Math.min(index + 1, totalChunks) / totalChunks * 100) + '%)…');
         await new Promise<void>(resolve => window.setTimeout(resolve, 0));
       }
       const text = mergeTranscriptParts(parts);
       if (!text) throw new Error('No clear speech was detected. Try a louder recording with less background noise, or check that the audio contains speech.');
-      setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
-      setStatus('Transcription complete. Check names and Nigerian Pidgin before sharing.');
+      setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text, segments: timedSegments } : item));
+      try { localStorage.removeItem(resumeKey); } catch { /* Resume cache is optional. */ }
+      setStatus('Transcription complete. ' + (timedSegments.length ? 'Timestamped segments are ready.' : 'This engine did not provide timestamps.') + ' Check names and Nigerian Pidgin before sharing.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Transcription failed.');
       setStatus('');
@@ -316,12 +338,12 @@ function App() {
   }
   function updateTranscript(text: string) {
     if (!active) return;
-    setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
+    setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text, segments: [] } : item));
   }
 
   function saveToLibrary() {
     if (!active?.transcript.trim()) { setError('Add or transcribe some text before saving.'); return; }
-    const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now() };
+    const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now(), segments: active.segments || [] };
     setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]);
     setError(''); setStatus('Saved to your on-device library.');
   }
@@ -336,8 +358,15 @@ function App() {
     });
   }
 
-  function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript') {
+  function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', segments: TimedSegment[] = []) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
+    if (exportType === 'srt' || exportType === 'vtt') {
+      if (!segments.length) { setError('Accurate timestamps are available for online Groq transcripts only. Transcribe online or use Auto while online to create SRT/VTT.'); return; }
+      const stamp = (seconds: number, comma: boolean) => { const ms = Math.max(0, Math.round(seconds * 1000)); const h = Math.floor(ms / 3600000); const m = Math.floor(ms % 3600000 / 60000); const sec = Math.floor(ms % 60000 / 1000); const milli = ms % 1000; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0') + (comma ? ',' : '.') + String(milli).padStart(3, '0'); };
+      const content = (exportType === 'vtt' ? 'WEBVTT\\n\\n' : '') + segments.map((segment, index) => (exportType === 'srt' ? String(index + 1) + '\\n' : '') + stamp(segment.start, exportType === 'srt') + ' --> ' + stamp(segment.end, exportType === 'srt') + '\\n' + segment.text).join('\\n\\n');
+      downloadFile(baseName + '.' + exportType, content, exportType === 'vtt' ? 'text/vtt;charset=utf-8' : 'application/x-subrip;charset=utf-8');
+      setError(''); return;
+    }
     if (exportType === 'pdf') {
       const popup = window.open('', '_blank');
       if (!popup) { setError('Allow pop-ups to print or save as PDF.'); return; }
@@ -439,7 +468,7 @@ function App() {
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript')}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="srt">SubRip subtitles (.srt)</option><option value="vtt">WebVTT subtitles (.vtt)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.segments || [])}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
@@ -448,7 +477,7 @@ function App() {
       {page === 'library' && <section className="page-content">
         <div className="page-heading"><div className="eyebrow">YOUR NOTES</div><h1>Transcript library</h1><p>Saved text stays in this browser on this device. Audio files themselves are not stored here.</p></div>
         <div className="library-toolbar"><label className="search-box"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search saved transcripts"/></label><span className="count">{filteredLibrary.length} saved</span></div>
-        {filteredLibrary.length ? <div className="library-grid">{filteredLibrary.map(item => <article className="library-card" key={item.id}><div className="library-card-head"><span className="library-icon"><FileText size={18}/></span><button className="icon-button" aria-label="Delete saved transcript" onClick={() => setLibrary(current => current.filter(entry => entry.id !== item.id))} type="button"><Trash2 size={16}/></button></div><h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}</small><p>{item.transcript.slice(0, 240)}{item.transcript.length > 240 ? '…' : ''}</p><div className="library-actions"><button className="secondary small-button" onClick={() => {setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={15}/> Read aloud</button><button className="secondary small-button" onClick={() => exportTranscript(item.transcript, item.name.replace(/\.[^.]+$/, '') || 'transcript')} type="button"><Download size={15}/> Export</button><button className="text-button" onClick={() => copyText(item.transcript)} type="button"><Copy size={15}/> Copy</button></div></article>)}</div> : <div className="empty-state library-empty"><BookOpen size={32}/><strong>Your library is empty</strong><span>Transcribe or paste a voice note, then tap Save to library.</span><button className="primary" onClick={() => setPage('transcribe')} type="button">Go to transcribe</button></div>}
+        {filteredLibrary.length ? <div className="library-grid">{filteredLibrary.map(item => <article className="library-card" key={item.id}><div className="library-card-head"><span className="library-icon"><FileText size={18}/></span><button className="icon-button" aria-label="Delete saved transcript" onClick={() => setLibrary(current => current.filter(entry => entry.id !== item.id))} type="button"><Trash2 size={16}/></button></div><h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}</small><p>{item.transcript.slice(0, 240)}{item.transcript.length > 240 ? '…' : ''}</p><div className="library-actions"><button className="secondary small-button" onClick={() => {setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={15}/> Read aloud</button><button className="secondary small-button" onClick={() => exportTranscript(item.transcript, item.name.replace(/\.[^.]+$/, '') || 'transcript', item.segments || [])} type="button"><Download size={15}/> Export</button><button className="text-button" onClick={() => copyText(item.transcript)} type="button"><Copy size={15}/> Copy</button></div></article>)}</div> : <div className="empty-state library-empty"><BookOpen size={32}/><strong>Your library is empty</strong><span>Transcribe or paste a voice note, then tap Save to library.</span><button className="primary" onClick={() => setPage('transcribe')} type="button">Go to transcribe</button></div>}
       </section>}
 
       {page === 'studio' && <section className="page-content">
