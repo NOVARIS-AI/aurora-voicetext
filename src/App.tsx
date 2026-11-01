@@ -265,11 +265,13 @@ async function transcribeOpusInSegments(
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     await ffmpeg.exec([
       '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-      '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', '20',
-      '-reset_timestamps', '1', '-segment_format', 'wav', 'aurora-part-%03d.wav',
+      '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'segment', '-segment_time', '120',
+      '-reset_timestamps', '1', '-segment_format', 'mp3', 'aurora-part-%03d.mp3',
     ]);
-    for (let index = 0; ; index++) {
-      const name = 'aurora-part-' + String(index).padStart(3, '0') + '.wav';
+    const entries = await ffmpeg.listDir('/');
+    const totalParts = entries.filter(entry => /^aurora-part-\\d{3}\\.mp3$/.test(entry.name)).length;
+    for (let index = 0; index < totalParts; index++) {
+      const name = 'aurora-part-' + String(index).padStart(3, '0') + '.mp3';
       let bytes: Uint8Array;
       try {
         const output = await ffmpeg.readFile(name);
@@ -283,7 +285,7 @@ async function transcribeOpusInSegments(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           audioBase64: toBase64(bytes),
-          mimeType: 'audio/wav',
+          mimeType: 'audio/mpeg',
           chunkNumber: index + 1,
           languageHint: 'English and Nigerian Pidgin',
         }),
@@ -291,7 +293,7 @@ async function transcribeOpusInSegments(
       const result = await response.json().catch(() => ({})) as { text?: string; error?: string };
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
       if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
-      onProgress(index + 1, index + 1);
+      onProgress(index + 1, totalParts);
       onPart(parts);
       await ffmpeg.deleteFile(name);
     }
