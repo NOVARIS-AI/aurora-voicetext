@@ -23,6 +23,54 @@ function readLibrary(): Recording[] {
   } catch { return []; }
 }
 
+
+const CHECKPOINT_DB = 'aurora-voicetext-checkpoints-v1';
+function openCheckpointDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { reject(new Error('IndexedDB is unavailable.')); return; }
+    const request = indexedDB.open(CHECKPOINT_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('checkpoints')) db.createObjectStore('checkpoints', { keyPath: 'fileKey' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open checkpoint storage.'));
+  });
+}
+async function readSavedCheckpoint(fileKey: string): Promise<TranscriptionCheckpoint | null> {
+  const db = await openCheckpointDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction('checkpoints', 'readonly').objectStore('checkpoints').get(fileKey);
+      request.onsuccess = () => resolve(request.result?.checkpoint ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
+async function writeSavedCheckpoint(fileKey: string, checkpoint: TranscriptionCheckpoint): Promise<void> {
+  const db = await openCheckpointDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = db.transaction('checkpoints', 'readwrite').objectStore('checkpoints').put({ fileKey, checkpoint, savedAt: Date.now() });
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
+async function removeSavedCheckpoint(fileKey: string): Promise<void> {
+  const db = await openCheckpointDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = db.transaction('checkpoints', 'readwrite').objectStore('checkpoints').delete(fileKey);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
+function makeAudioFileKey(file: File): string {
+  return [file.name, file.size, file.lastModified, file.type].join('|');
+}
+
 function downloadFile(name: string, content: string, type: string) {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const anchor = document.createElement('a');
@@ -260,18 +308,27 @@ function App() {
       const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
       const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
       const previous = checkpointRef.current;
+      const fileKey = makeAudioFileKey(active.file);
+      let restored: TranscriptionCheckpoint | null = null;
+      if (!(previous?.fileId === active.id && previous.totalChunks === totalChunks)) {
+        try {
+          const saved = await readSavedCheckpoint(fileKey);
+          if (saved && saved.totalChunks === totalChunks && saved.nextChunk > 0 && saved.nextChunk < totalChunks) restored = { ...saved, fileId: active.id };
+        } catch { /* Continue with an in-session checkpoint if persistent storage is unavailable. */ }
+      }
       const checkpoint = previous?.fileId === active.id && previous.totalChunks === totalChunks
         ? previous
-        : { fileId: active.id, parts: [] as string[], nextChunk: 0, totalChunks };
+        : restored ?? { fileId: active.id, parts: [] as string[], nextChunk: 0, totalChunks };
       checkpointRef.current = checkpoint;
       const parts = checkpoint.parts;
       setProgress({ completed: checkpoint.nextChunk, total: totalChunks });
-      if (checkpoint.nextChunk > 0) setStatus('Resuming from section ' + (checkpoint.nextChunk + 1) + ' of ' + totalChunks + '…');
+      if (checkpoint.nextChunk > 0) setStatus('Resuming from saved section ' + (checkpoint.nextChunk + 1) + ' of ' + totalChunks + '…');
       for (let index = checkpoint.nextChunk, start = checkpoint.nextChunk * (chunkSamples - overlapSamples); start < audio.length; index++, start += chunkSamples - overlapSamples) {
         const chunk = audio.slice(start, Math.min(audio.length, start + chunkSamples));
         if (audioRms(chunk) < 0.0015) {
           setStatus('Skipping quiet section ' + (index + 1) + ' of ' + totalChunks + '…');
           checkpoint.nextChunk = index + 1;
+          try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* In-session resume remains available. */ }
           setProgress({ completed: index + 1, total: totalChunks });
           continue;
         }
@@ -316,6 +373,7 @@ function App() {
         }
         if (part.trim()) parts.push(part.trim());
         checkpoint.nextChunk = index + 1;
+        try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* In-session resume remains available. */ }
         setProgress({ completed: index + 1, total: totalChunks });
         const partialText = mergeTranscriptParts(parts);
         if (partialText) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partialText } : item));
@@ -326,6 +384,7 @@ function App() {
       if (!text) throw new Error('No clear speech was detected. Try a louder recording with less background noise, or check that the audio contains speech.');
       setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
       checkpointRef.current = null;
+      try { await removeSavedCheckpoint(fileKey); } catch { /* A stale completed checkpoint is ignored on the next run. */ }
       setProgress({ completed: totalChunks, total: totalChunks });
       setStatus('Transcription complete. Check names and Nigerian Pidgin before sharing.');
     } catch (reason) {
@@ -334,7 +393,7 @@ function App() {
         const partialText = mergeTranscriptParts(saved.parts);
         setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partialText } : item));
         setError('A section failed. ' + saved.nextChunk + ' of ' + saved.totalChunks + ' sections are complete; tap Transcribe again to resume. ' + (reason instanceof Error ? reason.message : String(reason)));
-        setStatus('Partial transcript preserved for this session.');
+        setStatus('Partial transcript preserved. If browser storage is available, progress can also survive a refresh after you reselect the same audio file.');
       } else {
         setError(reason instanceof Error ? reason.message : 'Transcription failed.');
         setStatus('');
