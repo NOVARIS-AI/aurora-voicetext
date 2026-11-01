@@ -296,7 +296,7 @@ async function transcribeOpusOfflineInSegments(
         parts.push('');
       } else {
         onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
-        const result = await whisper(audio, { sampling_rate: 16000 });
+        const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5 });
         const text = result.text?.trim() || '';
         if (!text) throw new Error('Whisper Tiny returned no transcript for section ' + (index + 1) + '.');
         parts.push(text);
