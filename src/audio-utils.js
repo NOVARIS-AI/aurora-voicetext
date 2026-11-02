@@ -67,11 +67,11 @@ export function createTimedSubtitles(segments, format = 'srt') {
     Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start && String(item.text || '').trim()
   );
   const vtt = format === 'vtt';
-  if (!valid.length) return vtt ? 'WEBVTT\\n' : '';
+  if (!valid.length) return vtt ? 'WEBVTT\n' : '';
   const blocks = valid.map((item, index) =>
-    (vtt ? '' : String(index + 1) + '\\n') +
+    (vtt ? '' : String(index + 1) + '\n') +
     formatTimestamp(item.start, vtt ? '.' : ',') + ' --> ' +
-    formatTimestamp(item.end, vtt ? '.' : ',') + '\\n' + String(item.text).trim()
+    formatTimestamp(item.end, vtt ? '.' : ',') + '\n' + String(item.text).trim()
   );
-  return (vtt ? 'WEBVTT\\n\\n' : '') + blocks.join('\\n\\n') + '\\n';
+  return (vtt ? 'WEBVTT\n\n' : '') + blocks.join('\n\n') + '\n';
 }
