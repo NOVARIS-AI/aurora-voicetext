@@ -31,16 +31,15 @@ jobs:
         working-directory: backup-worker
     steps:
       - name: Checkout source
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         uses: actions/checkout@v4
       - name: Set up Node.js
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Install Wrangler
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: npm install --global wrangler
+      - name: Validate backup Worker build
+        run: wrangler deploy --dry-run
       - name: Configure backup authentication and providers
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: |
@@ -57,4 +56,4 @@ jobs:
         run: wrangler deploy
       - name: Explain missing deployment credentials
         if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
-        run: echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as GitHub Actions secrets to enable backup deployment."
+        run: echo "Worker build validated. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as GitHub Actions secrets to enable deployment."
