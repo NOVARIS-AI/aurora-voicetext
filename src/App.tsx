@@ -858,7 +858,7 @@ function App() {
         <div className="feature-grid">
           <button onClick={() => setPage('transcribe')} type="button"><FileAudio/><strong>Transcribe</strong><span>Import, listen and correct audio text.</span></button>
           <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
-          <button onClick={() => setPage('studio')} type="button"><Volume2/><strong>Voice Studio</strong><span>Read text aloud with your device voice.</span></button>
+          <button onClick={() => setPage('studio')} type="button"><Volume2/><strong>Voice Studio</strong><span>Generate and download AI voiceovers with adjustable delivery.</span></button>
         </div>
       </section>}
 
@@ -909,7 +909,7 @@ function App() {
         <div className="page-heading"><div className="eyebrow">AI PREVIEW WORKSPACE</div><h1>Transcript preview</h1><p>Edit your transcript and its speech-aligned timestamps in one place. Changes stay attached to the selected recording.</p></div>
         {active ? <section className="card preview-card">
           <div className="card-title"><div><small>TRANSCRIPT WORKSPACE</small><h2>{active.file.name}</h2></div><span className="count">{active.timedSegments?.length || 0} timed lines</span></div>
-          <audio className="audio-player" controls preload="metadata" src={active.url}/>
+          <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url}/>
           {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className="timestamp-chip" onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value)} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
           <div className="studio-actions"><button className="primary" type="button" onClick={saveToLibrary}><Save size={16}/> Save changes</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={16}/> Export transcript</button></div>
         </section> : <div className="empty-state"><AudioWaveform/><strong>Select a recording first</strong><span>Open Transcribe and choose a recording to edit its transcript.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
