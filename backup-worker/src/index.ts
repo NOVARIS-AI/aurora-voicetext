@@ -70,7 +70,8 @@ async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuf
   }
   if (env.ELEVENLABS_API_KEY) {
     try {
-      const voice = input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) ? input.voice : (env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL");
+      const builtInVoiceNames = new Set(["nova","shimmer","coral","sage","onyx","echo","ash","fable","alloy"]);
+      const voice = input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) && !builtInVoiceNames.has(input.voice.toLowerCase()) ? input.voice : (env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL");
       const response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(voice), {
         method: "POST", headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
         body: JSON.stringify({ text, model_id: env.ELEVENLABS_TTS_MODEL || "eleven_multilingual_v2", voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.25, use_speaker_boost: true, speed: safeRate(input.rate) } }),
