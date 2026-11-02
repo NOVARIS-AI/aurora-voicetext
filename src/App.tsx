@@ -571,6 +571,9 @@ function App() {
   const [voiceName, setVoiceName] = useState('nova');
   const [voiceStyle, setVoiceStyle] = useState('Natural, conversational delivery');
   const [voiceEmotion, setVoiceEmotion] = useState('Warm and friendly');
+  const [voiceAccent, setVoiceAccent] = useState('International English');
+  const [voiceEmphasis, setVoiceEmphasis] = useState('Natural emphasis');
+  const [voicePauses, setVoicePauses] = useState('Natural pauses');
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [assistBusy, setAssistBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
@@ -790,7 +793,7 @@ function App() {
       const audioParts: Blob[] = [];
       for (let index = 0; index < chunks.length; index++) {
         setStatus('Generating voice section ' + (index + 1) + ' of ' + chunks.length + '…');
-        const { response } = await requestFeature('/api/tts', { text: chunks[index], voice: voiceName, style: voiceStyle, emotion: voiceEmotion, rate: voiceRate, pitch: voicePitch }, true);
+        const { response } = await requestFeature('/api/tts', { text: chunks[index], voice: voiceName, style: voiceStyle + '. Accent: ' + voiceAccent + '. Emphasis: ' + voiceEmphasis + '. Pauses: ' + voicePauses, emotion: voiceEmotion, rate: voiceRate, pitch: voicePitch }, true);
         audioParts.push(await response.blob());
       }
       const finalAudio = await mergeMp3ChunksToWav(audioParts);
@@ -943,6 +946,9 @@ function App() {
             <label className="field-label">AI voice<select value={voiceName} onChange={event=>setVoiceName(event.target.value)}><option value="nova">Nova · feminine, bright</option><option value="shimmer">Shimmer · feminine, clear</option><option value="coral">Coral · feminine, warm</option><option value="sage">Sage · feminine, measured</option><option value="onyx">Onyx · masculine, deep</option><option value="echo">Echo · masculine, clear</option><option value="ash">Ash · masculine, conversational</option><option value="fable">Fable · expressive narrator</option><option value="alloy">Alloy · neutral</option></select></label>
             <label className="field-label">Delivery style<select value={voiceStyle} onChange={event=>setVoiceStyle(event.target.value)}><option>Natural, conversational delivery</option><option>Professional presenter, polished and confident</option><option>Storytelling, expressive and vivid</option><option>Documentary narrator, steady and authoritative</option><option>Energetic, upbeat and engaging</option><option>Calm, gentle and reassuring</option></select></label>
             <label className="field-label">Emotion<select value={voiceEmotion} onChange={event=>setVoiceEmotion(event.target.value)}><option>Warm and friendly</option><option>Neutral and informative</option><option>Excited and enthusiastic</option><option>Serious and thoughtful</option><option>Hopeful and inspiring</option></select></label>
+            <label className="field-label">Accent / pronunciation<select value={voiceAccent} onChange={event=>setVoiceAccent(event.target.value)}><option>International English</option><option>British English</option><option>American English</option><option>Nigerian English</option><option>West African English</option><option>Australian English</option></select></label>
+            <label className="field-label">Emphasis<select value={voiceEmphasis} onChange={event=>setVoiceEmphasis(event.target.value)}><option>Natural emphasis</option><option>Subtle emphasis</option><option>Expressive emphasis</option><option>Strong key-word emphasis</option></select></label>
+            <label className="field-label">Pauses<select value={voicePauses} onChange={event=>setVoicePauses(event.target.value)}><option>Natural pauses</option><option>Short pauses</option><option>Long storytelling pauses</option><option>Presenter pacing</option></select></label>
           </div>
           <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
           <div className="studio-actions"><button className="primary" type="button" disabled={voiceBusy} onClick={generateVoice}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating AI audio…':'Generate AI voice'}</button><button className="secondary" type="button" onClick={()=>{setStudioText('');if(voiceAudioUrl)URL.revokeObjectURL(voiceAudioUrl);setVoiceAudioUrl('');}}>Clear</button></div>
