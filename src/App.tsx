@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createEstimatedSubtitles, mergeTranscriptParts } from './audio-utils';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import {
@@ -315,6 +316,8 @@ async function transcribeOpusOfflineInSegments(
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
   const segmentSeconds = Math.min(60, getAudioSegmentSeconds());
+  const overlapSeconds = 2;
+  const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
   const pcmToFloat = (bytes: Uint8Array): Float32Array => {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     let offset = 12, dataStart = -1, dataLength = 0;
@@ -337,9 +340,9 @@ async function transcribeOpusOfflineInSegments(
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // WORKERFS reads the selected File directly instead of copying the entire recording into WASM memory.
-    ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
+    await ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
     const duration = await getAudioDurationSeconds(file);
-    const total = Math.ceil(duration / segmentSeconds);
+    const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
     const fileKey = makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
@@ -350,9 +353,8 @@ async function transcribeOpusOfflineInSegments(
     parts.push(...checkpoint.parts);
     onPart(parts.filter(Boolean));
     onProgress(checkpoint.nextChunk, total);
-    const whisper = await getWhisper(onStatus);
     for (let index = checkpoint.nextChunk; index < total; index++) {
-      const start = index * segmentSeconds;
+      const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
       await ffmpeg.exec([
@@ -366,11 +368,26 @@ async function transcribeOpusOfflineInSegments(
       if (audioRms(audio) < 0.0015) {
         parts.push('');
       } else {
-        onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
-        const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5 });
-        const text = result.text?.trim() || '';
-        if (!text) throw new Error('Whisper Tiny returned no transcript for section ' + (index + 1) + '.');
-        parts.push(text);
+        let transcript = '';
+        let whisperProblem = '';
+        try {
+          onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
+          const whisper = await getWhisper(onStatus);
+          const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5 });
+          transcript = result.text?.trim() || '';
+          if (!transcript) throw new Error('Whisper Tiny returned an empty result.');
+        } catch (reason) {
+          whisperProblem = reason instanceof Error ? reason.message : String(reason);
+        }
+        if (!transcript) {
+          try {
+            onStatus('Whisper Tiny unavailable. Trying Vosk offline · section ' + (index + 1) + ' of ' + total + '…');
+            transcript = await transcribeWithVosk(audio);
+          } catch (voskProblem) {
+            throw new Error('Offline engines could not transcribe section ' + (index + 1) + '. Whisper: ' + whisperProblem + ' Vosk: ' + (voskProblem instanceof Error ? voskProblem.message : String(voskProblem)));
+          }
+        }
+        parts.push(transcript);
       }
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
@@ -385,7 +402,7 @@ async function transcribeOpusOfflineInSegments(
     return parts.filter(Boolean);
   } finally {
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
-    try { ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
+    try { await ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
   }
 }
@@ -413,10 +430,12 @@ async function transcribeOpusInSegments(
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // WORKERFS avoids loading a second full copy of long recordings into the WASM filesystem.
-    ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
+    await ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
     const duration = await getAudioDurationSeconds(file);
     const segmentSeconds = Math.min(90, getAudioSegmentSeconds());
-    const totalParts = Math.ceil(duration / segmentSeconds);
+    const overlapSeconds = 2;
+    const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
+    const totalParts = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!totalParts || totalParts > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
     const fileKey = makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
@@ -428,7 +447,7 @@ async function transcribeOpusInSegments(
     onPart(parts);
     onProgress(checkpoint.nextChunk, totalParts);
     for (let index = checkpoint.nextChunk; index < totalParts; index++) {
-      const start = index * segmentSeconds;
+      const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       await ffmpeg.exec([
         '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
@@ -468,27 +487,9 @@ async function transcribeOpusInSegments(
     return parts;
   } finally {
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
-    try { ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
+    try { await ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
   }
-}
-
-function mergeTranscriptParts(parts: string[]): string {
-  const merged: string[] = [];
-  for (const part of parts) {
-    const next = part.trim().split(/\s+/).filter(Boolean);
-    if (!next.length) continue;
-    if (!merged.length) { merged.push(...next); continue; }
-    const current = merged.map(word => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ''));
-    const incoming = next.map(word => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ''));
-    let overlap = 0;
-    const limit = Math.min(30, current.length, incoming.length);
-    for (let size = limit; size >= 2; size--) {
-      if (current.slice(-size).every((word, index) => word && word === incoming[index])) { overlap = size; break; }
-    }
-    merged.push(...next.slice(overlap));
-  }
-  return merged.join(' ').replace(/\s+([,.;!?])/g, '$1').trim();
 }
 
 function audioRms(audio: Float32Array): number {
@@ -742,7 +743,7 @@ function App() {
         setError('A section failed. ' + saved.nextChunk + ' of ' + saved.totalChunks + ' sections are complete; tap Transcribe again to resume. ' + (reason instanceof Error ? reason.message : String(reason)));
         setStatus('Partial transcript preserved. If browser storage is available, progress can also survive a refresh after you reselect the same audio file.');
       } else {
-        setError(reason instanceof Error ? reason.message : 'Transcription failed.');
+        setError((reason instanceof Error ? reason.message : 'Transcription failed.') + ' If earlier sections completed, their saved progress can be resumed by tapping Transcribe again with this recording.');
         setStatus('');
       }
     } finally { setBusy(false); }
@@ -784,9 +785,12 @@ function App() {
       md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# AURORA VoiceText\n\n' + text },
       html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>AURORA VoiceText</title><pre style="white-space:pre-wrap;font:16px system-ui">' + text.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre>' },
       rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi ' + text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
+      srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: createEstimatedSubtitles(text, 'srt') },
+      vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
     downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
+    if (exportType === 'srt' || exportType === 'vtt') setStatus('Subtitle timings are estimates based on word count, not speech-aligned timestamps.');
     setError('');
   }
 
@@ -849,7 +853,7 @@ function App() {
           <section className="card">
             <div className="card-title"><div><small>STEP 01</small><h2>Your recordings</h2></div><span className="count">{files.length}</span></div>
             <button className="upload-box" type="button" onClick={() => inputRef.current?.click()}><span className="upload-symbol"><Upload/></span><strong>Choose audio files</strong><span>Browse your phone storage</span><small>OPUS · OGG · MP3 · M4A · WAV · AAC</small></button>
-            <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => addFiles(event.target.files)}/>
+            <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
             <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round(item.file.size / 1024))} KB · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => inputRef.current?.click()}><Plus size={16}/> Add more audio</button>}
             <p className="privacy-hint"><ShieldCheck size={15}/> Auto sends audio to Groq first, then uses on-device backups if needed. Offline never uploads audio. Online always uses Groq.</p>
@@ -873,7 +877,7 @@ function App() {
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript')}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="srt">Subtitles (.srt · estimated timing)</option><option value="vtt">Web subtitles (.vtt · estimated timing)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript')}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
