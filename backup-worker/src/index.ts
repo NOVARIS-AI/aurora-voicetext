@@ -20,6 +20,22 @@ async function callProvider(endpoint: string, key: string, model: string, bytes:
   if (!payload.text?.trim()) throw new Error("Provider returned empty text.");
   return { text: payload.text.trim(), segments: Array.isArray(payload.segments) ? payload.segments.filter(s => typeof s.start === "number" && typeof s.end === "number" && typeof s.text === "string") : [] };
 }
+async function downloadSubtitle(body: { fileId?: number }, env: Env) {
+  if (!Number.isInteger(body.fileId) || !body.fileId || body.fileId < 1) return json({ error: "A valid subtitle file ID is required." }, 400);
+  if (!env.OPENSUBTITLES_API_KEY || !env.OPENSUBTITLES_TOKEN) return json({ error: "Subtitle download requires OPENSUBTITLES_API_KEY and OPENSUBTITLES_TOKEN." }, 503);
+  const response = await fetch("https://api.opensubtitles.com/api/v1/download", {
+    method: "POST",
+    headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0", Authorization: "Bearer " + env.OPENSUBTITLES_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: body.fileId }),
+    signal: AbortSignal.timeout(25000),
+  });
+  const payload = await response.json().catch(() => ({})) as { link?: string; file_name?: string; message?: string };
+  if (!response.ok || !payload.link) return json({ error: payload.message || "Subtitle provider did not authorize this download." }, response.status || 502);
+  const fileResponse = await fetch(payload.link, { signal: AbortSignal.timeout(30000) });
+  if (!fileResponse.ok) return json({ error: "Could not retrieve the authorized subtitle file." }, 502);
+  return new Response(await fileResponse.arrayBuffer(), { headers: { "content-type": fileResponse.headers.get("content-type") || "application/octet-stream", "content-disposition": 'attachment; filename="' + (payload.file_name || "subtitle.srt").replace(/[^A-Za-z0-9._-]/g, "_") + '"', "cache-control": "no-store", "X-AURORA-Provider": "backup-opensubtitles" } });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
