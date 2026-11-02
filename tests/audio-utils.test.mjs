@@ -34,5 +34,5 @@ test('returns an empty subtitle document safely', () => {
 test('exports actual speech timestamps as SRT and WebVTT', () => {
   const segments = [{ start: 12.4, end: 14.1, text: 'Hello there.' }];
   assert.match(createTimedSubtitles(segments, 'srt'), /00:00:12,400 --> 00:00:14,100/);
-  assert.match(createTimedSubtitles(segments, 'vtt'), /00:00:12\\.400 --> 00:00:14\\.100/);
+  assert.match(createTimedSubtitles(segments, 'vtt'), /00:00:12\.400 --> 00:00:14\.100/);
 });
