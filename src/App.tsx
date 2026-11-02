@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEstimatedSubtitles, mergeTranscriptParts } from './audio-utils';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
@@ -171,7 +171,9 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
   const recognizer = new model.KaldiRecognizer();
   try {
     const buffer = context.createBuffer(1, audio.length, 16000);
-    buffer.copyToChannel(audio, 0);
+    const channelData = new Float32Array(audio.length);
+    channelData.set(audio);
+    buffer.copyToChannel(channelData, 0);
     const transcript = await new Promise<string>((resolve, reject) => {
       let settled = false;
       const timer = window.setTimeout(() => finish(''), 6000);
@@ -214,19 +216,6 @@ async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, onRet
     await new Promise(resolve => window.setTimeout(resolve, 800 * (2 ** attempt)));
   }
   throw lastError instanceof Error ? lastError : new Error('Network request failed after retries.');
-}
-
-async function transcribeOnline(audio: Float32Array, index: number, total: number): Promise<string> {
-  const response = await fetchWithRetry(transcriptionApiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64: wavChunkToBase64(audio, 16000), mimeType: 'audio/wav', chunkNumber: index + 1, totalChunks: total, languageHint: 'English and Nigerian Pidgin' }),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Online transcription returned HTTP ' + response.status);
-  const transcript = typeof data.text === 'string' ? data.text.trim() : '';
-  if (!transcript) throw new Error('Groq returned an empty transcript for this audio section.');
-  return transcript;
 }
 
 async function getWhisper(onProgress: (message: string) => void): Promise<Engine> {
@@ -317,7 +306,7 @@ async function transcribeOpusOfflineInSegments(
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // WORKERFS reads the selected File directly instead of copying the entire recording into WASM memory.
-    await ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
+    await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     const duration = await getAudioDurationSeconds(file);
     const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
@@ -406,7 +395,7 @@ async function transcribeOpusInSegments(
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // WORKERFS avoids loading a second full copy of long recordings into the WASM filesystem.
-    await ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
+    await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     const duration = await getAudioDurationSeconds(file);
     const segmentSeconds = Math.min(90, getAudioSegmentSeconds());
     const overlapSeconds = 2;
