@@ -273,7 +273,8 @@ async function transcribeOpusOfflineInSegments(
       coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
-    // WORKERFS reads the selected File directly instead of copying the entire recording into WASM memory.
+    // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
+    await ffmpeg.createDir('/audio-input');
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
@@ -364,7 +365,8 @@ async function transcribeOpusInSegments(
       coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
-    // WORKERFS avoids loading a second full copy of long recordings into the WASM filesystem.
+    // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
+    await ffmpeg.createDir('/audio-input');
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
