@@ -41,8 +41,11 @@ jobs:
       - name: Run regression tests
         run: npm test
 
-      - name: TypeScript validation
+      - name: Frontend TypeScript validation
         run: npx tsc --noEmit
+
+      - name: Backend TypeScript validation
+        run: npx tsc --noEmit -p tsconfig.backend.json
 
       - name: Build web application
         run: npm run build
