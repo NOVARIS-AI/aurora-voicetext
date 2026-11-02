@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
@@ -6,7 +7,7 @@ import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
   ShieldCheck, Clock3, WandSparkles, LoaderCircle, FileText,
-  Settings2, Mic2, Volume2, BookOpen, Trash2, Play, Pause, Save,
+  Settings2, Mic2, Volume2, BookOpen, Trash2, Play, Pause, Save, Languages, Search, FileDown, AudioWaveform,
 } from 'lucide-react';
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
@@ -14,7 +15,7 @@ type TimedSegment = { start: number; end: number; text: string };
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; timedSegments?: TimedSegment[] };
-type Page = 'home' | 'transcribe' | 'library' | 'studio' | 'settings';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -26,6 +27,74 @@ const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
 const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/api/transcribe` : '';
 let pipelinePromise: Promise<Engine> | null = null;
 let voskModelPromise: Promise<any> | null = null;
+
+async function requestFeature(path: string, payload: unknown, binary = false): Promise<{ response: Response; data?: any }> {
+  const primary = API_BASE_URL ? API_BASE_URL + path : path;
+  const urls = [primary, ...(BACKUP_API_BASE_URL ? [BACKUP_API_BASE_URL + path] : [])];
+  let lastError: unknown;
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (response.ok) return { response, data: binary ? undefined : await response.json() };
+      const body = binary ? null : await response.json().catch(() => null);
+      lastError = new Error(body?.error || 'The service is temporarily unavailable.');
+      if (response.status < 500 && response.status !== 408 && response.status !== 429) break;
+    } catch (error) { lastError = error; }
+  }
+  throw lastError instanceof Error ? lastError : new Error('The requested service is unavailable. Configure the primary or backup backend.');
+}
+
+function splitLongText(text: string, max = 22000): string[] {
+  const chunks: string[] = [];
+  let remaining = text.trim();
+  while (remaining.length > max) {
+    let cut = remaining.lastIndexOf('\n', max);
+    if (cut < max * 0.55) cut = remaining.lastIndexOf(' ', max);
+    if (cut < max * 0.55) cut = max;
+    chunks.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+async function mergeMp3ChunksToWav(parts: Blob[]): Promise<Blob> {
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextClass) throw new Error('Audio decoding is unavailable on this device.');
+  const context: AudioContext = new AudioContextClass();
+  try {
+    const decoded: AudioBuffer[] = [];
+    for (const part of parts) decoded.push(await context.decodeAudioData(await part.arrayBuffer()));
+    const sampleRate = Math.max(...decoded.map(item => item.sampleRate));
+    const channels = Math.min(2, Math.max(...decoded.map(item => item.numberOfChannels)));
+    const totalFrames = decoded.reduce((sum, item) => sum + Math.ceil(item.duration * sampleRate), 0);
+    const pcm = Array.from({ length: channels }, () => new Float32Array(totalFrames));
+    let offset = 0;
+    for (const item of decoded) {
+      const frames = Math.ceil(item.duration * sampleRate);
+      for (let channel = 0; channel < channels; channel++) {
+        const source = item.getChannelData(Math.min(channel, item.numberOfChannels - 1));
+        for (let i = 0; i < frames; i++) {
+          const sourceIndex = Math.min(source.length - 1, Math.floor(i * item.sampleRate / sampleRate));
+          pcm[channel][offset + i] = source[sourceIndex] || 0;
+        }
+      }
+      offset += frames;
+    }
+    const bytesPerSample = 2, blockAlign = channels * bytesPerSample, dataSize = totalFrames * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize), view = new DataView(buffer);
+    const write = (at: number, value: string) => { for (let i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i)); };
+    write(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, channels, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true); view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, dataSize, true);
+    let at = 44;
+    for (let frame = 0; frame < totalFrames; frame++) for (let channel = 0; channel < channels; channel++) {
+      const sample = Math.max(-1, Math.min(1, pcm[channel][frame]));
+      view.setInt16(at, sample < 0 ? sample * 32768 : sample * 32767, true); at += 2;
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+  } finally { await context.close().catch(() => undefined); }
+}
 
 function readLibrary(): Recording[] {
   try {
@@ -499,6 +568,21 @@ function App() {
   const [studioText, setStudioText] = useState('');
   const [voiceRate, setVoiceRate] = useState(1);
   const [voicePitch, setVoicePitch] = useState(1);
+  const [voiceName, setVoiceName] = useState('nova');
+  const [voiceStyle, setVoiceStyle] = useState('Natural, conversational delivery');
+  const [voiceEmotion, setVoiceEmotion] = useState('Warm and friendly');
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
+  const [voiceProvider, setVoiceProvider] = useState('');
+  const [includeTimestamps, setIncludeTimestamps] = useState(true);
+  const [subtitleQuery, setSubtitleQuery] = useState('');
+  const [subtitleLanguage, setSubtitleLanguage] = useState('en');
+  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;downloads:number}>>([]);
+  const [subtitleBusy, setSubtitleBusy] = useState(false);
+  const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
+  const [subtitleStatus, setSubtitleStatus] = useState('');
+  const [subtitleText, setSubtitleText] = useState('');
+  const [subtitleFilename, setSubtitleFilename] = useState('subtitle');
   const [playing, setPlaying] = useState(false);
   const [audioPlayhead, setAudioPlayhead] = useState(0);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -634,27 +718,43 @@ function App() {
     });
   }
 
-  function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
+  async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
+    const timestamped = includeTimestamps && timedSegments?.length
+      ? timedSegments.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
+      : text;
+    if (exportType === 'docx') {
+      try {
+        const paragraphs = includeTimestamps && timedSegments?.length
+          ? timedSegments.map(segment => new Paragraph({ children: [new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91' }), new TextRun(segment.text)], spacing: { after: 120 } }))
+          : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
+        const doc = new Document({ sections: [{ properties: {}, children: [new Paragraph({ children: [new TextRun({ text: 'AURORA VoiceText Transcript', bold: true, size: 30 })], spacing: { after: 300 } }), ...paragraphs] }] });
+        const blob = await Packer.toBlob(doc);
+        downloadFile(baseName + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        setError(''); setStatus('DOCX document prepared.');
+      } catch (error) { setError(error instanceof Error ? error.message : 'DOCX export failed.'); }
+      return;
+    }
     if (exportType === 'pdf') {
       const popup = window.open('', '_blank');
       if (!popup) { setError('Allow pop-ups to print or save as PDF.'); return; }
-      popup.document.write('<!doctype html><html><head><title>AURORA VoiceText</title><style>body{font:16px Arial;line-height:1.7;max-width:760px;margin:40px auto;white-space:pre-wrap;padding:0 20px}</style></head><body></body></html>');
-      popup.document.body.textContent = text;
+      popup.document.write('<!doctype html><html><head><title>AURORA VoiceText</title><style>body{font:16px Arial;line-height:1.7;max-width:760px;margin:40px auto;white-space:pre-wrap;padding:0 20px} @media print{body{margin:18mm auto}}</style></head><body></body></html>');
+      popup.document.body.textContent = timestamped;
       popup.document.close(); popup.focus(); popup.print();
       return;
     }
     const extensions: Record<string, { ext: string; mime: string; text: string }> = {
-      txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', text },
-      md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# AURORA VoiceText\n\n' + text },
-      html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>AURORA VoiceText</title><pre style="white-space:pre-wrap;font:16px system-ui">' + text.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre>' },
-      rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi ' + text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
+      txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', text: timestamped },
+      md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# AURORA VoiceText\n\n' + timestamped },
+      html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>AURORA VoiceText</title><pre style="white-space:pre-wrap;font:16px system-ui">' + timestamped.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre>' },
+      rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi ' + timestamped.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
       srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: timedSegments?.length ? createTimedSubtitles(timedSegments, 'srt') : createEstimatedSubtitles(text, 'srt') },
       vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timedSegments?.length ? createTimedSubtitles(timedSegments, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
     downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
     if (exportType === 'srt' || exportType === 'vtt') setStatus(timedSegments?.length ? 'Exported speech-aligned timestamps from the transcription engine.' : 'No speech-aligned timestamps were returned; this subtitle file uses estimated timings.');
+    else if (includeTimestamps && timedSegments?.length) setStatus('Exported the complete transcript with timestamps.');
     setError('');
   }
 
