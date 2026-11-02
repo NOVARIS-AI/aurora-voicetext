@@ -140,7 +140,7 @@ export default {
     if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.GROQ_API_KEY || env.OPENAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
     const routes = new Set(["/api/transcribe", "/api/tts", "/api/translate", "/api/subtitles", "/api/subtitles-download"]);
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
-    if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, new Headers([...cors, ["Allow", "POST"]]));
+    if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
     const bearer = Boolean(env.BACKUP_API_TOKEN) && request.headers.get("authorization") === "Bearer " + env.BACKUP_API_TOKEN;
     const publicAllowed = env.BACKUP_PUBLIC_FALLBACK === "true" && originAllowed;
     if (!bearer && !publicAllowed) return json({ error: "Unauthorized or origin not allowed." }, 401, cors);
