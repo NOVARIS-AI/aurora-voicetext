@@ -17,6 +17,7 @@ Set these in Vercel Project Settings → Environment Variables. Do not prefix se
 - `OPENAI_API_KEY` — transcription, translation and AI speech provider.
 - `ELEVENLABS_API_KEY` — optional AI speech fallback.
 - `OPENSUBTITLES_API_KEY` — subtitle search.
+- `OPENSUBTITLES_TOKEN` — optional account authorization token for direct subtitle file downloads.
 - `OPENSUBTITLES_USER_AGENT` — optional registered application user-agent.
 - `BACKUP_BACKEND_URL` — deployed Cloudflare Worker base URL.
 - `BACKUP_BACKEND_TOKEN` — shared bearer token; must match Worker `BACKUP_API_TOKEN`.
@@ -34,6 +35,7 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - `OPENAI_API_KEY`
 - `ELEVENLABS_API_KEY`
 - `OPENSUBTITLES_API_KEY`
+- `OPENSUBTITLES_TOKEN`
 - `OPENSUBTITLES_USER_AGENT`
 
 The deploy workflow transfers the provider secrets to Cloudflare Worker secrets during deployment. GitHub Actions secrets are not automatically available to Vercel runtime functions: configure the Vercel variables separately.
@@ -46,6 +48,6 @@ After the GitHub Actions secrets are added, push a change under `backup-worker/`
 
 - No real provider keys are committed in this repository.
 - Health checks expose only configured/not-configured booleans, never credentials.
-- Subtitle search returns provider metadata and file identifiers. A provider-authorized download flow still needs to be implemented before claiming subtitle files can be downloaded directly.
+- Subtitle search returns provider metadata and file identifiers. Direct file download requires the provider-issued OPENSUBTITLES_TOKEN in addition to the API key.
 - The Worker is an independent backend, but the current Android app still uses its configured primary API base URL. A client-side direct-to-Worker failover needs a separate app change and must send the backup bearer token securely; do not embed that token in the APK.
 - AI TTS requires a configured paid/available provider account. Browser speech synthesis is not represented as AI generation.
