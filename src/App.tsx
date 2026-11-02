@@ -87,8 +87,20 @@ function getAudioSegmentSeconds(): number {
   return 120;
 }
 
-function makeAudioFileKey(file: File): string {
-  return [file.name, file.size, file.lastModified, file.type].join('|');
+async function makeAudioFileKey(file: File): Promise<string> {
+  const identity = [file.name, file.size, file.lastModified, file.type].join('|');
+  try {
+    if (!globalThis.crypto?.subtle) return identity;
+    const sampleSize = 64 * 1024;
+    const head = new Uint8Array(await file.slice(0, sampleSize).arrayBuffer());
+    const tail = file.size > sampleSize ? new Uint8Array(await file.slice(Math.max(sampleSize, file.size - sampleSize)).arrayBuffer()) : new Uint8Array();
+    const sample = new Uint8Array(head.length + tail.length);
+    sample.set(head);
+    sample.set(tail, head.length);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', sample);
+    const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    return identity + '|' + fingerprint;
+  } catch { return identity; }
 }
 
 async function getAudioDurationSeconds(file: File): Promise<number> {
@@ -96,17 +108,28 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
     const url = URL.createObjectURL(file);
     const audio = document.createElement('audio');
     audio.preload = 'metadata';
-    const cleanup = () => { audio.removeAttribute('src'); audio.load(); URL.revokeObjectURL(url); };
-    audio.onloadedmetadata = () => {
-      const duration = audio.duration;
+    let settled = false;
+    const timer = window.setTimeout(() => finish(new Error('Reading audio metadata took too long. Try MP3, M4A, WAV or OGG.')), 15000);
+    const cleanup = () => {
+      audio.onloadedmetadata = null;
+      audio.onerror = null;
+      audio.onabort = null;
+      audio.removeAttribute('src');
+      audio.load();
+      URL.revokeObjectURL(url);
+      window.clearTimeout(timer);
+    };
+    const finish = (error?: Error, duration?: number) => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      if (error) reject(error);
+      else if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) resolve(duration);
       else reject(new Error('Could not read the recording duration. Try exporting the audio as MP3, M4A, WAV or OGG.'));
     };
-    audio.onerror = () => {
-      cleanup();
-      reject(new Error('This browser could not read the audio duration. Try Chrome or convert the recording to MP3, M4A, WAV or OGG.'));
-    };
+    audio.onloadedmetadata = () => finish(undefined, audio.duration);
+    audio.onerror = () => finish(new Error('This browser could not read the audio duration. Try Chrome or convert the recording to MP3, M4A, WAV or OGG.'));
+    audio.onabort = () => finish(new Error('Reading audio metadata was interrupted. Please select the recording again.'));
     audio.src = url;
   });
 }
@@ -126,7 +149,7 @@ function makeSummary(text: string) {
   const keywords = new Set(['need', 'must', 'please', 'tomorrow', 'today', 'meeting', 'remember', 'send', 'call', 'pay', 'deadline', 'important', 'because', 'decide', 'agree', 'follow']);
   const ranked = sentences.map((sentence, index) => ({
     sentence, index,
-    score: sentence.split(/\s+/).length > 4 ? 1 : 0 +
+    score: (sentence.split(/\s+/).length > 4 ? 1 : 0) +
       (sentence.match(/\b(?:need|must|please|tomorrow|today|meeting|remember|send|call|pay|deadline|important|decide|agree|follow)\b/gi) || []).length * 2,
   }));
   return ranked.sort((a, b) => b.score - a.score).slice(0, Math.min(4, ranked.length)).sort((a, b) => a.index - b.index).map(item => '• ' + item.sentence).join('\n');
@@ -344,7 +367,7 @@ async function transcribeOpusOfflineInSegments(
     const duration = await getAudioDurationSeconds(file);
     const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
-    const fileKey = makeAudioFileKey(file);
+    const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
     const checkpoint: TranscriptionCheckpoint = saved && saved.totalChunks === total
@@ -437,7 +460,7 @@ async function transcribeOpusInSegments(
     const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
     const totalParts = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!totalParts || totalParts > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
-    const fileKey = makeAudioFileKey(file);
+    const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
     const checkpoint: TranscriptionCheckpoint = saved && saved.totalChunks === totalParts
@@ -518,17 +541,19 @@ function App() {
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const filesRef = useRef<AudioFile[]>(files);
+  filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
 
-  useEffect(() => () => files.forEach(item => URL.revokeObjectURL(item.url)), []);
+  useEffect(() => () => filesRef.current.forEach(item => URL.revokeObjectURL(item.url)), []);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
-    const accepted = Array.from(list).filter(file => file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));
+    const accepted = Array.from(list).filter(file => file.size > 0 && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name)));
     if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
     const next = accepted.map(file => ({ id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: URL.createObjectURL(file), transcript: '' }));
     setFiles(current => [...current, ...next]);
@@ -656,7 +681,7 @@ function App() {
       const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
       const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
       const previous = checkpointRef.current;
-      const fileKey = makeAudioFileKey(active.file);
+      const fileKey = await makeAudioFileKey(active.file);
       let restored: TranscriptionCheckpoint | null = null;
       if (!(previous?.fileId === active.id && previous.totalChunks === totalChunks)) {
         try {
