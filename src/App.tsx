@@ -343,7 +343,17 @@ async function transcribeOpusInSegments(
     ]);
     const entries = await ffmpeg.listDir('/');
     const totalParts = entries.filter(entry => entry.name.startsWith('aurora-part-') && entry.name.endsWith('.mp3')).length;
-    for (let index = 0; index < totalParts; index++) {
+    if (!totalParts) throw new Error('The audio decoder could not create any sections.');
+    const fileKey = makeAudioFileKey(file);
+    let saved: TranscriptionCheckpoint | null = null;
+    try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
+    const checkpoint: TranscriptionCheckpoint = saved && saved.totalChunks === totalParts
+      ? { ...saved, fileId: fileKey }
+      : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: totalParts };
+    const parts: string[] = [...checkpoint.parts];
+    onPart(parts);
+    onProgress(checkpoint.nextChunk, totalParts);
+    for (let index = checkpoint.nextChunk; index < totalParts; index++) {
       const name = 'aurora-part-' + String(index).padStart(3, '0') + '.mp3';
       let bytes: Uint8Array;
       try {
@@ -360,17 +370,22 @@ async function transcribeOpusInSegments(
           audioBase64: toBase64(bytes),
           mimeType: 'audio/mpeg',
           chunkNumber: index + 1,
+          totalChunks: totalParts,
           languageHint: 'English and Nigerian Pidgin',
         }),
       });
       const result = await response.json().catch(() => ({})) as { text?: string; error?: string };
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
       if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
+      checkpoint.parts = parts;
+      checkpoint.nextChunk = index + 1;
+      try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep the in-session partial transcript. */ }
       onProgress(index + 1, totalParts);
       onPart(parts);
       await ffmpeg.deleteFile(name);
     }
     if (!parts.length) throw new Error('The audio decoder found no transcribable speech sections.');
+    try { await removeSavedCheckpoint(fileKey); } catch { /* Completed transcript is already in the editor. */ }
     return parts;
   } finally {
     try { await ffmpeg.deleteFile(inputName); } catch { /* Input may not have been created. */ }
@@ -445,6 +460,50 @@ function App() {
     if (!active || busy) return;
     setBusy(true); setError(''); setStatus('Preparing audio…');
     try {
+      if (mode !== 'offline') {
+        try {
+          setStatus('Preparing long recording into smaller upload-safe sections…');
+          setProgress({ completed: 0, total: 0 });
+          const onlineParts = await transcribeOpusInSegments(
+            active.file,
+            (completed, total) => {
+              setProgress({ completed, total });
+              setStatus('Groq transcription · completed ' + completed + ' of ' + total + ' sections…');
+            },
+            currentParts => {
+              const partial = mergeTranscriptParts(currentParts);
+              if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
+            },
+          );
+          const completedText = mergeTranscriptParts(onlineParts);
+          if (!completedText) throw new Error('No clear speech was detected in this recording.');
+          setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
+          setStatus('Long-audio transcription complete. Review names, numbers and Nigerian Pidgin before sharing.');
+          setProgress({ completed: onlineParts.length, total: onlineParts.length });
+          return;
+        } catch (onlineProblem) {
+          if (mode === 'online') throw onlineProblem;
+          setStatus('Online processing could not finish. Switching to on-device Whisper…');
+          const offlineParts = await transcribeOpusOfflineInSegments(
+            active.file,
+            (completed, total) => {
+              setProgress({ completed, total });
+              setStatus('On-device backup · completed ' + completed + ' of ' + total + ' sections…');
+            },
+            currentParts => {
+              const partial = mergeTranscriptParts(currentParts);
+              if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
+            },
+            setStatus,
+          );
+          const completedText = mergeTranscriptParts(offlineParts);
+          if (!completedText) throw new Error('No clear speech was detected in this recording.');
+          setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
+          setStatus('Transcription complete using the on-device backup. Review the result before sharing.');
+          setProgress({ completed: offlineParts.length, total: offlineParts.length });
+          return;
+        }
+      }
       let audio: Float32Array;
       try {
         audio = await decodeAudio(active.file);
