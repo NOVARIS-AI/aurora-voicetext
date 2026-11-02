@@ -30,7 +30,8 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
   }
   if (process.env.ELEVENLABS_API_KEY) {
     try {
-      const voiceId = input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) ? input.voice : (process.env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL");
+      const builtInVoiceNames = new Set(["nova","shimmer","coral","sage","onyx","echo","ash","fable","alloy"]);
+      const voiceId = input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) && !builtInVoiceNames.has(input.voice.toLowerCase()) ? input.voice : (process.env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL");
       const response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(voiceId), {
         method: "POST",
         headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
