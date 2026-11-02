@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createEstimatedSubtitles, mergeTranscriptParts } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
@@ -10,6 +11,8 @@ import {
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
 type TimedSegment = { start: number; end: number; text: string };
+type BackgroundTranscriptionBridge = { start: () => Promise<void>; stop: () => Promise<void> };
+const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; timedSegments?: TimedSegment[] };
 type Page = 'home' | 'transcribe' | 'library' | 'studio' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
@@ -528,6 +531,7 @@ function App() {
       setStatus,
     );
     try {
+      if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
       let parts: string[];
       if (mode === 'offline') {
         setStatus('Offline mode · audio stays on this device.');
@@ -568,6 +572,7 @@ function App() {
       setError(message + ' Completed sections are checkpointed when browser storage is available. Tap Transcribe again with the same recording to resume.');
       setStatus('Your recording remains selected. You can retry without starting over from completed sections.');
     } finally {
+      if (Capacitor.isNativePlatform()) await backgroundTranscription.stop().catch(() => undefined);
       setBusy(false);
     }
   }
