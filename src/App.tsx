@@ -327,9 +327,6 @@ async function transcribeOpusOfflineInSegments(
         }
         parts.push(transcript);
       }
-      const sectionSegments = (result.segments ?? []).filter(segment => typeof segment.start === 'number' && typeof segment.end === 'number' && typeof segment.text === 'string').map(segment => ({ start: start + (segment.start as number), end: start + (segment.end as number), text: (segment.text as string).trim() })).filter(segment => segment.text.length > 0);
-      timedSegments.push(...sectionSegments);
-      checkpoint.segments = timedSegments;
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
       try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session progress. */ }
@@ -420,6 +417,9 @@ async function transcribeOpusInSegments(
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
       if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
       else throw new Error('The transcription service returned an empty result for section ' + (index + 1) + '.');
+      const sectionSegments = (result.segments ?? []).filter(segment => typeof segment.start === 'number' && typeof segment.end === 'number' && typeof segment.text === 'string' && (index === 0 || segment.start >= overlapSeconds)).map(segment => ({ start: start + (segment.start as number), end: start + (segment.end as number), text: (segment.text as string).trim() })).filter(segment => segment.text.length > 0);
+      timedSegments.push(...sectionSegments);
+      checkpoint.segments = timedSegments;
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
       try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session partial transcript. */ }
