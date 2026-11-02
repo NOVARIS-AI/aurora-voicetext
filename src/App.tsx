@@ -7,7 +7,7 @@ import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
   ShieldCheck, Clock3, WandSparkles, LoaderCircle, FileText,
-  Settings2, Mic2, Volume2, BookOpen, Trash2, Play, Pause, Save, Languages, Search, FileDown, AudioWaveform,
+  Settings2, Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform,
 } from 'lucide-react';
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
@@ -575,6 +575,7 @@ function App() {
   const [assistBusy, setAssistBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
   const [voiceProvider, setVoiceProvider] = useState('');
+  const [audioPlayhead, setAudioPlayhead] = useState(0);
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
@@ -584,8 +585,6 @@ function App() {
   const [subtitleStatus, setSubtitleStatus] = useState('');
   const [subtitleText, setSubtitleText] = useState('');
   const [subtitleFilename, setSubtitleFilename] = useState('subtitle');
-  const [playing, setPlaying] = useState(false);
-  const [audioPlayhead, setAudioPlayhead] = useState(0);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
@@ -928,8 +927,8 @@ function App() {
         <div className="page-heading"><div className="eyebrow">AI PREVIEW WORKSPACE</div><h1>Transcript preview</h1><p>Edit your transcript and its speech-aligned timestamps in one place. Changes stay attached to the selected recording.</p></div>
         {active ? <section className="card preview-card">
           <div className="card-title"><div><small>TRANSCRIPT WORKSPACE</small><h2>{active.file.name}</h2></div><span className="count">{active.timedSegments?.length || 0} timed lines</span></div>
-          <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url}/>
-          {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className="timestamp-chip" onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value)} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
+          <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
+          {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead >= segment.start && audioPlayhead < segment.end ? "timestamp-chip active" : "timestamp-chip"} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value)} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
           <div className="studio-actions"><button className="primary" type="button" disabled={assistBusy} onClick={polishTranscript}>{assistBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} AI polish transcript</button><button className="primary" type="button" onClick={saveToLibrary}><Save size={16}/> Save changes</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={16}/> Export transcript</button></div>
         </section> : <div className="empty-state"><AudioWaveform/><strong>Select a recording first</strong><span>Open Transcribe and choose a recording to edit its transcript.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
       </section>}
