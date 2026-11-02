@@ -61,6 +61,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     form.append('file', new Blob([audioBuffer], { type: mimeType }), 'audio-chunk.' + extension);
     form.append('model', 'whisper-large-v3-turbo');
     form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'segment');
     form.append('temperature', '0');
     const languageHint = typeof input.languageHint === 'string' ? input.languageHint.replace(/[\\r\\n]/g, ' ').slice(0, 120) : 'English and Nigerian Pidgin';
     form.append('prompt', 'Transcribe accurately. Likely language context: ' + languageHint + '. Speakers may mix Nigerian Pidgin English and standard English. Preserve the words and language actually spoken; do not translate Pidgin, summarize, or invent unclear words. Return only the transcript.');
