@@ -322,7 +322,6 @@ async function transcribeOpusInSegments(
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
   const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
   const inputName = 'aurora-input.' + extension;
-  const parts: string[] = [];
   const toBase64 = (bytes: Uint8Array) => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -361,7 +360,7 @@ async function transcribeOpusInSegments(
         if (typeof output === 'string') throw new Error('Unexpected text audio output.');
         bytes = output;
       } catch {
-        break;
+        throw new Error('Could not read audio section ' + (index + 1) + ' from the local decoder.');
       }
       const response = await fetch(transcriptionApiUrl, {
         method: 'POST',
