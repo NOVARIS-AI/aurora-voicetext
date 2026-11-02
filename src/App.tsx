@@ -391,41 +391,47 @@ async function transcribeOpusInSegments(
     onPart(parts);
     onTimedParts(timedSegments);
     onProgress(checkpoint.nextChunk, totalParts);
-    // Encode sequentially (FFmpeg has one shared output file), then upload two chunks concurrently.
-    // This overlaps network/provider time without loading the entire recording into memory.
-    const uploadChunk = async (index: number) => {
-      const start = index * stepSeconds;
-      const length = Math.min(segmentSeconds, duration - start);
-      const encodeExitCode = await ffmpeg.exec([
-        '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
-        '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-        '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
-      ]);
-      if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (index + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
-      const output = await ffmpeg.readFile(outputName);
-      if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
-      if (!output.length) throw new Error('The audio decoder created an empty section.');
-      if (output.length > 1250000) throw new Error('Audio section ' + (index + 1) + ' is too large to upload safely. Reduce the section length and retry.');
+    // Encode sequentially because FFmpeg shares one virtual output file.
+    // Then overlap the two network requests to reduce idle provider wait time.
+    const uploadPrepared = async (prepared: { index: number; start: number; bytes: Uint8Array }) => {
       const response = await fetchWithRetry(transcriptionApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          audioBase64: toBase64(output),
+          audioBase64: toBase64(prepared.bytes),
           mimeType: 'audio/mpeg',
-          chunkNumber: index + 1,
+          chunkNumber: prepared.index + 1,
           totalChunks: totalParts,
           languageHint: 'English and Nigerian Pidgin',
         }),
       });
       const result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
-      if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
-      if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for section ' + (index + 1) + '.');
-      return { index, start, text: result.text.trim(), segments: result.segments ?? [] };
+      if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.');
+      if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
+      return { index: prepared.index, start: prepared.start, text: result.text.trim(), segments: result.segments ?? [] };
     };
 
     for (let index = checkpoint.nextChunk; index < totalParts; index += 2) {
       const batchIndexes = [index, index + 1].filter(value => value < totalParts);
-      const batchResults = await Promise.all(batchIndexes.map(uploadChunk));
+      const prepared: Array<{ index: number; start: number; bytes: Uint8Array }> = [];
+      for (const chunkIndex of batchIndexes) {
+        const start = chunkIndex * stepSeconds;
+        const length = Math.min(segmentSeconds, duration - start);
+        const encodeExitCode = await ffmpeg.exec([
+          '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
+          '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+          '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
+        ]);
+        if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (chunkIndex + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
+        const output = await ffmpeg.readFile(outputName);
+        if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
+        if (!output.length) throw new Error('The audio decoder created an empty section.');
+        if (output.length > 1250000) throw new Error('Audio section ' + (chunkIndex + 1) + ' is too large to upload safely. Reduce the section length and retry.');
+        prepared.push({ index: chunkIndex, start, bytes: new Uint8Array(output) });
+        try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
+      }
+
+      const batchResults = await Promise.all(prepared.map(uploadPrepared));
       batchResults.sort((a, b) => a.index - b.index);
       for (const result of batchResults) {
         parts.push(result.text);
@@ -446,7 +452,6 @@ async function transcribeOpusInSegments(
         onPart(parts);
         onTimedParts(timedSegments);
       }
-      try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.length) throw new Error('The audio decoder found no transcribable speech sections.');
