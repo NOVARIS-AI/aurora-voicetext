@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://aurora-voicetext-qk8s.vercel.app/sitemap.xml
