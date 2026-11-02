@@ -24,6 +24,7 @@ jobs:
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       ELEVENLABS_DEFAULT_VOICE_ID: ${{ secrets.ELEVENLABS_DEFAULT_VOICE_ID }}
       OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
+      OPENSUBTITLES_TOKEN: ${{ secrets.OPENSUBTITLES_TOKEN }}
       OPENSUBTITLES_USER_AGENT: ${{ secrets.OPENSUBTITLES_USER_AGENT }}
     defaults:
       run:
@@ -49,6 +50,7 @@ jobs:
           if [ -n "$ELEVENLABS_API_KEY" ]; then printf '%s' "$ELEVENLABS_API_KEY" | wrangler secret put ELEVENLABS_API_KEY; fi
           if [ -n "$ELEVENLABS_DEFAULT_VOICE_ID" ]; then printf '%s' "$ELEVENLABS_DEFAULT_VOICE_ID" | wrangler secret put ELEVENLABS_DEFAULT_VOICE_ID; fi
           if [ -n "$OPENSUBTITLES_API_KEY" ]; then printf '%s' "$OPENSUBTITLES_API_KEY" | wrangler secret put OPENSUBTITLES_API_KEY; fi
+          if [ -n "$OPENSUBTITLES_TOKEN" ]; then printf '%s' "$OPENSUBTITLES_TOKEN" | wrangler secret put OPENSUBTITLES_TOKEN; fi
           if [ -n "$OPENSUBTITLES_USER_AGENT" ]; then printf '%s' "$OPENSUBTITLES_USER_AGENT" | wrangler secret put OPENSUBTITLES_USER_AGENT; fi
       - name: Deploy independent multi-service backup API
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
