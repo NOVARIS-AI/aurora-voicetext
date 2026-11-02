@@ -1,0 +1,61 @@
+export function mergeTranscriptParts(parts) {
+  const merged = [];
+  for (const part of parts) {
+    const next = String(part || '').trim().split(/\\s+/).filter(Boolean);
+    if (!next.length) continue;
+    if (!merged.length) { merged.push(...next); continue; }
+    const normalize = word => word.toLowerCase().replace(/[^\\p{L}\\p{N}']/gu, '');
+    const current = merged.map(normalize);
+    const incoming = next.map(normalize);
+    let overlap = 0;
+    const limit = Math.min(30, current.length, incoming.length);
+    for (let size = limit; size >= 2; size--) {
+      if (current.slice(-size).every((word, index) => word && word === incoming[index])) {
+        overlap = size;
+        break;
+      }
+    }
+    merged.push(...next.slice(overlap));
+  }
+  return merged.join(' ').replace(/\\s+([,.;!?])/g, '$1').trim();
+}
+
+function formatTimestamp(seconds, separator) {
+  const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const totalMs = Math.round(safe * 1000);
+  const hours = Math.floor(totalMs / 3600000);
+  const minutes = Math.floor((totalMs % 3600000) / 60000);
+  const secs = Math.floor((totalMs % 60000) / 1000);
+  const millis = totalMs % 1000;
+  return String(hours).padStart(2, '0') + ':' +
+    String(minutes).padStart(2, '0') + ':' +
+    String(secs).padStart(2, '0') + separator +
+    String(millis).padStart(3, '0');
+}
+
+/**
+ * Creates clearly estimated subtitle cues. These are not forced-alignment
+ * timestamps; actual word timing requires a speech-alignment engine.
+ */
+export function createEstimatedSubtitles(text, format = 'srt') {
+  const words = String(text || '').trim().split(/\\s+/).filter(Boolean);
+  if (!words.length) return format === 'vtt' ? 'WEBVTT\\n' : '';
+  const cues = [];
+  const wordsPerCue = 9;
+  let cursor = 0;
+  for (let offset = 0; offset < words.length; offset += wordsPerCue) {
+    const group = words.slice(offset, offset + wordsPerCue);
+    const start = cursor;
+    const duration = Math.max(1.6, group.length / 2.5);
+    const end = start + duration;
+    cues.push({ start, end, text: group.join(' ') });
+    cursor = end + 0.12;
+  }
+  const vtt = format === 'vtt';
+  const blocks = cues.map((cue, index) =>
+    (vtt ? '' : String(index + 1) + '\\n') +
+    formatTimestamp(cue.start, vtt ? '.' : ',') + ' --> ' +
+    formatTimestamp(cue.end, vtt ? '.' : ',') + '\\n' + cue.text
+  );
+  return (vtt ? 'WEBVTT\\n\\n' : '') + blocks.join('\\n\\n') + '\\n';
+}
