@@ -7,7 +7,7 @@ The Android app and web app call same-origin `/api/*` routes. They never receive
 1. The primary API runs on Vercel and reads runtime environment variables.
 2. Provider adapters try configured providers in order (Groq/OpenAI for transcription and translation; OpenAI/ElevenLabs for speech; OpenSubtitles for subtitle search).
 3. If the primary provider chain fails, the API calls the independent Cloudflare Worker using `BACKUP_BACKEND_URL` and `BACKUP_BACKEND_TOKEN`.
-4. The Worker has its own provider secrets and can continue operating if the Vercel project is unavailable, provided the app has the Worker URL configured as its API base or a separate client fallback is enabled in a future client update.
+4. The Worker has its own provider secrets. The app can use it as a direct secondary endpoint through the build-time `VITE_BACKUP_API_BASE_URL` setting when the primary host is unreachable or returns a retryable failure. Server-side Vercel functions can also call it using the private token.
 
 ## Vercel runtime environment variables
 
@@ -19,6 +19,7 @@ Set these in Vercel Project Settings → Environment Variables. Do not prefix se
 - `OPENSUBTITLES_API_KEY` — subtitle search.
 - `OPENSUBTITLES_TOKEN` — optional account authorization token for direct subtitle file downloads.
 - `OPENSUBTITLES_USER_AGENT` — optional registered application user-agent.
+- `OPENAI_TTS_MODEL`, `ELEVENLABS_TTS_MODEL`, `OPENAI_TRANSLATION_MODEL`, `GROQ_TRANSLATION_MODEL` — optional model overrides.
 - `BACKUP_BACKEND_URL` — deployed Cloudflare Worker base URL.
 - `BACKUP_BACKEND_TOKEN` — shared bearer token; must match Worker `BACKUP_API_TOKEN`.
 
@@ -37,17 +38,29 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - `OPENSUBTITLES_API_KEY`
 - `OPENSUBTITLES_TOKEN`
 - `OPENSUBTITLES_USER_AGENT`
+- `ELEVENLABS_DEFAULT_VOICE_ID` (optional; used when ElevenLabs is the speech provider)
+- `BACKUP_PUBLIC_FALLBACK` (set to `true` only after Cloudflare rate limiting and spend alerts are configured)
 
 The deploy workflow transfers the provider secrets to Cloudflare Worker secrets during deployment. GitHub Actions secrets are not automatically available to Vercel runtime functions: configure the Vercel variables separately.
 
 ## Deploy
 
-After the GitHub Actions secrets are added, push a change under `backup-worker/` or run the **Deploy AURORA VoiceText backup worker** workflow manually. The workflow deliberately skips deployment when Cloudflare credentials are absent.
+After the GitHub Actions secrets are added, push a change under `backup-worker/` or run the **Deploy AURORA VoiceText backup worker** workflow manually. It skips deployment when Cloudflare credentials are absent. Add the deployed Worker origin (without a trailing slash) as the GitHub Actions repository variable `BACKUP_API_BASE_URL`; the APK build injects it as `VITE_BACKUP_API_BASE_URL`.
 
 ## Important limits
 
 - No real provider keys are committed in this repository.
 - Health checks expose only configured/not-configured booleans, never credentials.
 - Subtitle search returns provider metadata and file identifiers. Direct file download requires the provider-issued OPENSUBTITLES_TOKEN in addition to the API key.
-- The Worker is an independent backend, but the current Android app still uses its configured primary API base URL. A client-side direct-to-Worker failover needs a separate app change and must send the backup bearer token securely; do not embed that token in the APK.
+- The Android app uses the primary API first, then the configured Worker URL for secondary requests. Direct app access requires `BACKUP_PUBLIC_FALLBACK=true`; origin restrictions are not authentication, so apply Cloudflare rate limits and spend alerts before enabling it. Never embed the private backup bearer token in the APK.
 - AI TTS requires a configured paid/available provider account. Browser speech synthesis is not represented as AI generation.
+
+
+## Implemented application endpoints
+
+- `POST /api/transcribe` — Groq/OpenAI transcription with backup failover.
+- `POST /api/tts` — AI speech generation with OpenAI/ElevenLabs fallback.
+- `POST /api/assist` — transcript cleanup that preserves the spoken meaning and language.
+- `POST /api/translate` — AI translation while preserving subtitle structure.
+- `POST /api/subtitles` and `POST /api/subtitles-download` — OpenSubtitles catalogue search and authorized file download.
+- `GET /api/health` — provider configuration status without exposing keys.
