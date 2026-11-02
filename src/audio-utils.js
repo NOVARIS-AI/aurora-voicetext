@@ -1,10 +1,10 @@
 export function mergeTranscriptParts(parts) {
   const merged = [];
   for (const part of parts) {
-    const next = String(part || '').trim().split(/\\s+/).filter(Boolean);
+    const next = String(part || '').trim().split(/\s+/).filter(Boolean);
     if (!next.length) continue;
     if (!merged.length) { merged.push(...next); continue; }
-    const normalize = word => word.toLowerCase().replace(/[^\\p{L}\\p{N}']/gu, '');
+    const normalize = word => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
     const current = merged.map(normalize);
     const incoming = next.map(normalize);
     let overlap = 0;
@@ -17,7 +17,7 @@ export function mergeTranscriptParts(parts) {
     }
     merged.push(...next.slice(overlap));
   }
-  return merged.join(' ').replace(/\\s+([,.;!?])/g, '$1').trim();
+  return merged.join(' ').replace(/\s+([,.;!?])/g, '$1').trim();
 }
 
 function formatTimestamp(seconds, separator) {
@@ -34,12 +34,12 @@ function formatTimestamp(seconds, separator) {
 }
 
 /**
- * Creates clearly estimated subtitle cues. These are not forced-alignment
+ * Creates estimated subtitle cues. These are not forced-alignment
  * timestamps; actual word timing requires a speech-alignment engine.
  */
 export function createEstimatedSubtitles(text, format = 'srt') {
-  const words = String(text || '').trim().split(/\\s+/).filter(Boolean);
-  if (!words.length) return format === 'vtt' ? 'WEBVTT\\n' : '';
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return format === 'vtt' ? 'WEBVTT\n' : '';
   const cues = [];
   const wordsPerCue = 9;
   let cursor = 0;
@@ -53,9 +53,9 @@ export function createEstimatedSubtitles(text, format = 'srt') {
   }
   const vtt = format === 'vtt';
   const blocks = cues.map((cue, index) =>
-    (vtt ? '' : String(index + 1) + '\\n') +
+    (vtt ? '' : String(index + 1) + '\n') +
     formatTimestamp(cue.start, vtt ? '.' : ',') + ' --> ' +
-    formatTimestamp(cue.end, vtt ? '.' : ',') + '\\n' + cue.text
+    formatTimestamp(cue.end, vtt ? '.' : ',') + '\n' + cue.text
   );
-  return (vtt ? 'WEBVTT\\n\\n' : '') + blocks.join('\\n\\n') + '\\n';
+  return (vtt ? 'WEBVTT\n\n' : '') + blocks.join('\n\n') + '\n';
 }
