@@ -12,7 +12,9 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 
 async function callProvider(endpoint: string, key: string, model: string, bytes: Uint8Array, mime: string, languageHint?: string) {
   const form = new FormData();
-  form.append("file", new Blob([bytes], { type: mime }), "audio-chunk." + (mime.includes("mpeg") ? "mp3" : mime.includes("webm") ? "webm" : mime.includes("ogg") ? "ogg" : "wav"));
+  const audioBuffer = new Uint8Array(bytes.byteLength);
+  audioBuffer.set(bytes);
+  form.append("file", new Blob([audioBuffer.buffer], { type: mime }), "audio-chunk." + (mime.includes("mpeg") ? "mp3" : mime.includes("webm") ? "webm" : mime.includes("ogg") ? "ogg" : "wav"));
   form.append("model", model); form.append("response_format", "verbose_json"); form.append("timestamp_granularities[]", "segment"); form.append("temperature", "0");
   if (languageHint) form.append("prompt", "Transcribe accurately. Preserve the spoken language. " + languageHint.slice(0, 120));
   const response = await fetch(endpoint, { method: "POST", headers: { Authorization: "Bearer " + key }, body: form, signal: AbortSignal.timeout(110000) });
