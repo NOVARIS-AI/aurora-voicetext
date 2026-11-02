@@ -20,8 +20,8 @@ type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
-const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\\/+$/, '');
-const BACKUP_API_BASE_URL = ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || '').replace(/\\/+$/, '');
+const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
+const BACKUP_API_BASE_URL = ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
 const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
 const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/api/transcribe` : '';
 let pipelinePromise: Promise<Engine> | null = null;
