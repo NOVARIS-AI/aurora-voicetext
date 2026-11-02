@@ -28,6 +28,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed.' });
   }
+  res.setHeader('Cache-Control', 'no-store');
   const input = (req.body || {}) as TranscribeBody;
   if (typeof input.audioBase64 !== 'string' || !input.audioBase64.length) {
     return res.status(400).json({ error: 'Audio chunk is missing.' });
@@ -35,8 +36,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (input.audioBase64.length > 1800000) {
     return res.status(413).json({ error: 'This audio chunk is too large. Please try again with a shorter audio segment.' });
   }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.audioBase64) || input.audioBase64.length % 4 !== 0) {
+    return res.status(400).json({ error: 'The audio upload is not valid base64 data. Please retry this section.' });
+  }
   const mimeType = input.mimeType || 'audio/wav';
-  if (!mimeType.startsWith('audio/')) return res.status(400).json({ error: 'Unsupported audio format.' });
+  const supportedTypes = new Set(['audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm']);
+  if (!supportedTypes.has(mimeType.toLowerCase())) return res.status(400).json({ error: 'Unsupported audio format: ' + mimeType });
+  if (input.chunkNumber !== undefined && (!Number.isInteger(input.chunkNumber) || input.chunkNumber < 1)) return res.status(400).json({ error: 'Invalid audio section number.' });
+  if (input.totalChunks !== undefined && (!Number.isInteger(input.totalChunks) || input.totalChunks < 1 || input.totalChunks > 2000)) return res.status(400).json({ error: 'Invalid total audio section count.' });
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Online transcription is not configured yet. Add GROQ_API_KEY to Vercel Environment Variables.' });
 
@@ -45,12 +52,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const audioBuffer = new ArrayBuffer(audioBytes.byteLength);
     new Uint8Array(audioBuffer).set(audioBytes);
     const form = new FormData();
-    const extension = mimeType === 'audio/mpeg' ? 'mp3' : mimeType === 'audio/ogg' ? 'ogg' : 'wav';
+    const normalizedMime = mimeType.toLowerCase();
+    const extension = normalizedMime === 'audio/mpeg' || normalizedMime === 'audio/mp3' ? 'mp3'
+      : normalizedMime === 'audio/ogg' ? 'ogg'
+      : normalizedMime === 'audio/mp4' ? 'm4a'
+      : normalizedMime === 'audio/aac' ? 'aac'
+      : normalizedMime === 'audio/webm' ? 'webm' : 'wav';
     form.append('file', new Blob([audioBuffer], { type: mimeType }), 'audio-chunk.' + extension);
     form.append('model', 'whisper-large-v3-turbo');
     form.append('response_format', 'json');
     form.append('temperature', '0');
-    form.append('prompt', 'Transcribe accurately. Speakers may mix Nigerian Pidgin English and standard English. Preserve the words and language actually spoken; do not translate Pidgin, summarize, or invent unclear words. Return only the transcript.');
+    const languageHint = typeof input.languageHint === 'string' ? input.languageHint.replace(/[\\r\\n]/g, ' ').slice(0, 120) : 'English and Nigerian Pidgin';
+    form.append('prompt', 'Transcribe accurately. Likely language context: ' + languageHint + '. Speakers may mix Nigerian Pidgin English and standard English. Preserve the words and language actually spoken; do not translate Pidgin, summarize, or invent unclear words. Return only the transcript.');
 
     const upstream = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
