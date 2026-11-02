@@ -103,18 +103,18 @@ const permissions = [
 ];
 for (const permission of permissions) {
   const name = permission.match(/android:name="([^"]+)"/)[1];
-  if (!manifest.includes(name)) manifest = manifest.replace('<application', permission + '\\n    <application');
+  if (!manifest.includes(name)) manifest = manifest.replace('<application', permission + '\n    <application');
 }
 if (!manifest.includes('TranscriptionForegroundService')) {
-  manifest = manifest.replace('</application>', '        <service android:name=".TranscriptionForegroundService" android:exported="false" android:foregroundServiceType="dataSync" />\\n    </application>');
+  manifest = manifest.replace('</application>', '        <service android:name=".TranscriptionForegroundService" android:exported="false" android:foregroundServiceType="dataSync" />\n    </application>');
 }
 await writeFile(manifestPath, manifest);
 
 const activityPath = join(javaDir, 'MainActivity.java');
 let activity = await readFile(activityPath, 'utf8');
 if (!activity.includes('BackgroundTranscriptionPlugin')) {
-  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\\nimport android.os.Bundle;\\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;');
-  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\\n    @Override\\n    public void onCreate(Bundle savedInstanceState) {\\n        registerPlugin(BackgroundTranscriptionPlugin.class);\\n        super.onCreate(savedInstanceState);\\n    }');
+  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;');
+  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
 }
 await writeFile(activityPath, activity);
 console.log('Patched Android foreground transcription service.');
