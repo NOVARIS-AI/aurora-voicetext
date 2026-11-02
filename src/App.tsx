@@ -9,11 +9,12 @@ import {
 } from 'lucide-react';
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
-type AudioFile = { id: string; file: File; url: string; transcript: string };
+type TimedSegment = { start: number; end: number; text: string };
+type AudioFile = { id: string; file: File; url: string; transcript: string; timedSegments?: TimedSegment[] };
 type Page = 'home' | 'transcribe' | 'library' | 'studio' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
-type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number };
+type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
 const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
@@ -326,6 +327,9 @@ async function transcribeOpusOfflineInSegments(
         }
         parts.push(transcript);
       }
+      const sectionSegments = (result.segments ?? []).filter(segment => typeof segment.start === 'number' && typeof segment.end === 'number' && typeof segment.text === 'string').map(segment => ({ start: start + (segment.start as number), end: start + (segment.end as number), text: (segment.text as string).trim() })).filter(segment => segment.text.length > 0);
+      timedSegments.push(...sectionSegments);
+      checkpoint.segments = timedSegments;
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
       try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session progress. */ }
@@ -348,6 +352,7 @@ async function transcribeOpusInSegments(
   file: File,
   onProgress: (completed: number, total: number) => void,
   onPart: (parts: string[]) => void,
+  onTimedParts: (segments: TimedSegment[]) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -382,7 +387,9 @@ async function transcribeOpusInSegments(
       ? { ...saved, fileId: fileKey }
       : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: totalParts };
     const parts: string[] = [...checkpoint.parts];
+    const timedSegments: TimedSegment[] = [...(checkpoint.segments ?? [])];
     onPart(parts);
+    onTimedParts(timedSegments);
     onProgress(checkpoint.nextChunk, totalParts);
     for (let index = checkpoint.nextChunk; index < totalParts; index++) {
       const start = index * stepSeconds;
@@ -409,7 +416,7 @@ async function transcribeOpusInSegments(
           languageHint: 'English and Nigerian Pidgin',
         }),
       });
-      const result = await response.json().catch(() => ({})) as { text?: string; error?: string };
+      const result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
       if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
       else throw new Error('The transcription service returned an empty result for section ' + (index + 1) + '.');
@@ -418,6 +425,7 @@ async function transcribeOpusInSegments(
       try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session partial transcript. */ }
       onProgress(index + 1, totalParts);
       onPart(parts);
+      onTimedParts(timedSegments);
       try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
@@ -453,6 +461,8 @@ function App() {
   const [voiceRate, setVoiceRate] = useState(1);
   const [voicePitch, setVoicePitch] = useState(1);
   const [playing, setPlaying] = useState(false);
+  const [audioPlayhead, setAudioPlayhead] = useState(0);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -529,6 +539,7 @@ function App() {
             selected.file,
             (completed, total) => onProgress(completed, total, 'Groq Whisper'),
             onPart,
+            (segments) => setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item)),
           );
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
@@ -673,7 +684,8 @@ function App() {
             <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">EN + PIDGIN</span></div>
             {active ? <>
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
-              <audio className="audio-player" controls preload="metadata" src={active.url}/>
+              <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
+              {active.timedSegments?.length ? <section className="readalong-list" aria-label="Timestamped read along transcript"><div className="readalong-heading"><strong>Read along · speech timestamps</strong><span>{active.timedSegments.length} timed lines</span></div>{active.timedSegments.map((segment, index) => <button key={index} type="button" className={audioPlayhead >= segment.start && audioPlayhead < segment.end ? "readalong-line active" : "readalong-line"} onClick={() => { if (audioRef.current) { audioRef.current.currentTime = segment.start; void audioRef.current.play(); } }}><time>{Math.floor(segment.start / 60).toString().padStart(2,"0")}:{Math.floor(segment.start % 60).toString().padStart(2,"0")}</time><span>{segment.text}</span></button>)}</section> : null}
               <div className="mode-switch" role="group" aria-label="Transcription mode">
                 <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Groq first · offline backup</small></button>
                 <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Device only · Whisper → Vosk</small></button>
