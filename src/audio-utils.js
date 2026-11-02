@@ -59,3 +59,19 @@ export function createEstimatedSubtitles(text, format = 'srt') {
   );
   return (vtt ? 'WEBVTT\n\n' : '') + blocks.join('\n\n') + '\n';
 }
+
+
+/** Builds SRT/WebVTT cues from real speech-segment timestamps returned by Whisper. */
+export function createTimedSubtitles(segments, format = 'srt') {
+  const valid = (Array.isArray(segments) ? segments : []).filter(item =>
+    Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start && String(item.text || '').trim()
+  );
+  const vtt = format === 'vtt';
+  if (!valid.length) return vtt ? 'WEBVTT\\n' : '';
+  const blocks = valid.map((item, index) =>
+    (vtt ? '' : String(index + 1) + '\\n') +
+    formatTimestamp(item.start, vtt ? '.' : ',') + ' --> ' +
+    formatTimestamp(item.end, vtt ? '.' : ',') + '\\n' + String(item.text).trim()
+  );
+  return (vtt ? 'WEBVTT\\n\\n' : '') + blocks.join('\\n\\n') + '\\n';
+}
