@@ -60,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : normalizedMime === 'audio/webm' ? 'webm' : 'wav';
     form.append('file', new Blob([audioBuffer], { type: mimeType }), 'audio-chunk.' + extension);
     form.append('model', 'whisper-large-v3-turbo');
-    form.append('response_format', 'json');
+    form.append('response_format', 'verbose_json');
     form.append('temperature', '0');
     const languageHint = typeof input.languageHint === 'string' ? input.languageHint.replace(/[\\r\\n]/g, ' ').slice(0, 120) : 'English and Nigerian Pidgin';
     form.append('prompt', 'Transcribe accurately. Likely language context: ' + languageHint + '. Speakers may mix Nigerian Pidgin English and standard English. Preserve the words and language actually spoken; do not translate Pidgin, summarize, or invent unclear words. Return only the transcript.');
@@ -70,7 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       headers: { Authorization: 'Bearer ' + apiKey },
       body: form,
     });
-    const result = await upstream.json().catch(() => ({})) as { text?: string; error?: { message?: string } | string };
+    const result = await upstream.json().catch(() => ({})) as { text?: string; segments?: Array<{ start?: number; end?: number; text?: string }>; error?: { message?: string } | string };
     if (!upstream.ok) {
       const retryAfter = upstream.headers.get('retry-after');
       if (retryAfter && (upstream.status === 429 || upstream.status >= 500)) {
@@ -85,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (typeof result.text !== 'string' || !result.text.trim()) {
       return res.status(502).json({ error: 'The transcription engine returned no text for this audio part.' });
     }
-    return res.status(200).json({ text: result.text.trim(), chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
+    return res.status(200).json({ text: result.text.trim(), segments: Array.isArray(result.segments) ? result.segments.filter(segment => typeof segment.start === 'number' && typeof segment.end === 'number' && typeof segment.text === 'string') : [], chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
   } catch (err) {
     console.error('VoiceText transcription failed', err);
     return res.status(502).json({ error: 'The transcription service could not process this audio part. Check your connection and try again.' });
