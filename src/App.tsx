@@ -90,6 +90,26 @@ function makeAudioFileKey(file: File): string {
   return [file.name, file.size, file.lastModified, file.type].join('|');
 }
 
+async function getAudioDurationSeconds(file: File): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const audio = document.createElement('audio');
+    audio.preload = 'metadata';
+    const cleanup = () => { audio.removeAttribute('src'); audio.load(); URL.revokeObjectURL(url); };
+    audio.onloadedmetadata = () => {
+      const duration = audio.duration;
+      cleanup();
+      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error('Could not read the recording duration. Try exporting the audio as MP3, M4A, WAV or OGG.'));
+    };
+    audio.onerror = () => {
+      cleanup();
+      reject(new Error('This browser could not read the audio duration. Try Chrome or convert the recording to MP3, M4A, WAV or OGG.'));
+    };
+    audio.src = url;
+  });
+}
+
 function downloadFile(name: string, content: string, type: string) {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const anchor = document.createElement('a');
@@ -291,40 +311,36 @@ async function transcribeOpusOfflineInSegments(
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
   const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
-  const inputName = 'aurora-offline-input.' + extension;
+  const inputPath = '/audio-input/' + file.name;
+  const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
+  const segmentSeconds = Math.min(60, getAudioSegmentSeconds());
   const pcmToFloat = (bytes: Uint8Array): Float32Array => {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    let offset = 12;
-    let dataStart = -1;
-    let dataLength = 0;
+    let offset = 12, dataStart = -1, dataLength = 0;
     while (offset + 8 <= bytes.length) {
       const id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
       const size = view.getUint32(offset + 4, true);
       if (id === 'data') { dataStart = offset + 8; dataLength = Math.min(size, bytes.length - dataStart); break; }
+      if (size > bytes.length - offset - 8) break;
       offset += 8 + size + (size % 2);
     }
     if (dataStart < 0 || dataLength < 2) throw new Error('The offline decoder produced an invalid PCM audio section.');
-    const samples = Math.floor(dataLength / 2);
-    const audio = new Float32Array(samples);
-    for (let i = 0; i < samples; i++) audio[i] = view.getInt16(dataStart + i * 2, true) / 32768;
+    const audio = new Float32Array(Math.floor(dataLength / 2));
+    for (let i = 0; i < audio.length; i++) audio[i] = view.getInt16(dataStart + i * 2, true) / 32768;
     return audio;
   };
   try {
-    onStatus('Loading on-device audio compatibility decoder…');
+    onStatus('Loading on-device audio decoder…');
     await ffmpeg.load({
       coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
-    await ffmpeg.exec([
-      '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-      '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', String(getAudioSegmentSeconds()),
-      '-reset_timestamps', '1', '-segment_format', 'wav', 'aurora-offline-%03d.wav',
-    ]);
-    const entries = await ffmpeg.listDir('/');
-    const total = entries.filter(entry => entry.name.startsWith('aurora-offline-') && entry.name.endsWith('.wav')).length;
-    if (!total) throw new Error('The decoder could not find any audio sections.');
+    // WORKERFS reads the selected File directly instead of copying the entire recording into WASM memory.
+    ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
+    const duration = await getAudioDurationSeconds(file);
+    const total = Math.ceil(duration / segmentSeconds);
+    if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
     const fileKey = makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
@@ -336,8 +352,15 @@ async function transcribeOpusOfflineInSegments(
     onProgress(checkpoint.nextChunk, total);
     const whisper = await getWhisper(onStatus);
     for (let index = checkpoint.nextChunk; index < total; index++) {
-      const name = 'aurora-offline-' + String(index).padStart(3, '0') + '.wav';
-      const output = await ffmpeg.readFile(name);
+      const start = index * segmentSeconds;
+      const length = Math.min(segmentSeconds, duration - start);
+      onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
+      await ffmpeg.exec([
+        '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
+        '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+        '-f', 'wav', outputName,
+      ]);
+      const output = await ffmpeg.readFile(outputName);
       if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
       const audio = pcmToFloat(output);
       if (audioRms(audio) < 0.0015) {
@@ -354,20 +377,15 @@ async function transcribeOpusOfflineInSegments(
       try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session progress. */ }
       onProgress(index + 1, total);
       onPart(parts.filter(Boolean));
-      try { await ffmpeg.deleteFile(name); } catch { /* Continue cleanup. */ }
+      try { await ffmpeg.deleteFile(outputName); } catch { /* The next write replaces this temporary file. */ }
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.some(Boolean)) throw new Error('No clear speech was detected in this recording.');
     try { await removeSavedCheckpoint(fileKey); } catch { /* Transcript is already available. */ }
     return parts.filter(Boolean);
   } finally {
-    try {
-      const entries = await ffmpeg.listDir('/');
-      for (const entry of entries) {
-        if ((entry.name.startsWith('aurora-offline-') && entry.name.endsWith('.wav')) || entry.name === inputName) {
-          try { await ffmpeg.deleteFile(entry.name); } catch { /* Decoder termination releases remaining memory. */ }
-        }
-      }
-    } catch { /* Decoder termination releases remaining memory. */ }
+    try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
+    try { ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
   }
 }
@@ -380,7 +398,8 @@ async function transcribeOpusInSegments(
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
   const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
-  const inputName = 'aurora-input.' + extension;
+  const inputPath = '/audio-input/' + file.name;
+  const outputName = 'aurora-online-current.mp3';
   const toBase64 = (bytes: Uint8Array) => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -393,15 +412,12 @@ async function transcribeOpusInSegments(
       coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
-    await ffmpeg.exec([
-      '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-      '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'segment', '-segment_time', String(getAudioSegmentSeconds()),
-      '-reset_timestamps', '1', '-segment_format', 'mp3', 'aurora-part-%03d.mp3',
-    ]);
-    const entries = await ffmpeg.listDir('/');
-    const totalParts = entries.filter(entry => entry.name.startsWith('aurora-part-') && entry.name.endsWith('.mp3')).length;
-    if (!totalParts) throw new Error('The audio decoder could not create any sections.');
+    // WORKERFS avoids loading a second full copy of long recordings into the WASM filesystem.
+    ffmpeg.mount('WORKERFS', { files: [file] }, '/audio-input');
+    const duration = await getAudioDurationSeconds(file);
+    const segmentSeconds = Math.min(90, getAudioSegmentSeconds());
+    const totalParts = Math.ceil(duration / segmentSeconds);
+    if (!totalParts || totalParts > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
     const fileKey = makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
@@ -412,15 +428,18 @@ async function transcribeOpusInSegments(
     onPart(parts);
     onProgress(checkpoint.nextChunk, totalParts);
     for (let index = checkpoint.nextChunk; index < totalParts; index++) {
-      const name = 'aurora-part-' + String(index).padStart(3, '0') + '.mp3';
-      let bytes: Uint8Array;
-      try {
-        const output = await ffmpeg.readFile(name);
-        if (typeof output === 'string') throw new Error('Unexpected text audio output.');
-        bytes = output;
-      } catch {
-        throw new Error('Could not read audio section ' + (index + 1) + ' from the local decoder.');
-      }
+      const start = index * segmentSeconds;
+      const length = Math.min(segmentSeconds, duration - start);
+      await ffmpeg.exec([
+        '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
+        '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+        '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
+      ]);
+      const output = await ffmpeg.readFile(outputName);
+      if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
+      const bytes = output;
+      if (!bytes.length) throw new Error('The audio decoder created an empty section.');
+      if (bytes.length > 1250000) throw new Error('Audio section ' + (index + 1) + ' is too large to upload safely. Reduce the section length and retry.');
       const response = await fetchWithRetry(transcriptionApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -431,29 +450,25 @@ async function transcribeOpusInSegments(
           totalChunks: totalParts,
           languageHint: 'English and Nigerian Pidgin',
         }),
-      }, attempt => onPart([...parts]));
+      });
       const result = await response.json().catch(() => ({})) as { text?: string; error?: string };
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
       if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
+      else throw new Error('The transcription service returned an empty result for section ' + (index + 1) + '.');
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
-      try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep the in-session partial transcript. */ }
+      try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session partial transcript. */ }
       onProgress(index + 1, totalParts);
       onPart(parts);
-      await ffmpeg.deleteFile(name);
+      try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.length) throw new Error('The audio decoder found no transcribable speech sections.');
-    try { await removeSavedCheckpoint(fileKey); } catch { /* Completed transcript is already in the editor. */ }
+    try { await removeSavedCheckpoint(fileKey); } catch { /* Completed transcript is already available. */ }
     return parts;
   } finally {
-    try {
-      const entries = await ffmpeg.listDir('/');
-      for (const entry of entries) {
-        if ((entry.name.startsWith('aurora-part-') && entry.name.endsWith('.mp3')) || entry.name === inputName) {
-          try { await ffmpeg.deleteFile(entry.name); } catch { /* Decoder termination releases remaining memory. */ }
-        }
-      }
-    } catch { /* Decoder termination releases remaining memory. */ }
+    try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
+    try { ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
   }
 }
