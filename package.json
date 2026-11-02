@@ -18,7 +18,8 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@capacitor/core": "^7.4.0",
-    "@capacitor/android": "^7.4.0"
+    "@capacitor/android": "^7.4.0",
+    "docx": "^9.5.1"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.0.0"
