@@ -391,7 +391,9 @@ async function transcribeOpusInSegments(
     onPart(parts);
     onTimedParts(timedSegments);
     onProgress(checkpoint.nextChunk, totalParts);
-    for (let index = checkpoint.nextChunk; index < totalParts; index++) {
+    // Encode sequentially (FFmpeg has one shared output file), then upload two chunks concurrently.
+    // This overlaps network/provider time without loading the entire recording into memory.
+    const uploadChunk = async (index: number) => {
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       const encodeExitCode = await ffmpeg.exec([
@@ -402,14 +404,13 @@ async function transcribeOpusInSegments(
       if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (index + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
       const output = await ffmpeg.readFile(outputName);
       if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
-      const bytes = output;
-      if (!bytes.length) throw new Error('The audio decoder created an empty section.');
-      if (bytes.length > 1250000) throw new Error('Audio section ' + (index + 1) + ' is too large to upload safely. Reduce the section length and retry.');
+      if (!output.length) throw new Error('The audio decoder created an empty section.');
+      if (output.length > 1250000) throw new Error('Audio section ' + (index + 1) + ' is too large to upload safely. Reduce the section length and retry.');
       const response = await fetchWithRetry(transcriptionApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          audioBase64: toBase64(bytes),
+          audioBase64: toBase64(output),
           mimeType: 'audio/mpeg',
           chunkNumber: index + 1,
           totalChunks: totalParts,
@@ -418,17 +419,33 @@ async function transcribeOpusInSegments(
       });
       const result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
-      if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
-      else throw new Error('The transcription service returned an empty result for section ' + (index + 1) + '.');
-      const sectionSegments = (result.segments ?? []).filter(segment => typeof segment.start === 'number' && typeof segment.end === 'number' && typeof segment.text === 'string' && (index === 0 || segment.start >= overlapSeconds)).map(segment => ({ start: start + (segment.start as number), end: start + (segment.end as number), text: (segment.text as string).trim() })).filter(segment => segment.text.length > 0);
-      timedSegments.push(...sectionSegments);
-      checkpoint.segments = timedSegments;
-      checkpoint.parts = parts;
-      checkpoint.nextChunk = index + 1;
-      try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session partial transcript. */ }
-      onProgress(index + 1, totalParts);
-      onPart(parts);
-      onTimedParts(timedSegments);
+      if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for section ' + (index + 1) + '.');
+      return { index, start, text: result.text.trim(), segments: result.segments ?? [] };
+    };
+
+    for (let index = checkpoint.nextChunk; index < totalParts; index += 2) {
+      const batchIndexes = [index, index + 1].filter(value => value < totalParts);
+      const batchResults = await Promise.all(batchIndexes.map(uploadChunk));
+      batchResults.sort((a, b) => a.index - b.index);
+      for (const result of batchResults) {
+        parts.push(result.text);
+        const sectionSegments = result.segments.filter(segment =>
+          typeof segment.start === 'number' && typeof segment.end === 'number' &&
+          typeof segment.text === 'string' && (result.index === 0 || segment.start >= overlapSeconds)
+        ).map(segment => ({
+          start: result.start + (segment.start as number),
+          end: result.start + (segment.end as number),
+          text: (segment.text as string).trim(),
+        })).filter(segment => segment.text.length > 0);
+        timedSegments.push(...sectionSegments);
+        checkpoint.segments = timedSegments;
+        checkpoint.parts = parts;
+        checkpoint.nextChunk = result.index + 1;
+        try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session partial transcript. */ }
+        onProgress(result.index + 1, totalParts);
+        onPart(parts);
+        onTimedParts(timedSegments);
+      }
       try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
@@ -618,7 +635,7 @@ function App() {
     };
     const selected = extensions[exportType] ?? extensions.txt;
     downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
-    if (exportType === 'srt' || exportType === 'vtt') setStatus('Subtitle timings are estimates based on word count, not speech-aligned timestamps.');
+    if (exportType === 'srt' || exportType === 'vtt') setStatus(timedSegments?.length ? 'Exported speech-aligned timestamps from the transcription engine.' : 'No speech-aligned timestamps were returned; this subtitle file uses estimated timings.');
     setError('');
   }
 
