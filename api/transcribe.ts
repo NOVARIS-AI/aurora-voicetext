@@ -59,6 +59,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
     const result = await upstream.json().catch(() => ({})) as { text?: string; error?: { message?: string } | string };
     if (!upstream.ok) {
+      const retryAfter = upstream.headers.get('retry-after');
+      if (retryAfter && (upstream.status === 429 || upstream.status >= 500)) {
+        res.setHeader('Retry-After', retryAfter);
+      }
       const detail = typeof result.error === 'string' ? result.error : result.error?.message;
       console.error('Groq transcription error', upstream.status, detail);
       return res.status(upstream.status >= 500 ? 502 : upstream.status).json({
