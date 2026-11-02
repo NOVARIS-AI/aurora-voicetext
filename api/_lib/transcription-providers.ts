@@ -14,8 +14,10 @@ function extensionFor(mime: string) {
 
 async function requestTranscription(endpoint: string, key: string, model: string, input: AudioInput, provider: string): Promise<TranscriptionResult> {
   const bytes = Buffer.from(input.audioBase64, "base64");
+  const audioBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(audioBuffer).set(bytes);
   const form = new FormData();
-  form.append("file", new Blob([bytes], { type: input.mimeType }), "audio-chunk." + extensionFor(input.mimeType));
+  form.append("file", new Blob([audioBuffer], { type: input.mimeType }), "audio-chunk." + extensionFor(input.mimeType));
   form.append("model", model);
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "segment");
