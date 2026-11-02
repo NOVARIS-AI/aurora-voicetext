@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createEstimatedSubtitles, mergeTranscriptParts } from './audio-utils';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
   ShieldCheck, Clock3, Check, WandSparkles, LoaderCircle, FileText,
@@ -282,50 +282,6 @@ function wavChunkToBase64(audio: Float32Array, sampleRate = 16000): string {
   return btoa(binary);
 }
 
-async function decodeAudio(file: File): Promise<Float32Array> {
-  const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextClass) throw new Error('Audio decoding is not supported in this browser. Try Chrome.');
-  const context = new AudioContextClass();
-  try {
-    const decoded = await context.decodeAudioData(await file.arrayBuffer());
-    const targetRate = 16000;
-    const outputLength = Math.max(1, Math.ceil(decoded.duration * targetRate));
-    const OfflineContext = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
-    if (OfflineContext) {
-      const offline = new OfflineContext(1, outputLength, targetRate);
-      const mono = offline.createBuffer(1, decoded.length, decoded.sampleRate);
-      const destination = mono.getChannelData(0);
-      for (let i = 0; i < decoded.length; i++) {
-        let sample = 0;
-        for (let channel = 0; channel < decoded.numberOfChannels; channel++) sample += decoded.getChannelData(channel)[i] || 0;
-        destination[i] = sample / decoded.numberOfChannels;
-      }
-      const source = offline.createBufferSource();
-      source.buffer = mono;
-      source.connect(offline.destination);
-      source.start(0);
-      const rendered = await offline.startRendering();
-      return rendered.getChannelData(0).slice();
-    }
-    const output = new Float32Array(outputLength);
-    for (let i = 0; i < outputLength; i++) {
-      const position = i * decoded.sampleRate / targetRate;
-      const left = Math.min(decoded.length - 1, Math.floor(position));
-      const right = Math.min(decoded.length - 1, left + 1);
-      const fraction = position - left;
-      let sample = 0;
-      for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
-        const data = decoded.getChannelData(channel);
-        sample += data[left] * (1 - fraction) + data[right] * fraction;
-      }
-      output[i] = sample / decoded.numberOfChannels;
-    }
-    return output;
-  } finally { await context.close(); }
-}
-
-
-
 async function transcribeOpusOfflineInSegments(
   file: File,
   onProgress: (completed: number, total: number) => void,
@@ -531,7 +487,6 @@ function App() {
   const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
-  const checkpointRef = useRef<TranscriptionCheckpoint | null>(null);
   const [error, setError] = useState('');
   const [exportType, setExportType] = useState('txt');
   const [studioText, setStudioText] = useState('');
@@ -564,214 +519,67 @@ function App() {
 
   async function transcribe() {
     if (!active || busy) return;
-    setBusy(true); setError(''); setStatus('Preparing audio…');
+    const selected = active;
+    setBusy(true);
+    setError('');
+    setStatus('Preparing audio for section-by-section transcription…');
+    setProgress({ completed: 0, total: 0 });
+    const onPart = (parts: string[]) => {
+      const partial = mergeTranscriptParts(parts);
+      if (partial) setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: partial } : item));
+    };
+    const onProgress = (completed: number, total: number, engine: string) => {
+      setProgress({ completed, total });
+      setStatus(engine + ' · completed ' + completed + ' of ' + total + ' sections…');
+    };
+    const runOffline = () => transcribeOpusOfflineInSegments(
+      selected.file,
+      (completed, total) => onProgress(completed, total, 'On-device transcription'),
+      onPart,
+      setStatus,
+    );
     try {
+      let parts: string[];
       if (mode === 'offline') {
-        setStatus('Preparing offline audio sections without decoding the full recording…');
-        setProgress({ completed: 0, total: 0 });
-        const offlineParts = await transcribeOpusOfflineInSegments(
-          active.file,
-          (completed, total) => {
-            setProgress({ completed, total });
-            setStatus('On-device backup · completed ' + completed + ' of ' + total + ' sections…');
-          },
-          currentParts => {
-            const partial = mergeTranscriptParts(currentParts);
-            if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
-          },
-          setStatus,
-        );
-        const completedText = mergeTranscriptParts(offlineParts);
-        if (!completedText) throw new Error('No clear speech was detected in this recording.');
-        setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
-        setStatus('Offline transcription complete. Audio was processed on this device.');
-        setProgress({ completed: offlineParts.length, total: offlineParts.length });
-        return;
-      }
-      if (mode !== 'offline') {
+        setStatus('Offline mode · audio stays on this device.');
+        parts = await runOffline();
+      } else {
         try {
-          setStatus('Preparing long recording into smaller upload-safe sections…');
-          setProgress({ completed: 0, total: 0 });
-          const onlineParts = await transcribeOpusInSegments(
-            active.file,
-            (completed, total) => {
-              setProgress({ completed, total });
-              setStatus('Groq transcription · completed ' + completed + ' of ' + total + ' sections…');
-            },
-            currentParts => {
-              const partial = mergeTranscriptParts(currentParts);
-              if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
-            },
+          setStatus('Online mode · preparing upload-safe audio sections…');
+          parts = await transcribeOpusInSegments(
+            selected.file,
+            (completed, total) => onProgress(completed, total, 'Groq Whisper'),
+            onPart,
           );
-          const completedText = mergeTranscriptParts(onlineParts);
-          if (!completedText) throw new Error('No clear speech was detected in this recording.');
-          setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
-          setStatus('Long-audio transcription complete. Review names, numbers and Nigerian Pidgin before sharing.');
-          setProgress({ completed: onlineParts.length, total: onlineParts.length });
-          return;
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
-          setStatus('Online processing could not finish. Switching to on-device Whisper…');
-          const offlineParts = await transcribeOpusOfflineInSegments(
-            active.file,
-            (completed, total) => {
-              setProgress({ completed, total });
-              setStatus('On-device backup · completed ' + completed + ' of ' + total + ' sections…');
-            },
-            currentParts => {
-              const partial = mergeTranscriptParts(currentParts);
-              if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
-            },
-            setStatus,
-          );
-          const completedText = mergeTranscriptParts(offlineParts);
-          if (!completedText) throw new Error('No clear speech was detected in this recording.');
-          setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
-          setStatus('Transcription complete using the on-device backup. Review the result before sharing.');
-          setProgress({ completed: offlineParts.length, total: offlineParts.length });
-          return;
-        }
-      }
-      let audio: Float32Array;
-      try {
-        audio = await decodeAudio(active.file);
-      } catch (decodeProblem) {
-        if (mode === 'offline') {
-          setStatus('Offline mode · decoding audio into local sections…');
-          setProgress({ completed: 0, total: 0 });
-          const parts = await transcribeOpusOfflineInSegments(
-            active.file,
-            (completed, total) => {
-              setProgress({ completed, total });
-              setStatus('On-device transcription · completed ' + completed + ' audio sections…');
-            },
-            currentParts => {
-              const partial = mergeTranscriptParts(currentParts);
-              if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
-            },
-            setStatus,
-          );
-          const completedText = mergeTranscriptParts(parts);
-          if (!completedText) throw new Error('No clear speech was detected in this recording.');
-          setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
-          setStatus('Offline transcription complete. Audio was processed on this device.');
-          setProgress({ completed: parts.length, total: parts.length });
-          return;
-        }
-        setStatus('Using AURORA compatibility decoder · preparing audio sections…');
-        setProgress({ completed: 0, total: 0 });
-        const parts = await transcribeOpusInSegments(
-          active.file,
-          (completed, total) => {
-            setProgress({ completed, total });
-            setStatus('Groq transcription · completed ' + completed + ' audio sections…');
-          },
-          currentParts => {
-            const partial = mergeTranscriptParts(currentParts);
-            if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
-          },
-        );
-        const completedText = mergeTranscriptParts(parts);
-        if (!completedText) throw new Error('No clear speech was detected in this recording.');
-        setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
-        setStatus('Transcription complete. Review names, numbers and Nigerian Pidgin before sharing.');
-        setProgress({ completed: parts.length, total: parts.length });
-        return;
-      }
-      const sampleRate = 16000, chunkSamples = 20 * sampleRate, overlapSamples = 2 * sampleRate;
-      const totalChunks = Math.ceil(audio.length / (chunkSamples - overlapSamples));
-      const previous = checkpointRef.current;
-      const fileKey = await makeAudioFileKey(active.file);
-      let restored: TranscriptionCheckpoint | null = null;
-      if (!(previous?.fileId === active.id && previous.totalChunks === totalChunks)) {
-        try {
-          const saved = await readSavedCheckpoint(fileKey);
-          if (saved && saved.totalChunks === totalChunks && saved.nextChunk > 0 && saved.nextChunk < totalChunks) restored = { ...saved, fileId: active.id };
-        } catch { /* Continue with an in-session checkpoint if persistent storage is unavailable. */ }
-      }
-      const checkpoint = previous?.fileId === active.id && previous.totalChunks === totalChunks
-        ? previous
-        : restored ?? { fileId: active.id, parts: [] as string[], nextChunk: 0, totalChunks };
-      checkpointRef.current = checkpoint;
-      const parts = checkpoint.parts;
-      setProgress({ completed: checkpoint.nextChunk, total: totalChunks });
-      if (checkpoint.nextChunk > 0) setStatus('Resuming from saved section ' + (checkpoint.nextChunk + 1) + ' of ' + totalChunks + '…');
-      for (let index = checkpoint.nextChunk, start = checkpoint.nextChunk * (chunkSamples - overlapSamples); start < audio.length; index++, start += chunkSamples - overlapSamples) {
-        const chunk = audio.slice(start, Math.min(audio.length, start + chunkSamples));
-        if (audioRms(chunk) < 0.0015) {
-          setStatus('Skipping quiet section ' + (index + 1) + ' of ' + totalChunks + '…');
-          checkpoint.nextChunk = index + 1;
-          try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* In-session resume remains available. */ }
-          setProgress({ completed: index + 1, total: totalChunks });
-          continue;
-        }
-        let part = '';
-        const runOffline = async (): Promise<string> => {
-          let whisperProblem = '';
+          setStatus('Online transcription could not finish. Switching to on-device Whisper, then Vosk if needed…');
           try {
-            setStatus('Offline backup · Whisper Tiny · section ' + (index + 1) + ' of ' + totalChunks + '…');
-            const whisper = await getWhisper(setStatus);
-            const result = await whisper(chunk, { sampling_rate: sampleRate });
-            const text = result.text?.trim() || '';
-            if (!text) throw new Error('Whisper Tiny returned an empty result.');
-            return text;
-          } catch (reason) {
-            whisperProblem = reason instanceof Error ? reason.message : String(reason);
-          }
-          try {
-            setStatus('Whisper Tiny unavailable. Trying the Vosk offline backup…');
-            return await transcribeWithVosk(chunk);
-          } catch (voskProblem) {
-            throw new Error('Offline backup unavailable. Whisper: ' + whisperProblem + ' Vosk: ' + (voskProblem instanceof Error ? voskProblem.message : String(voskProblem)));
-          }
-        };
-
-        if (mode === 'online') {
-          setStatus('Groq Whisper · section ' + (index + 1) + ' of ' + totalChunks + '…');
-          part = await transcribeOnline(chunk, index, totalChunks);
-        } else if (mode === 'offline') {
-          part = await runOffline();
-        } else {
-          try {
-            setStatus('Auto · using Groq Whisper for the clearest transcript · section ' + (index + 1) + ' of ' + totalChunks + '…');
-            part = await transcribeOnline(chunk, index, totalChunks);
-          } catch (onlineProblem) {
-            setStatus('Online service unavailable. Switching to on-device transcription…');
-            try {
-              part = await runOffline();
-            } catch (offlineProblem) {
-              throw new Error('Automatic transcription could not complete. Online: ' + (onlineProblem instanceof Error ? onlineProblem.message : String(onlineProblem)) + ' · Offline: ' + (offlineProblem instanceof Error ? offlineProblem.message : String(offlineProblem)));
-            }
+            parts = await runOffline();
+          } catch (offlineProblem) {
+            throw new Error(
+              'Automatic transcription could not complete. Online: ' +
+              (onlineProblem instanceof Error ? onlineProblem.message : String(onlineProblem)) +
+              ' · Offline: ' +
+              (offlineProblem instanceof Error ? offlineProblem.message : String(offlineProblem)),
+            );
           }
         }
-        if (part.trim()) parts.push(part.trim());
-        checkpoint.nextChunk = index + 1;
-        try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* In-session resume remains available. */ }
-        setProgress({ completed: index + 1, total: totalChunks });
-        const partialText = mergeTranscriptParts(parts);
-        if (partialText) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partialText } : item));
-        setStatus('Completed section ' + (index + 1) + ' of ' + totalChunks + '. Progress is saved for this session.');
-        await new Promise<void>(resolve => window.setTimeout(resolve, 0));
       }
-      const text = mergeTranscriptParts(parts);
-      if (!text) throw new Error('No clear speech was detected. Try a louder recording with less background noise, or check that the audio contains speech.');
-      setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
-      checkpointRef.current = null;
-      try { await removeSavedCheckpoint(fileKey); } catch { /* A stale completed checkpoint is ignored on the next run. */ }
-      setProgress({ completed: totalChunks, total: totalChunks });
-      setStatus('Transcription complete. Check names and Nigerian Pidgin before sharing.');
+      const completedText = mergeTranscriptParts(parts);
+      if (!completedText) throw new Error('No clear speech was detected. Try a recording with clearer speech and less background noise.');
+      setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: completedText } : item));
+      setStatus(mode === 'offline'
+        ? 'Offline transcription complete. Audio was processed on this device.'
+        : 'Transcription complete. Review names, numbers and Nigerian Pidgin before sharing.');
+      setError('');
     } catch (reason) {
-      const saved = checkpointRef.current;
-      if (saved?.fileId === active.id && saved.parts.length) {
-        const partialText = mergeTranscriptParts(saved.parts);
-        setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partialText } : item));
-        setError('A section failed. ' + saved.nextChunk + ' of ' + saved.totalChunks + ' sections are complete; tap Transcribe again to resume. ' + (reason instanceof Error ? reason.message : String(reason)));
-        setStatus('Partial transcript preserved. If browser storage is available, progress can also survive a refresh after you reselect the same audio file.');
-      } else {
-        setError((reason instanceof Error ? reason.message : 'Transcription failed.') + ' If earlier sections completed, their saved progress can be resumed by tapping Transcribe again with this recording.');
-        setStatus('');
-      }
-    } finally { setBusy(false); }
+      const message = reason instanceof Error ? reason.message : 'Transcription failed.';
+      setError(message + ' Completed sections are checkpointed when browser storage is available. Tap Transcribe again with the same recording to resume.');
+      setStatus('Your recording remains selected. You can retry without starting over from completed sections.');
+    } finally {
+      setBusy(false);
+    }
   }
   function updateTranscript(text: string) {
     if (!active) return;
