@@ -20,8 +20,10 @@ type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
-const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
+const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\\/+$/, '');
+const BACKUP_API_BASE_URL = ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || '').replace(/\\/+$/, '');
 const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
+const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/api/transcribe` : '';
 let pipelinePromise: Promise<Engine> | null = null;
 let voskModelPromise: Promise<any> | null = null;
 
@@ -394,18 +396,30 @@ async function transcribeOpusInSegments(
     // Encode sequentially because FFmpeg shares one virtual output file.
     // Then overlap the two network requests to reduce idle provider wait time.
     const uploadPrepared = async (prepared: { index: number; start: number; bytes: Uint8Array }) => {
-      const response = await fetchWithRetry(transcriptionApiUrl, {
+      const payload = JSON.stringify({
+        audioBase64: toBase64(prepared.bytes),
+        mimeType: 'audio/mpeg',
+        chunkNumber: prepared.index + 1,
+        totalChunks: totalParts,
+        languageHint: 'English and Nigerian Pidgin',
+      });
+      const request = (url: string) => fetchWithRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64: toBase64(prepared.bytes),
-          mimeType: 'audio/mpeg',
-          chunkNumber: prepared.index + 1,
-          totalChunks: totalParts,
-          languageHint: 'English and Nigerian Pidgin',
-        }),
+        body: payload,
       });
-      const result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
+      let response: Response;
+      try {
+        response = await request(transcriptionApiUrl);
+      } catch (primaryNetworkError) {
+        if (!backupTranscriptionApiUrl) throw primaryNetworkError;
+        response = await request(backupTranscriptionApiUrl);
+      }
+      let result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
+      if (!response.ok && backupTranscriptionApiUrl && ([408, 425, 429].includes(response.status) || response.status >= 500)) {
+        response = await request(backupTranscriptionApiUrl);
+        result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
+      }
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.');
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
       return { index: prepared.index, start: prepared.start, text: result.text.trim(), segments: result.segments ?? [] };
