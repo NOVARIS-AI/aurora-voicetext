@@ -16,6 +16,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       aiSpeech: Boolean(process.env.OPENAI_API_KEY || process.env.ELEVENLABS_API_KEY),
       elevenLabs: Boolean(process.env.ELEVENLABS_API_KEY),
       translation: Boolean(process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY),
+      transcriptPolish: Boolean(process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY),
       subtitleSearch: Boolean(process.env.OPENSUBTITLES_API_KEY),
       subtitleDownload: Boolean(process.env.OPENSUBTITLES_API_KEY && process.env.OPENSUBTITLES_TOKEN),
     },
