@@ -245,7 +245,7 @@ async function transcribeOpusOfflineInSegments(
   onStatus: (message: string) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
-  const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   const inputPath = '/audio-input/' + file.name;
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
@@ -349,7 +349,7 @@ async function transcribeOpusInSegments(
   onPart: (parts: string[]) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
-  const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   const inputPath = '/audio-input/' + file.name;
   const outputName = 'aurora-online-current.mp3';
   const toBase64 = (bytes: Uint8Array) => {
