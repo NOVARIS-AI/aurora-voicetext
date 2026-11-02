@@ -134,8 +134,25 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
   }
 }
 
+async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, onRetry?: (attempt: number) => void): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(input, init);
+      if (response.ok || !([408, 425, 429].includes(response.status) || response.status >= 500) || attempt === 3) return response;
+      onRetry?.(attempt + 1);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3) throw error;
+      onRetry?.(attempt + 1);
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 800 * (2 ** attempt)));
+  }
+  throw lastError instanceof Error ? lastError : new Error('Network request failed after retries.');
+}
+
 async function transcribeOnline(audio: Float32Array, index: number, total: number): Promise<string> {
-  const response = await fetch(transcriptionApiUrl, {
+  const response = await fetchWithRetry(transcriptionApiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audioBase64: wavChunkToBase64(audio, 16000), mimeType: 'audio/wav', chunkNumber: index + 1, totalChunks: total, languageHint: 'English and Nigerian Pidgin' }),
@@ -286,8 +303,17 @@ async function transcribeOpusOfflineInSegments(
     const entries = await ffmpeg.listDir('/');
     const total = entries.filter(entry => entry.name.startsWith('aurora-offline-') && entry.name.endsWith('.wav')).length;
     if (!total) throw new Error('The decoder could not find any audio sections.');
+    const fileKey = makeAudioFileKey(file);
+    let saved: TranscriptionCheckpoint | null = null;
+    try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
+    const checkpoint: TranscriptionCheckpoint = saved && saved.totalChunks === total
+      ? { ...saved, fileId: fileKey }
+      : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: total };
+    parts.push(...checkpoint.parts);
+    onPart(parts.filter(Boolean));
+    onProgress(checkpoint.nextChunk, total);
     const whisper = await getWhisper(onStatus);
-    for (let index = 0; index < total; index++) {
+    for (let index = checkpoint.nextChunk; index < total; index++) {
       const name = 'aurora-offline-' + String(index).padStart(3, '0') + '.wav';
       const output = await ffmpeg.readFile(name);
       if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
@@ -301,14 +327,25 @@ async function transcribeOpusOfflineInSegments(
         if (!text) throw new Error('Whisper Tiny returned no transcript for section ' + (index + 1) + '.');
         parts.push(text);
       }
+      checkpoint.parts = parts;
+      checkpoint.nextChunk = index + 1;
+      try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session progress. */ }
       onProgress(index + 1, total);
       onPart(parts.filter(Boolean));
       try { await ffmpeg.deleteFile(name); } catch { /* Continue cleanup. */ }
     }
     if (!parts.some(Boolean)) throw new Error('No clear speech was detected in this recording.');
+    try { await removeSavedCheckpoint(fileKey); } catch { /* Transcript is already available. */ }
     return parts.filter(Boolean);
   } finally {
-    try { await ffmpeg.deleteFile(inputName); } catch { /* Input may not have been created. */ }
+    try {
+      const entries = await ffmpeg.listDir('/');
+      for (const entry of entries) {
+        if ((entry.name.startsWith('aurora-offline-') && entry.name.endsWith('.wav')) || entry.name === inputName) {
+          try { await ffmpeg.deleteFile(entry.name); } catch { /* Decoder termination releases remaining memory. */ }
+        }
+      }
+    } catch { /* Decoder termination releases remaining memory. */ }
     ffmpeg.terminate();
   }
 }
@@ -362,7 +399,7 @@ async function transcribeOpusInSegments(
       } catch {
         throw new Error('Could not read audio section ' + (index + 1) + ' from the local decoder.');
       }
-      const response = await fetch(transcriptionApiUrl, {
+      const response = await fetchWithRetry(transcriptionApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -372,7 +409,7 @@ async function transcribeOpusInSegments(
           totalChunks: totalParts,
           languageHint: 'English and Nigerian Pidgin',
         }),
-      });
+      }, attempt => onPart([...parts]));
       const result = await response.json().catch(() => ({})) as { text?: string; error?: string };
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (index + 1) + '.');
       if (typeof result.text === 'string' && result.text.trim()) parts.push(result.text.trim());
@@ -387,7 +424,14 @@ async function transcribeOpusInSegments(
     try { await removeSavedCheckpoint(fileKey); } catch { /* Completed transcript is already in the editor. */ }
     return parts;
   } finally {
-    try { await ffmpeg.deleteFile(inputName); } catch { /* Input may not have been created. */ }
+    try {
+      const entries = await ffmpeg.listDir('/');
+      for (const entry of entries) {
+        if ((entry.name.startsWith('aurora-part-') && entry.name.endsWith('.mp3')) || entry.name === inputName) {
+          try { await ffmpeg.deleteFile(entry.name); } catch { /* Decoder termination releases remaining memory. */ }
+        }
+      }
+    } catch { /* Decoder termination releases remaining memory. */ }
     ffmpeg.terminate();
   }
 }
@@ -459,6 +503,28 @@ function App() {
     if (!active || busy) return;
     setBusy(true); setError(''); setStatus('Preparing audio…');
     try {
+      if (mode === 'offline') {
+        setStatus('Preparing offline audio sections without decoding the full recording…');
+        setProgress({ completed: 0, total: 0 });
+        const offlineParts = await transcribeOpusOfflineInSegments(
+          active.file,
+          (completed, total) => {
+            setProgress({ completed, total });
+            setStatus('On-device backup · completed ' + completed + ' of ' + total + ' sections…');
+          },
+          currentParts => {
+            const partial = mergeTranscriptParts(currentParts);
+            if (partial) setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: partial } : item));
+          },
+          setStatus,
+        );
+        const completedText = mergeTranscriptParts(offlineParts);
+        if (!completedText) throw new Error('No clear speech was detected in this recording.');
+        setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: completedText } : item));
+        setStatus('Offline transcription complete. Audio was processed on this device.');
+        setProgress({ completed: offlineParts.length, total: offlineParts.length });
+        return;
+      }
       if (mode !== 'offline') {
         try {
           setStatus('Preparing long recording into smaller upload-safe sections…');
@@ -765,7 +831,7 @@ function App() {
               {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny, then Vosk if a compatible Vosk model is configured. The first model download needs internet.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
-              {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · unfinished sections can resume while this page stays open</small></div>}
+              {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
               <label className="field-label" htmlFor="transcript">Transcript text</label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
