@@ -572,6 +572,7 @@ function App() {
   const [voiceStyle, setVoiceStyle] = useState('Natural, conversational delivery');
   const [voiceEmotion, setVoiceEmotion] = useState('Warm and friendly');
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [assistBusy, setAssistBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
   const [voiceProvider, setVoiceProvider] = useState('');
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
@@ -763,6 +764,24 @@ function App() {
     catch { setError('Copy is unavailable in this browser. Select the text and copy it manually.'); }
   }
 
+  async function polishTranscript() {
+    if (!active?.transcript.trim()) { setError('Select a transcript with text first.'); return; }
+    setAssistBusy(true); setError(''); setStatus('AI is polishing the transcript while preserving its meaning…');
+    try {
+      const chunks = splitLongText(active.transcript, 18000);
+      const output: string[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        setStatus('Polishing section ' + (i + 1) + ' of ' + chunks.length + '…');
+        const { data } = await requestFeature('/api/assist', { text: chunks[i] });
+        if (!data?.text) throw new Error('The AI returned an empty transcript section.');
+        output.push(data.text);
+      }
+      updateTranscript(output.join('\n\n'));
+      setStatus('Transcript polished. Review the wording before saving or exporting.');
+    } catch (error) { setError(error instanceof Error ? error.message : 'AI transcript polishing failed.'); setStatus(''); }
+    finally { setAssistBusy(false); }
+  }
+
   async function generateVoice() {
     if (!studioText.trim()) { setError('Enter text before generating AI speech.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
@@ -911,7 +930,7 @@ function App() {
           <div className="card-title"><div><small>TRANSCRIPT WORKSPACE</small><h2>{active.file.name}</h2></div><span className="count">{active.timedSegments?.length || 0} timed lines</span></div>
           <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url}/>
           {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className="timestamp-chip" onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value)} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
-          <div className="studio-actions"><button className="primary" type="button" onClick={saveToLibrary}><Save size={16}/> Save changes</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={16}/> Export transcript</button></div>
+          <div className="studio-actions"><button className="primary" type="button" disabled={assistBusy} onClick={polishTranscript}>{assistBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} AI polish transcript</button><button className="primary" type="button" onClick={saveToLibrary}><Save size={16}/> Save changes</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={16}/> Export transcript</button></div>
         </section> : <div className="empty-state"><AudioWaveform/><strong>Select a recording first</strong><span>Open Transcribe and choose a recording to edit its transcript.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
       </section>}
 
