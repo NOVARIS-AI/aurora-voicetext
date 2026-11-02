@@ -57,3 +57,13 @@ In the repository, open **Settings → Secrets and variables → Actions → New
 The `Deploy AURORA VoiceText backup worker` workflow deploys when `backup-worker/**` changes or when manually dispatched. If Cloudflare credentials are absent, it skips deployment and reports that configuration is needed.
 
 Separately add `GROQ_API_KEY`, `OPENAI_API_KEY`, `BACKUP_BACKEND_URL`, and `BACKUP_BACKEND_TOKEN` to the primary API host's runtime environment. For this project that is the Vercel project environment settings. A GitHub secret does not automatically populate Vercel's runtime environment. Once Vercel quota is available, those runtime values must be configured there and a new deployment created for them to take effect.
+
+## Direct app failover when the primary host is unreachable
+
+The Android/web client now accepts a public backup URL through the build-time variable `VITE_BACKUP_API_BASE_URL`. Set the GitHub repository variable `BACKUP_API_BASE_URL` to the deployed Worker origin (for example, the Worker `workers.dev` origin, without a trailing slash). The APK workflow injects this public URL into the app; it is an endpoint, not a secret.
+
+The Worker accepts direct app-origin requests only when its `BACKUP_PUBLIC_FALLBACK` Worker secret is exactly `true`. The allowed origins are the production web origins and Capacitor's localhost origins. For the automated deployment workflow, add a GitHub Actions secret named `BACKUP_PUBLIC_FALLBACK` with value `true`. Keep `BACKUP_API_TOKEN` configured too for authenticated server-to-server fallback from Vercel.
+
+**Security note:** browser CORS origin checks are not authentication; non-browser clients can forge an Origin header. Before enabling public direct fallback, configure Cloudflare rate limiting and usage alerts for the Worker, monitor provider spend, and rotate keys if abused. Keep audio request size limits in place. If you do not want a public Worker endpoint, leave `BACKUP_PUBLIC_FALLBACK=false`; Vercel-to-Worker failover will still work while Vercel is reachable.
+
+The client attempts the primary endpoint first and uses the configured Worker when the primary host cannot be reached or returns a retryable server/rate-limit response. No API key is embedded in the APK.
