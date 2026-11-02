@@ -139,3 +139,13 @@ h1 span{color:#73cde4;background:linear-gradient(90deg,#71e0e8,#b79cff);-webkit-
   .editor-tools{align-items:flex-start;flex-wrap:wrap}
   .editor-tools .secondary{margin-left:auto}
 }
+
+
+/* Timestamped transcript read-along */
+.readalong-list{margin:14px 0;padding:12px;border:1px solid var(--border,rgba(140,160,190,.2));border-radius:14px;background:rgba(15,23,42,.28);max-height:300px;overflow:auto}
+.readalong-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;font-size:13px}
+.readalong-heading span{opacity:.65;font-size:11px}
+.readalong-line{display:flex;width:100%;gap:12px;align-items:flex-start;text-align:left;padding:9px 8px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.readalong-line time{flex:0 0 42px;font-size:11px;opacity:.65;font-variant-numeric:tabular-nums;padding-top:2px}
+.readalong-line span{font-size:13px;line-height:1.5}
+.readalong-line.active{background:rgba(45,212,230,.13);outline:1px solid rgba(45,212,230,.35)}
