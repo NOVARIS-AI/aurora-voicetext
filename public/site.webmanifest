@@ -1,0 +1,9 @@
+{
+  "name": "AURORA VoiceText",
+  "short_name": "VoiceText",
+  "description": "Convert audio recordings into editable text and subtitles.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080c16",
+  "theme_color": "#080c16"
+}
