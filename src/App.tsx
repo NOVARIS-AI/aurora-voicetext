@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { createEstimatedSubtitles, mergeTranscriptParts } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -598,7 +598,7 @@ function App() {
     });
   }
 
-  function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript') {
+  function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
     if (exportType === 'pdf') {
       const popup = window.open('', '_blank');
@@ -613,8 +613,8 @@ function App() {
       md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# AURORA VoiceText\n\n' + text },
       html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>AURORA VoiceText</title><pre style="white-space:pre-wrap;font:16px system-ui">' + text.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre>' },
       rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi ' + text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
-      srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: createEstimatedSubtitles(text, 'srt') },
-      vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: createEstimatedSubtitles(text, 'vtt') },
+      srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: timedSegments?.length ? createTimedSubtitles(timedSegments, 'srt') : createEstimatedSubtitles(text, 'srt') },
+      vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timedSegments?.length ? createTimedSubtitles(timedSegments, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
     downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
@@ -705,7 +705,7 @@ function App() {
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="srt">Subtitles (.srt · estimated timing)</option><option value="vtt">Web subtitles (.vtt · estimated timing)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript')}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
