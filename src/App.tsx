@@ -58,6 +58,24 @@ function splitLongText(text: string, max = 22000): string[] {
   return chunks;
 }
 
+function splitSubtitleDocument(text: string, max = 18000): string[] {
+  const normalized = text.replace(/\r\n/g, '\n').trim();
+  const isVtt = normalized.startsWith('WEBVTT');
+  const header = isVtt ? normalized.slice(0, normalized.indexOf('\n') < 0 ? normalized.length : normalized.indexOf('\n')).trim() + '\n\n' : '';
+  const body = isVtt ? normalized.slice(header.trim().length).trim() : normalized;
+  const blocks = body.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean);
+  const chunks: string[] = [];
+  let current = header;
+  for (const block of blocks) {
+    if (current.length > header.length && current.length + block.length + 2 > max) {
+      chunks.push(current.trim()); current = '';
+    }
+    current += (current ? '\n\n' : '') + block;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [normalized];
+}
+
 async function mergeMp3ChunksToWav(parts: Blob[]): Promise<Blob> {
   const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
   if (!AudioContextClass) throw new Error('Audio decoding is unavailable on this device.');
@@ -822,7 +840,7 @@ function App() {
       const original = await response.text();
       let output = original;
       if (translate) {
-        const parts = splitLongText(original, 18000);
+        const parts = splitSubtitleDocument(original, 18000);
         const translated: string[] = [];
         for (let i = 0; i < parts.length; i++) {
           setSubtitleStatus('Translating subtitle section ' + (i + 1) + ' of ' + parts.length + '…');
