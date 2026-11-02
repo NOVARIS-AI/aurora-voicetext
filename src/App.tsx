@@ -370,7 +370,7 @@ async function transcribeOpusInSegments(
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
-    const segmentSeconds = Math.min(90, getAudioSegmentSeconds());
+    const segmentSeconds = 90; // Online MP3 chunks are 64 kbps, so 90 seconds stays below the upload limit even on low-memory phones.
     const overlapSeconds = 2;
     const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
     const totalParts = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
@@ -463,6 +463,25 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
+
+  // Keep Android's display awake during an active foreground transcription.
+  // This does not keep JavaScript running after Android backgrounds or force-stops the app.
+  useEffect(() => {
+    if (!busy || !('wakeLock' in navigator)) return;
+    let cancelled = false;
+    let lock: { release: () => Promise<void> } | null = null;
+    const wakeLock = (navigator as Navigator & {
+      wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+    }).wakeLock;
+    wakeLock?.request('screen').then(value => {
+      if (cancelled) void value.release();
+      else lock = value;
+    }).catch(() => { /* Wake Lock is optional; transcription still proceeds. */ });
+    return () => {
+      cancelled = true;
+      if (lock) void lock.release();
+    };
+  }, [busy]);
 
   useEffect(() => () => filesRef.current.forEach(item => URL.revokeObjectURL(item.url)), []);
 
