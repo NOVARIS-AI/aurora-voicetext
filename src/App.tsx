@@ -71,6 +71,21 @@ async function removeSavedCheckpoint(fileKey: string): Promise<void> {
     });
   } finally { db.close(); }
 }
+
+/**
+ * Keep decoder working sets smaller on constrained phones.
+ * This reduces per-section memory use; it does not yet make whole-file
+ * FFmpeg input loading streaming/disk-backed.
+ */
+function getAudioSegmentSeconds(): number {
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const cores = navigator.hardwareConcurrency || 2;
+  if (typeof memory === 'number' && memory <= 2) return 45;
+  if (typeof memory === 'number' && memory <= 4) return 75;
+  if (cores <= 4) return 75;
+  return 120;
+}
+
 function makeAudioFileKey(file: File): string {
   return [file.name, file.size, file.lastModified, file.type].join('|');
 }
@@ -140,7 +155,14 @@ async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, onRet
     try {
       const response = await fetch(input, init);
       if (response.ok || !([408, 425, 429].includes(response.status) || response.status >= 500) || attempt === 3) return response;
+      const retryAfter = response.headers.get('Retry-After');
+      const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+      const waitMs = Number.isFinite(retryAfterSeconds)
+        ? Math.min(30000, Math.max(800, retryAfterSeconds * 1000))
+        : 800 * (2 ** attempt);
       onRetry?.(attempt + 1);
+      await new Promise(resolve => window.setTimeout(resolve, waitMs));
+      continue;
     } catch (error) {
       lastError = error;
       if (attempt === 3) throw error;
@@ -297,7 +319,7 @@ async function transcribeOpusOfflineInSegments(
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     await ffmpeg.exec([
       '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-      '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', '120',
+      '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', String(getAudioSegmentSeconds()),
       '-reset_timestamps', '1', '-segment_format', 'wav', 'aurora-offline-%03d.wav',
     ]);
     const entries = await ffmpeg.listDir('/');
@@ -374,7 +396,7 @@ async function transcribeOpusInSegments(
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     await ffmpeg.exec([
       '-i', inputName, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-      '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'segment', '-segment_time', '120',
+      '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'segment', '-segment_time', String(getAudioSegmentSeconds()),
       '-reset_timestamps', '1', '-segment_format', 'mp3', 'aurora-part-%03d.mp3',
     ]);
     const entries = await ffmpeg.listDir('/');
