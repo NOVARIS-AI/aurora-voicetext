@@ -1,0 +1,45 @@
+# AURORA VoiceText backend and failover
+
+## Architecture
+
+- The app calls same-origin `/api/*` endpoints. No provider secret is shipped to the browser or APK.
+- The primary serverless API tries configured providers in order: Groq, then OpenAI.
+- A provider timeout, rate limit, network failure, or server error triggers the next configured provider.
+- If both primary providers fail, the API can forward the same request to the independent Cloudflare Worker.
+- The Worker has its own provider credentials and repeats provider failover. It is protected by a shared bearer token.
+- `GET /api/health` reports capability booleans only. It never returns key values.
+
+## Runtime secrets
+
+Configure these in the hosting provider's server-side environment settings (Production and Preview as appropriate):
+
+- `GROQ_API_KEY` — primary transcription provider.
+- `OPENAI_API_KEY` — secondary transcription provider and future AI features.
+- `ELEVENLABS_API_KEY` — reserved for AI speech generation integration.
+- `BACKUP_BACKEND_URL` — Cloudflare Worker origin, without a trailing slash.
+- `BACKUP_BACKEND_TOKEN` — same value as the Worker `BACKUP_API_TOKEN`.
+
+Do not use `VITE_*` names for secrets. Vite variables are public in built browser assets. Do not commit real keys to GitHub files, issues, logs, or APKs.
+
+## Deploy the independent backup
+
+1. Install Wrangler and authenticate to the Cloudflare account.
+2. From `backup-worker/`, run `npx wrangler secret put BACKUP_API_TOKEN`.
+3. Add provider secrets with `npx wrangler secret put GROQ_API_KEY` and/or `npx wrangler secret put OPENAI_API_KEY`.
+4. Deploy with `npx wrangler deploy`.
+5. Confirm `https://YOUR-WORKER.workers.dev/health` returns status ok.
+6. Configure the primary host with `BACKUP_BACKEND_URL=https://YOUR-WORKER.workers.dev` and `BACKUP_BACKEND_TOKEN` matching the Worker token.
+
+Use a long random token and keep it private. Rotate it if it is ever exposed.
+
+## GitHub Secrets vs runtime secrets
+
+GitHub Actions Secrets are available only to workflows that explicitly map them into a job's environment. They do not automatically become Vercel or Cloudflare runtime variables. Use GitHub Secrets for CI/deployment automation; use Vercel Project Environment Variables and Cloudflare Worker Secrets for live requests. Never put secrets in a workflow artifact or client build.
+
+## Fallback behavior
+
+Failover is attempted for provider network errors, timeouts, HTTP 408, 429, and 5xx. Most other 4xx responses indicate invalid requests and stop retrying. The app should preserve its existing local/offline transcription fallback when every server provider is unavailable.
+
+## Current activation status
+
+The code and configuration templates can be committed without credentials. Provider failover becomes active only after the runtime secrets and backup Worker are deployed. AI speech, translation, and subtitle discovery still need their own route/provider integrations; the keys above are reserved and must not be represented as working features until those integrations are implemented.
