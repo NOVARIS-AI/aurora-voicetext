@@ -4,7 +4,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
-  ShieldCheck, Clock3, Check, WandSparkles, LoaderCircle, FileText,
+  ShieldCheck, Clock3, WandSparkles, LoaderCircle, FileText,
   Settings2, Mic2, Volume2, BookOpen, Trash2, Play, Pause, Save,
 } from 'lucide-react';
 
@@ -146,7 +146,6 @@ function downloadFile(name: string, content: string, type: string) {
 function makeSummary(text: string) {
   const sentences = text.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(Boolean);
   if (!sentences.length) return '';
-  const keywords = new Set(['need', 'must', 'please', 'tomorrow', 'today', 'meeting', 'remember', 'send', 'call', 'pay', 'deadline', 'important', 'because', 'decide', 'agree', 'follow']);
   const ranked = sentences.map((sentence, index) => ({
     sentence, index,
     score: (sentence.split(/\s+/).length > 4 ? 1 : 0) +
@@ -290,7 +289,6 @@ async function transcribeOpusOfflineInSegments(
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-  const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
   const inputPath = '/audio-input/' + file.name;
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
@@ -393,7 +391,6 @@ async function transcribeOpusInSegments(
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-  const extension = (file.name.split('.').pop() || 'opus').toLowerCase().replace(/[^a-z0-9]/g, '') || 'opus';
   const inputPath = '/audio-input/' + file.name;
   const outputName = 'aurora-online-current.mp3';
   const toBase64 = (bytes: Uint8Array) => {
@@ -644,7 +641,6 @@ function App() {
     setPlaying(true); window.speechSynthesis.speak(utterance);
   }
 
-  const allText = useMemo(() => files.filter(item => item.transcript.trim()).map(item => item.file.name + '\n' + item.transcript.trim()).join('\n\n──────────────\n\n'), [files]);
   const filteredLibrary = library.filter(item => (item.name + ' ' + item.transcript).toLowerCase().includes(search.toLowerCase()));
 
   return (
