@@ -101,6 +101,27 @@ async function translate(input: TranslateBody, env: Env) {
   throw new Error(failures.join(" | ") || "No backup translation provider configured.");
 }
 
+async function polishTranscript(text: string, env: Env): Promise<{ text: string; provider: string }> {
+  const providers = [
+    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile" },
+  ].filter(p => p.key);
+  const failures: string[] = [];
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" }, body: JSON.stringify({ model: provider.model, temperature: 0.1, messages: [
+        { role: "system", content: "Clean this speech transcript for readability. Correct punctuation, capitalization and obvious transcription formatting issues. Preserve every factual detail, sentence, name, number, language and Nigerian Pidgin expression. Do not summarize, add facts, translate, or omit content. Return only the corrected transcript." },
+        { role: "user", content: text },
+      ] }), signal: AbortSignal.timeout(90000) });
+      const payload = await response.json().catch(() => ({})) as { choices?: Array<{message?:{content?:string}}>; error?:{message?:string} };
+      const result = payload.choices?.[0]?.message?.content?.trim();
+      if (!response.ok || !result) throw new Error(payload.error?.message || provider.name + " transcript cleanup failed.");
+      return { text: result, provider: provider.name };
+    } catch (error) { failures.push(provider.name + ": " + (error instanceof Error ? error.message : "failed")); }
+  }
+  throw new Error(failures.join(" | ") || "No AI text provider configured.");
+}
+
 async function subtitleSearch(input: SubtitleBody, env: Env) {
   if (!env.OPENSUBTITLES_API_KEY) throw new Error("Subtitle search provider is not configured.");
   const url = new URL("https://api.opensubtitles.com/api/v1/subtitles");
@@ -138,7 +159,7 @@ export default {
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.GROQ_API_KEY || env.OPENAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
-    const routes = new Set(["/api/transcribe", "/api/tts", "/api/translate", "/api/subtitles", "/api/subtitles-download"]);
+    const routes = new Set(["/api/transcribe", "/api/tts", "/api/assist", "/api/translate", "/api/subtitles", "/api/subtitles-download"]);
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
     if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
     const bearer = Boolean(env.BACKUP_API_TOKEN) && request.headers.get("authorization") === "Bearer " + env.BACKUP_API_TOKEN;
@@ -159,6 +180,10 @@ export default {
         if (typeof body.text !== "string" || !body.text.trim() || body.text.length > 24000) return json({ error: "Text must contain 1–24,000 characters." }, 400, cors);
         const result = await synthesize(body, env);
         return new Response(result.audio, { headers: { ...Object.fromEntries(cors.entries()), "content-type": "audio/mpeg", "content-disposition": 'attachment; filename="aurora-voice.mp3"', "X-AURORA-Provider": result.provider } });
+      }
+      if (url.pathname === "/api/assist") {
+        if (typeof body.text !== "string" || !body.text.trim() || body.text.length > 24000) return json({ error: "Transcript must contain 1–24,000 characters." }, 400, cors);
+        return json(await polishTranscript(body.text.trim(), env), 200, cors);
       }
       if (url.pathname === "/api/translate") {
         if (typeof body.text !== "string" || !body.text.trim() || typeof body.targetLanguage !== "string" || !body.targetLanguage.trim() || body.text.length > 24000) return json({ error: "Text and targetLanguage are required; maximum 24,000 characters." }, 400, cors);
