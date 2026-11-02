@@ -306,7 +306,8 @@ async function transcribeOpusOfflineInSegments(
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // WORKERFS reads the selected File directly instead of copying the entire recording into WASM memory.
-    await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
+    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
+    if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
     const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
@@ -323,11 +324,12 @@ async function transcribeOpusOfflineInSegments(
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
-      await ffmpeg.exec([
+      const decodeExitCode = await ffmpeg.exec([
         '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
         '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
         '-f', 'wav', outputName,
       ]);
+      if (decodeExitCode !== 0) throw new Error('FFmpeg could not decode offline section ' + (index + 1) + ' (exit ' + decodeExitCode + '). Check the audio format or try MP3.');
       const output = await ffmpeg.readFile(outputName);
       if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
       const audio = pcmToFloat(output);
@@ -395,7 +397,8 @@ async function transcribeOpusInSegments(
       wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // WORKERFS avoids loading a second full copy of long recordings into the WASM filesystem.
-    await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
+    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
+    if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
     const segmentSeconds = Math.min(90, getAudioSegmentSeconds());
     const overlapSeconds = 2;
@@ -414,11 +417,12 @@ async function transcribeOpusInSegments(
     for (let index = checkpoint.nextChunk; index < totalParts; index++) {
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
-      await ffmpeg.exec([
+      const encodeExitCode = await ffmpeg.exec([
         '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
         '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
         '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
       ]);
+      if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (index + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
       const output = await ffmpeg.readFile(outputName);
       if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
       const bytes = output;
