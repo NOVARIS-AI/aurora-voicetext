@@ -43,3 +43,17 @@ Failover is attempted for provider network errors, timeouts, HTTP 408, 429, and 
 ## Current activation status
 
 The code and configuration templates can be committed without credentials. Provider failover becomes active only after the runtime secrets and backup Worker are deployed. AI speech, translation, and subtitle discovery still need their own route/provider integrations; the keys above are reserved and must not be represented as working features until those integrations are implemented.
+
+## GitHub Actions secrets for automated Worker deployment
+
+In the repository, open **Settings → Secrets and variables → Actions → New repository secret** and add:
+
+- `CLOUDFLARE_API_TOKEN` — token permitted to deploy Workers and manage Worker secrets.
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account identifier.
+- `BACKUP_API_TOKEN` — long random shared bearer token.
+- `GROQ_API_KEY` — optional Worker primary transcription key.
+- `OPENAI_API_KEY` — optional Worker secondary transcription key.
+
+The `Deploy AURORA VoiceText backup worker` workflow deploys when `backup-worker/**` changes or when manually dispatched. If Cloudflare credentials are absent, it skips deployment and reports that configuration is needed.
+
+Separately add `GROQ_API_KEY`, `OPENAI_API_KEY`, `BACKUP_BACKEND_URL`, and `BACKUP_BACKEND_TOKEN` to the primary API host's runtime environment. For this project that is the Vercel project environment settings. A GitHub secret does not automatically populate Vercel's runtime environment. Once Vercel quota is available, those runtime values must be configured there and a new deployment created for them to take effect.
