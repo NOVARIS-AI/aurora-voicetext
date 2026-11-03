@@ -40,7 +40,7 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
       const upload = await fetch("https://api.assemblyai.com/v2/upload", {
         method: "POST",
         headers: { authorization: env.ASSEMBLYAI_API_KEY, "content-type": "application/octet-stream" },
-        body: bytes,
+        body: (() => { const uploadBytes = new Uint8Array(bytes.byteLength); uploadBytes.set(bytes); return uploadBytes.buffer; })(),
         signal: AbortSignal.timeout(20000),
       });
       const uploaded = await upload.json().catch(() => ({})) as { upload_url?: string; error?: string };
