@@ -172,42 +172,12 @@ function splitSubtitleDocument(text: string, max = 18000): string[] {
   return chunks.length ? chunks : [normalized];
 }
 
-async function mergeMp3ChunksToWav(parts: Blob[]): Promise<Blob> {
-  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContextClass) throw new Error('Audio decoding is unavailable on this device.');
-  const context: AudioContext = new AudioContextClass();
-  try {
-    const decoded: AudioBuffer[] = [];
-    for (const part of parts) decoded.push(await context.decodeAudioData(await part.arrayBuffer()));
-    const sampleRate = Math.max(...decoded.map(item => item.sampleRate));
-    const channels = Math.min(2, Math.max(...decoded.map(item => item.numberOfChannels)));
-    const totalFrames = decoded.reduce((sum, item) => sum + Math.ceil(item.duration * sampleRate), 0);
-    const pcm = Array.from({ length: channels }, () => new Float32Array(totalFrames));
-    let offset = 0;
-    for (const item of decoded) {
-      const frames = Math.ceil(item.duration * sampleRate);
-      for (let channel = 0; channel < channels; channel++) {
-        const source = item.getChannelData(Math.min(channel, item.numberOfChannels - 1));
-        for (let i = 0; i < frames; i++) {
-          const sourceIndex = Math.min(source.length - 1, Math.floor(i * item.sampleRate / sampleRate));
-          pcm[channel][offset + i] = source[sourceIndex] || 0;
-        }
-      }
-      offset += frames;
-    }
-    const bytesPerSample = 2, blockAlign = channels * bytesPerSample, dataSize = totalFrames * blockAlign;
-    const buffer = new ArrayBuffer(44 + dataSize), view = new DataView(buffer);
-    const write = (at: number, value: string) => { for (let i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i)); };
-    write(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); view.setUint16(22, channels, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true); view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, dataSize, true);
-    let at = 44;
-    for (let frame = 0; frame < totalFrames; frame++) for (let channel = 0; channel < channels; channel++) {
-      const sample = Math.max(-1, Math.min(1, pcm[channel][frame]));
-      view.setInt16(at, sample < 0 ? sample * 32768 : sample * 32767, true); at += 2;
-    }
-    return new Blob([buffer], { type: 'audio/wav' });
-  } finally { await context.close().catch(() => undefined); }
+function combineMp3Chunks(parts: Blob[]): Blob {
+  const usable = parts.filter(part => part.size > 0);
+  if (!usable.length) throw new Error('No generated audio was received.');
+  // Keep compressed MP3 chunks intact; decoding every section into PCM and
+  // rebuilding a large WAV is memory-heavy on low-RAM Android devices.
+  return new Blob(usable, { type: 'audio/mpeg' });
 }
 
 function readLibrary(): Recording[] {
@@ -869,7 +839,8 @@ function App() {
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
-  const [exportType, setExportType] = useState('txt');
+  const [exportType, setExportType] = useState('docx');
+  const [exportTemplate, setExportTemplate] = useState('standard');
   const [exportFilename, setExportFilename] = useState('');
   const [voiceFilename, setVoiceFilename] = useState('aurora-voice');
   const [studioText, setStudioText] = useState('');
@@ -883,7 +854,6 @@ function App() {
   const [voicePauses, setVoicePauses] = useState('Natural pauses');
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
-  const [voiceProvider, setVoiceProvider] = useState('');
   const [audioPlayhead, setAudioPlayhead] = useState(0);
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
   const [subtitleQuery, setSubtitleQuery] = useState('');
@@ -1134,20 +1104,24 @@ function App() {
     const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
     const documentTitle = safeFileBaseName(baseName, 'Transcript');
     const attribution = 'Transcribed by AURORA VoiceText';
+    const templateLabel = exportTemplate === 'meeting' ? 'MEETING TRANSCRIPT' : exportTemplate === 'study' ? 'STUDY NOTES' : 'TRANSCRIPT';
+    const templateSubtitle = exportTemplate === 'meeting' ? 'Meeting transcript' : exportTemplate === 'study' ? 'Study notes' : '';
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
     const timestamped = includeTimestamps && timestampsCoverTranscript
       ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
       : text;
-    const transcriptDocument = documentTitle + '\n\n' + attribution + '\n\n' + timestamped;
+    const transcriptDocument = documentTitle + '\n' + (templateSubtitle ? templateSubtitle + '\n' : '') + attribution + '\n\n' + timestamped;
     if (exportType === 'docx') {
       try {
         const paragraphs = includeTimestamps && timestampsCoverTranscript
           ? timedSegments!.map(segment => new Paragraph({ children: [new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91' }), new TextRun(segment.text)], spacing: { after: 120 } }))
           : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
         const doc = new Document({ sections: [{ properties: {}, children: [
-          new Paragraph({ children: [new TextRun({ text: documentTitle, bold: true, size: 32, color: '167D91' })], spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: templateLabel, bold: true, size: 18, color: '167D91', characterSpacing: 24 })], spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: documentTitle, bold: true, size: 34, color: '172033' })], spacing: { after: 100 } }),
+          ...(templateSubtitle ? [new Paragraph({ children: [new TextRun({ text: templateSubtitle, color: '475569', size: 22 })], spacing: { after: 100 } })] : []),
           new Paragraph({ children: [new TextRun({ text: attribution, italics: true, color: '64748B', size: 20 })], spacing: { after: 360 } }),
           ...paragraphs
         ] }] });
@@ -1163,8 +1137,10 @@ function App() {
     if (exportType === 'pdf') {
       const popup = window.open('', '_blank');
       if (!popup) { setError('Allow pop-ups to print or save as PDF.'); return; }
-      popup.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>\"]/g, '') + '</title><style>body{font:16px Arial;line-height:1.75;max-width:760px;margin:40px auto;padding:0 20px;color:#172033}h1{font-size:28px;margin:0 0 8px}.byline{color:#64748b;font-size:12px;margin:0 0 30px}.transcript{white-space:pre-wrap} @media print{body{margin:18mm auto}}</style></head><body><h1></h1><p class="byline"></p><div class="transcript"></div></body></html>');
+      popup.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>\"]/g, '') + '</title><style>body{font:16px/1.8 Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 24px;color:#172033}.kicker{font-size:10px;letter-spacing:2px;color:#167d91;font-weight:bold;margin:0 0 12px}h1{font-size:30px;line-height:1.2;margin:0 0 8px}.subtitle{font-size:15px;color:#475569;margin:0 0 8px}.byline{color:#64748b;font-size:11px;margin:0 0 26px;padding-bottom:18px;border-bottom:1px solid #dbe3eb}.transcript{white-space:pre-wrap}@media print{body{margin:18mm auto;padding:0}}</style></head><body><p class="kicker"></p><h1></h1><p class="subtitle"></p><p class="byline"></p><div class="transcript"></div></body></html>');
+      popup.document.querySelector('.kicker')!.textContent = templateLabel;
       popup.document.querySelector('h1')!.textContent = documentTitle;
+      popup.document.querySelector('.subtitle')!.textContent = templateSubtitle;
       popup.document.querySelector('.byline')!.textContent = attribution;
       popup.document.querySelector('.transcript')!.textContent = timestamped;
       popup.document.close(); popup.focus(); popup.print();
@@ -1193,39 +1169,40 @@ function App() {
 
 
   async function generateVoice() {
-    if (!studioText.trim()) { setError('Enter text before generating AI speech.'); return; }
+    if (!studioText.trim()) { setError('Add a script or choose a saved transcript first.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
-    setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Generating AI voice…');
+    setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Preparing your voice…');
     try {
-      // Keep provider requests small enough for common TTS limits and mobile memory.
       const chunks = splitLongText(studioText, 3500);
       const audioParts: Blob[] = [];
-      const providers = new Set<string>();
       for (let index = 0; index < chunks.length; index++) {
-        setStatus('Generating voice section ' + (index + 1) + ' of ' + chunks.length + '…');
-        const { response } = await requestFeature('/api/tts', { text: chunks[index], voice: voiceName, style: voiceStyle + '. Accent / pronunciation preference: ' + voiceAccent + '. Emphasis: ' + voiceEmphasis + '. Pauses: ' + voicePauses, emotion: voiceEmotion, rate: voiceRate, pitch: voicePitch }, true);
-        const provider = response.headers.get('X-AURORA-Provider');
-        if (provider) providers.add(provider);
+        setStatus(chunks.length > 1 ? 'Creating audio section ' + (index + 1) + ' of ' + chunks.length + '…' : 'Creating your audio…');
+        const { response } = await requestFeature('/api/tts', {
+          text: chunks[index], voice: voiceName,
+          style: voiceStyle + '. Accent / pronunciation preference: ' + voiceAccent + '. Emphasis: ' + voiceEmphasis + '. Pauses: ' + voicePauses,
+          emotion: voiceEmotion, rate: voiceRate, pitch: voicePitch,
+        }, true);
         const audioPart = await response.blob();
-        if (!audioPart.size) throw new Error('The speech provider returned an empty audio section (' + (index + 1) + ').');
+        if (!audioPart.size) throw new Error('No audio was returned.');
         audioParts.push(audioPart);
       }
-      const finalAudio = await mergeMp3ChunksToWav(audioParts);
+      const finalAudio = combineMp3Chunks(audioParts);
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
-      setVoiceProvider([providers.size ? Array.from(providers).join(' + ') : 'AI speech provider', chunks.length > 1 ? 'merged ' + chunks.length + ' sections' : 'single section'].join(' · '));
-      setStatus('AI voice generated. Preview it below, then download the complete WAV audio.');
-    } catch (error) { setError(error instanceof Error ? error.message : 'AI voice generation failed.'); setStatus(''); }
-    finally { setVoiceBusy(false); }
+      setStatus('Your voice audio is ready. Preview it or download the MP3.');
+    } catch {
+      setError('Voice generation is unavailable right now. Check your connection and try again.');
+      setStatus('');
+    } finally { setVoiceBusy(false); }
   }
 
   async function searchSubtitles() {
     if (subtitleQuery.trim().length < 2) { setError('Enter a film or episode title first.'); return; }
-    setSubtitleBusy(true); setSubtitleStatus('Searching OpenSubtitles…'); setSubtitleResults([]); setError('');
+    setSubtitleBusy(true); setSubtitleStatus('Searching for matching subtitles…'); setSubtitleResults([]); setError('');
     try {
       const { data } = await requestFeature('/api/subtitles', { query: subtitleQuery.trim(), languages: subtitleLanguage, type: subtitleType });
       setSubtitleResults(Array.isArray(data?.results) ? data.results : []);
       setSubtitleStatus(data?.results?.length ? 'Choose a matching subtitle release below.' : 'No matching subtitles were found. Try another title or language.');
-    } catch (error) { setError(error instanceof Error ? error.message : 'Subtitle search failed.'); setSubtitleStatus(''); }
+    } catch { setSubtitleStatus('Subtitle search is unavailable right now. Please try again later.'); }
     finally { setSubtitleBusy(false); }
   }
 
@@ -1251,8 +1228,22 @@ function App() {
       setSubtitleText(exportText); setSubtitleFilename(safeName);
       downloadFile(safeName + (translate ? '-' + subtitleTranslateLanguage.toLowerCase().replace(/\s+/g, '-') : '') + (vtt ? '.vtt' : '.srt'), exportText, vtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip;charset=utf-8');
       setSubtitleStatus(translate ? 'Translated subtitle exported. Review the timing and wording before use.' : 'Subtitle downloaded.');
-    } catch (error) { setError(error instanceof Error ? error.message : 'Subtitle download or translation failed.'); setSubtitleStatus(''); }
+    } catch { setSubtitleStatus('This subtitle could not be downloaded or translated. Please try another release.'); }
     finally { setSubtitleBusy(false); }
+  }
+
+  function createSubtitlesFromTranscript(format: 'srt' | 'vtt') {
+    if (!active?.transcript.trim()) { setSubtitleStatus('Choose a recording with a transcript first.'); return; }
+    const segments = active.timedSegments || [];
+    const segmentText = segments.map(segment => segment.text).join(' ');
+    const hasFullTiming = Boolean(segments.length) && normalizeTranscriptForCompare(segmentText) === normalizeTranscriptForCompare(active.transcript);
+    const output = format === 'srt'
+      ? hasFullTiming ? createTimedSubtitles(segments, 'srt') : createEstimatedSubtitles(active.transcript, 'srt')
+      : hasFullTiming ? createTimedSubtitles(segments, 'vtt') : createEstimatedSubtitles(active.transcript, 'vtt');
+    const name = safeFileBaseName(active.file.name.replace(/\\.[^.]+$/, ''), 'aurora-subtitles');
+    setSubtitleText(output); setSubtitleFilename(name);
+    downloadFile(name + '.' + format, output, format === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8');
+    setSubtitleStatus(hasFullTiming ? 'Your speech-aligned subtitles are ready.' : 'Your subtitles are ready with estimated timing. Review them before use.');
   }
 
   function updateTimedSegment(index: number, value: string) {
@@ -1331,7 +1322,14 @@ function App() {
               
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => { setPreviewInput('@' + active.file.name + ' '); setPage('preview'); }}><AudioWaveform size={15}/> Open AI Preview</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <section className="export-panel"><div className="export-panel-heading"><div><small>YOUR DOCUMENT</small><strong>Choose an export style</strong></div><FileDown size={20}/></div>
+                <label className="field-label" htmlFor="export-filename">Document name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter document name"/></label>
+                <div className="export-row">
+                  <label className="field-label" htmlFor="export-template">Template<select id="export-template" value={exportTemplate} onChange={event=>setExportTemplate(event.target.value)}><option value="standard">Professional transcript</option><option value="meeting">Meeting notes</option><option value="study">Study notes</option></select></label>
+                  <label className="field-label" htmlFor="export-type">File format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><optgroup label="Documents"><option value="docx">Word document (.docx)</option><option value="pdf">PDF document (.pdf)</option><option value="rtf">Rich text (.rtf)</option><option value="html">Web document (.html)</option><option value="md">Markdown (.md)</option><option value="txt">Plain text (.txt)</option></optgroup><optgroup label="Subtitles"><option value="srt">SubRip subtitles (.srt)</option><option value="vtt">Web subtitles (.vtt)</option></optgroup></select></label>
+                </div>
+                <div className="export-actions"><button className="primary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
+              </section>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
@@ -1370,34 +1368,47 @@ function App() {
         <section className="card studio-card">
           <div className="studio-icon"><Volume2 size={23}/></div>
           <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
-          <label className="field-label" htmlFor="studio-text">Script / text</label>
-          <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="Paste a script or choose a transcript from your library…"/>
-          <div className="studio-grid">
-            <label className="field-label">AI voice<select value={voiceName} onChange={event=>setVoiceName(event.target.value)}><option value="nova">Nova · feminine, bright</option><option value="shimmer">Shimmer · feminine, clear</option><option value="coral">Coral · feminine, warm</option><option value="sage">Sage · feminine, measured</option><option value="onyx">Onyx · masculine, deep</option><option value="echo">Echo · masculine, clear</option><option value="ash">Ash · masculine, conversational</option><option value="fable">Fable · expressive narrator</option><option value="alloy">Alloy · neutral</option></select></label>
-            <label className="field-label">Delivery style<select value={voiceStyle} onChange={event=>setVoiceStyle(event.target.value)}><option>Natural, conversational delivery</option><option>Professional presenter, polished and confident</option><option>Storytelling, expressive and vivid</option><option>Documentary narrator, steady and authoritative</option><option>Energetic, upbeat and engaging</option><option>Calm, gentle and reassuring</option></select></label>
-            <label className="field-label">Emotion<select value={voiceEmotion} onChange={event=>setVoiceEmotion(event.target.value)}><option>Warm and friendly</option><option>Neutral and informative</option><option>Excited and enthusiastic</option><option>Serious and thoughtful</option><option>Hopeful and inspiring</option></select></label>
-            <label className="field-label">Accent / pronunciation<select value={voiceAccent} onChange={event=>setVoiceAccent(event.target.value)}><option>International English</option><option>British English</option><option>American English</option><option>Nigerian English</option><option>West African English</option><option>Australian English</option></select></label>
-            <label className="field-label">Emphasis<select value={voiceEmphasis} onChange={event=>setVoiceEmphasis(event.target.value)}><option>Natural emphasis</option><option>Subtle emphasis</option><option>Expressive emphasis</option><option>Strong key-word emphasis</option></select></label>
-            <label className="field-label">Pauses<select value={voicePauses} onChange={event=>setVoicePauses(event.target.value)}><option>Natural pauses</option><option>Short pauses</option><option>Long storytelling pauses</option><option>Presenter pacing</option></select></label>
+          <div className="studio-source-actions">
+            {active?.transcript.trim() && <button className="secondary small-button" type="button" onClick={()=>setStudioText(active.transcript)}><FileText size={15}/> Use current transcript</button>}
+            {library.length>0 && <label className="field-label">Saved transcript<select defaultValue="" onChange={event=>{const item=library.find(entry=>entry.id===event.target.value);if(item)setStudioText(item.transcript);}}><option value="">Choose from library…</option>{library.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
           </div>
-          <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
+          <label className="field-label" htmlFor="studio-text">Your script</label>
+          <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="Write or paste the words you want AURORA to speak…"/>
+          <div className="studio-grid studio-primary-options">
+            <label className="field-label">Voice<select value={voiceName} onChange={event=>setVoiceName(event.target.value)}><option value="nova">Nova · bright</option><option value="shimmer">Shimmer · clear</option><option value="coral">Coral · warm</option><option value="sage">Sage · measured</option><option value="onyx">Onyx · deep</option><option value="echo">Echo · clear</option><option value="ash">Ash · conversational</option><option value="fable">Fable · narrator</option><option value="alloy">Alloy · neutral</option></select></label>
+            <label className="field-label">Delivery<select value={voiceStyle} onChange={event=>setVoiceStyle(event.target.value)}><option>Natural, conversational delivery</option><option>Professional presenter, polished and confident</option><option>Storytelling, expressive and vivid</option><option>Documentary narrator, steady and authoritative</option><option>Energetic, upbeat and engaging</option><option>Calm, gentle and reassuring</option></select></label>
+          </div>
+          <details className="voice-advanced"><summary>More voice controls</summary>
+            <div className="studio-grid">
+              <label className="field-label">Emotion<select value={voiceEmotion} onChange={event=>setVoiceEmotion(event.target.value)}><option>Warm and friendly</option><option>Neutral and informative</option><option>Excited and enthusiastic</option><option>Serious and thoughtful</option><option>Hopeful and inspiring</option></select></label>
+              <label className="field-label">Accent<select value={voiceAccent} onChange={event=>setVoiceAccent(event.target.value)}><option>International English</option><option>British English</option><option>American English</option><option>Nigerian English</option><option>West African English</option><option>Australian English</option></select></label>
+              <label className="field-label">Emphasis<select value={voiceEmphasis} onChange={event=>setVoiceEmphasis(event.target.value)}><option>Natural emphasis</option><option>Subtle emphasis</option><option>Expressive emphasis</option><option>Strong key-word emphasis</option></select></label>
+              <label className="field-label">Pauses<select value={voicePauses} onChange={event=>setVoicePauses(event.target.value)}><option>Natural pauses</option><option>Short pauses</option><option>Long storytelling pauses</option><option>Presenter pacing</option></select></label>
+            </div>
+            <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
+          </details>
           <div className="studio-actions"><button className="primary" type="button" disabled={voiceBusy} onClick={generateVoice}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating AI audio…':'Generate AI voice'}</button><button className="secondary" type="button" onClick={()=>{setStudioText('');if(voiceAudioUrl)URL.revokeObjectURL(voiceAudioUrl);setVoiceAudioUrl('');}}>Clear</button></div>
           {status && <div className="status-message" role="status">{status}</div>}
-          {voiceAudioUrl && <div className="generated-audio"><strong>AI-generated audio · {voiceProvider}</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.wav'}><Download size={16}/> Download WAV audio</a></div>}
+          {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
         </section>
       </section>}
 
       {page === 'subtitles' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">SUBTITLE FINDER</div><h1>Find subtitles for a video.</h1><p>Search available subtitle releases, download an authorized file, translate it, and export SRT or VTT.</p></div>
-        <section className="card subtitle-card">
-          <label className="field-label" htmlFor="subtitle-query">Movie or episode title<input id="subtitle-query" value={subtitleQuery} onChange={event=>setSubtitleQuery(event.target.value)} placeholder="Enter a film or series title"/></label>
-          <div className="studio-grid"><label className="field-label">Content type<select value={subtitleType || 'all'} onChange={event=>setSubtitleType(event.target.value === 'all' ? undefined : event.target.value as 'movie' | 'episode')}><option value="all">Movies & series</option><option value="movie">Movie</option><option value="episode">TV episode</option></select></label><label className="field-label">Subtitle language<select value={subtitleLanguage} onChange={event=>setSubtitleLanguage(event.target.value)}><option value="en">English</option><option value="yo">Yoruba</option><option value="ig">Igbo</option><option value="ha">Hausa</option><option value="fr">French</option><option value="es">Spanish</option><option value="pt">Portuguese</option><option value="ar">Arabic</option><option value="de">German</option></select></label><label className="field-label">Translate to<select value={subtitleTranslateLanguage} onChange={event=>setSubtitleTranslateLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option></select></label></div>
-          <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} Search subtitle catalogue</button>
-          {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
-          {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''} · {item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</p></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate & export</button></div></article>)}</div>}
-          {subtitleText && <div className="subtitle-preview"><strong>Last subtitle output · {subtitleFilename}</strong><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={8}/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleText,'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+        <div className="page-heading"><div className="eyebrow">SUBTITLE WORKSPACE</div><h1>Create or find subtitles.</h1><p>Make subtitles from your transcript, or find an existing subtitle file for a film or episode.</p></div>
+        <section className="card subtitle-create-card">
+          <div className="subtitle-section-heading"><div><small>01 · CREATE</small><h2>Make subtitles from your audio</h2><p>{active?.transcript.trim() ? 'Ready to create subtitles from ' + active.file.name : 'Choose and transcribe an audio file first.'}</p></div><span className="subtitle-step-icon"><AudioWaveform size={20}/></span></div>
+          {active?.transcript.trim() ? <div className="subtitle-create-actions"><button className="primary" type="button" onClick={()=>createSubtitlesFromTranscript('srt')}><FileDown size={16}/> Create SRT</button><button className="secondary" type="button" onClick={()=>createSubtitlesFromTranscript('vtt')}><FileDown size={16}/> Create VTT</button><button className="text-button" type="button" onClick={()=>setPage('transcribe')}>Review transcript</button></div> : <button className="primary" type="button" onClick={()=>setPage('transcribe')}>Open Transcribe</button>}
         </section>
-      </section>}
+        <section className="card subtitle-card">
+          <div className="subtitle-section-heading"><div><small>02 · FIND</small><h2>Find an existing subtitle</h2><p>Search by title, content type and language.</p></div><span className="subtitle-step-icon"><Search size={20}/></span></div>
+          <label className="field-label" htmlFor="subtitle-query">Film or series title<input id="subtitle-query" value={subtitleQuery} onChange={event=>setSubtitleQuery(event.target.value)} placeholder="e.g. film or episode title"/></label>
+          <div className="studio-grid"><label className="field-label">Content type<select value={subtitleType || 'all'} onChange={event=>setSubtitleType(event.target.value === 'all' ? undefined : event.target.value as 'movie' | 'episode')}><option value="all">Movies & series</option><option value="movie">Movie</option><option value="episode">TV episode</option></select></label><label className="field-label">Find subtitles in<select value={subtitleLanguage} onChange={event=>setSubtitleLanguage(event.target.value)}><option value="en">English</option><option value="yo">Yoruba</option><option value="ig">Igbo</option><option value="ha">Hausa</option><option value="fr">French</option><option value="es">Spanish</option><option value="pt">Portuguese</option><option value="ar">Arabic</option><option value="de">German</option></select></label><label className="field-label">Translate downloaded subtitle to<select value={subtitleTranslateLanguage} onChange={event=>setSubtitleTranslateLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option></select></label></div>
+          <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
+          {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
+          {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div className="subtitle-result-main"><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''}</p><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button></div></article>)}</div>}
+          {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW</small><h2>{subtitleFilename}</h2></div><span className="count">Editable</span></div><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleText,'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+        </section>
+      </section>
 
       {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Export important work to keep a separate copy.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
 
