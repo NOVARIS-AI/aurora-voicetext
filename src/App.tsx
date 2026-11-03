@@ -407,30 +407,6 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
     await context.close().catch(() => undefined);
   }
 }
-async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, onRetry?: (attempt: number) => void): Promise<Response> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= 3; attempt++) {
-    try {
-      const response = await fetch(input, init);
-      if (response.ok || !([408, 425, 429].includes(response.status) || response.status >= 500) || attempt === 3) return response;
-      const retryAfter = response.headers.get('Retry-After');
-      const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
-      const waitMs = Number.isFinite(retryAfterSeconds)
-        ? Math.min(30000, Math.max(800, retryAfterSeconds * 1000))
-        : 800 * (2 ** attempt);
-      onRetry?.(attempt + 1);
-      await new Promise(resolve => window.setTimeout(resolve, waitMs));
-      continue;
-    } catch (error) {
-      lastError = error;
-      if (attempt === 3) throw error;
-      onRetry?.(attempt + 1);
-    }
-    await new Promise(resolve => window.setTimeout(resolve, 800 * (2 ** attempt)));
-  }
-  throw lastError instanceof Error ? lastError : new Error('Network request failed after retries.');
-}
-
 async function getWhisper(onProgress: (message: string) => void): Promise<Engine> {
   if (!pipelinePromise) {
     pipelinePromise = (async () => {
