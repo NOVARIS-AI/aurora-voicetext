@@ -240,6 +240,11 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
   });
 }
 
+function safeFileBaseName(value: string, fallback = 'aurora-transcript'): string {
+  const cleaned = value.trim().replace(/\\.[a-z0-9]{1,8}$/i, '').replace(/[\\/:*?"<>|\\u0000-\\u001f]/g, '-').replace(/\\s+/g, ' ').replace(/[. ]+$/g, '').slice(0, 100);
+  return cleaned || fallback;
+}
+
 function downloadFile(name: string, content: string | Blob, type: string) {
   const url = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type }));
   const anchor = document.createElement('a');
@@ -362,6 +367,20 @@ async function getWhisper(onProgress: (message: string) => void): Promise<Engine
   return pipelinePromise;
 }
 
+async function getCachedOfflineAssetUrl(url: string, mime: string): Promise<string> {
+  if ('caches' in window) {
+    const cache = await caches.open('aurora-voicetext-offline-assets-v1');
+    let response = await cache.match(url);
+    if (!response) {
+      response = await fetch(url);
+      if (!response.ok) throw new Error('Could not download the offline audio decoder. Connect to the internet once, then tap Prepare offline engine.');
+      await cache.put(url, response.clone());
+    }
+    return URL.createObjectURL(await response.blob());
+  }
+  return toBlobURL(url, mime);
+}
+
 async function transcribeOpusOfflineInSegments(
   file: File,
   onProgress: (completed: number, total: number) => void,
@@ -394,8 +413,8 @@ async function transcribeOpusOfflineInSegments(
   try {
     onStatus('Loading on-device audio decoder…');
     await ffmpeg.load({
-      coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
-      wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
+      coreURL: await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
     await ffmpeg.createDir('/audio-input');
@@ -614,10 +633,14 @@ function App() {
   const [library, setLibrary] = useState<Recording[]>(readLibrary);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<TranscriptionMode>('auto');
+  const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
+  const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
   const [exportType, setExportType] = useState('txt');
+  const [exportFilename, setExportFilename] = useState('');
+  const [voiceFilename, setVoiceFilename] = useState('aurora-voice');
   const [studioText, setStudioText] = useState('');
   const [voiceRate, setVoiceRate] = useState(1);
   const [voicePitch, setVoicePitch] = useState(1);
@@ -685,6 +708,22 @@ function App() {
     setError('');
   }
 
+
+  async function prepareOfflineEngine() {
+    if (offlinePrepBusy) return;
+    setOfflinePrepBusy(true); setOfflinePrepStatus('Preparing offline Whisper model and audio decoder…'); setError('');
+    try {
+      await getWhisper(message => setOfflinePrepStatus(message));
+      const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+      const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
+      const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
+      URL.revokeObjectURL(coreUrl); URL.revokeObjectURL(wasmUrl);
+      setOfflinePrepStatus('Offline engine prepared on this device. Keep this app data and browser cache; the first preparation needs internet.');
+    } catch (reason) {
+      setOfflinePrepStatus('Offline preparation failed. Connect to a stable network and retry.');
+      setError(reason instanceof Error ? reason.message : 'Could not prepare the offline engine.');
+    } finally { setOfflinePrepBusy(false); }
+  }
 
   async function transcribe() {
     if (!active || busy) return;
@@ -778,6 +817,7 @@ function App() {
 
   async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
+    const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
@@ -791,7 +831,7 @@ function App() {
           : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
         const doc = new Document({ sections: [{ properties: {}, children: [new Paragraph({ children: [new TextRun({ text: 'AURORA VoiceText Transcript', bold: true, size: 30 })], spacing: { after: 300 } }), ...paragraphs] }] });
         const blob = await Packer.toBlob(doc);
-        downloadFile(baseName + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
         setStatus(includeTimestamps && timedSegments?.length && !timestampsCoverTranscript
           ? 'DOCX exported with the complete transcript. Timestamps were omitted because the timed segments did not cover all edited text.'
@@ -816,7 +856,7 @@ function App() {
       vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
-    downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
+    downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
     if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'The timing data did not cover all transcript text; exported estimated timings so no words are omitted.');
     else if (includeTimestamps && timedSegments?.length && !timestampsCoverTranscript) setStatus('Exported the complete transcript without timestamps because the timing data did not cover all edited text.');
     else if (includeTimestamps && timestampsCoverTranscript) setStatus('Exported the complete transcript with timestamps.');
@@ -975,7 +1015,7 @@ function App() {
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
               </div>
               {mode === 'auto' && <p className="mode-explainer"><strong>Recommended · Best available quality</strong><span>Tries Groq Whisper first. If the connection or API fails, AURORA switches to Whisper Tiny, then Vosk on your device. Online processing sends audio to the server.</span></p>}
-              {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny, then Vosk if a compatible Vosk model is configured. The first model download needs internet.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
+              {mode === 'offline' && <><p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk is an optional backup and needs its own model configuration.</span></p><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button>{offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}</>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
@@ -983,7 +1023,7 @@ function App() {
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => setPage('preview')}><AudioWaveform size={15}/> Open AI Preview & timestamps</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => setPage('preview')}><AudioWaveform size={15}/> Open AI Preview & timestamps</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
@@ -1009,6 +1049,7 @@ function App() {
         <div className="page-heading"><div className="eyebrow">AI VOICE STUDIO</div><h1>Give your words a voice.</h1><p>Generate downloadable AI speech, preview it, and export a single WAV file, including longer scripts processed in sections.</p></div>
         <section className="card studio-card">
           <div className="studio-icon"><Volume2 size={23}/></div>
+          <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
           <label className="field-label" htmlFor="studio-text">Script / text</label>
           <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="Paste a script or choose a transcript from your library…"/>
           <div className="studio-grid">
@@ -1022,7 +1063,7 @@ function App() {
           <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
           <div className="studio-actions"><button className="primary" type="button" disabled={voiceBusy} onClick={generateVoice}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating AI audio…':'Generate AI voice'}</button><button className="secondary" type="button" onClick={()=>{setStudioText('');if(voiceAudioUrl)URL.revokeObjectURL(voiceAudioUrl);setVoiceAudioUrl('');}}>Clear</button></div>
           {status && <div className="status-message" role="status">{status}</div>}
-          {voiceAudioUrl && <div className="generated-audio"><strong>AI-generated audio · {voiceProvider}</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download="aurora-ai-voice.wav"><Download size={16}/> Download WAV audio</a></div>}
+          {voiceAudioUrl && <div className="generated-audio"><strong>AI-generated audio · {voiceProvider}</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.wav'}><Download size={16}/> Download WAV audio</a></div>}
           <p className="privacy-hint"><ShieldCheck size={15}/> Uses the configured AI speech provider, not your phone's built-in speech synthesis. API credentials remain on the server. Voice options depend on provider support.</p>
         </section>
       </section>}
