@@ -59,7 +59,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
     headers: { authorization: key, "content-type": "application/json" },
     body: JSON.stringify({
       audio_url: uploadPayload.upload_url,
-      speech_models: ["universal-3-pro", "universal-2"],
+      speech_models: ["universal-3-5-pro", "universal-2"],
       language_detection: true,
       speaker_labels: true,
     }),
