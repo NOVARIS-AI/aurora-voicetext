@@ -45,7 +45,8 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - `OPENSUBTITLES_USER_AGENT`
 - `ELEVENLABS_DEFAULT_VOICE_ID` (optional default voice when ElevenLabs is the speech provider).
 - `ELEVENLABS_VOICE_NOVA_ID`, `ELEVENLABS_VOICE_SHIMMER_ID`, `ELEVENLABS_VOICE_CORAL_ID`, `ELEVENLABS_VOICE_SAGE_ID`, `ELEVENLABS_VOICE_ONYX_ID`, `ELEVENLABS_VOICE_ECHO_ID`, `ELEVENLABS_VOICE_ASH_ID`, `ELEVENLABS_VOICE_FABLE_ID`, `ELEVENLABS_VOICE_ALLOY_ID` (optional provider voice IDs; configure only the profiles you have access to to give the named Voice Studio choices distinct ElevenLabs voices).
-- `BACKUP_PUBLIC_FALLBACK` (set to `true` only after Cloudflare rate limiting and spend alerts are configured)
+- `BACKUP_PUBLIC_FALLBACK` (Worker secret; keep false/unset until Cloudflare rate limiting and spend alerts are configured)
+- `BACKUP_API_PUBLIC_FALLBACK` (GitHub Actions repository variable; set to `true` only at the same time as the Worker public-fallback secret, after rate limiting is active. This controls whether the APK calls the Worker directly.)
 
 The deploy workflow transfers the provider secrets to Cloudflare Worker secrets during deployment. GitHub Actions secrets are not automatically available to Vercel runtime functions: configure the Vercel variables separately.
 
@@ -58,7 +59,7 @@ After the GitHub Actions secrets are added, run **Deploy AURORA VoiceText backup
 - No real provider keys are committed in this repository.
 - Health checks expose only configured/not-configured booleans, never credentials.
 - Subtitle search returns provider metadata and file identifiers. Direct file download requires the provider-issued OPENSUBTITLES_TOKEN in addition to the API key.
-- The Android app uses the primary API first, then the configured Worker URL for secondary requests. Direct app access requires `BACKUP_PUBLIC_FALLBACK=true`; origin restrictions are not authentication, so apply Cloudflare rate limits and spend alerts before enabling it. Never embed the private backup bearer token in the APK.
+- The Android app uses the primary API first. The primary server proxies to the private Worker using `BACKUP_BACKEND_TOKEN`, so the APK never needs a private token. Direct Worker fallback is disabled in the APK by default; it is compiled in only when the GitHub Actions variable `BACKUP_API_PUBLIC_FALLBACK=true` is set and the Worker secret `BACKUP_PUBLIC_FALLBACK=true` is also enabled. Origin restrictions are not authentication, so configure Cloudflare rate limits and spend alerts before enabling either setting. Never embed the private backup bearer token in the APK.
 - AI TTS requires a configured paid/available provider account. Browser speech synthesis is not represented as AI generation.
 
 
