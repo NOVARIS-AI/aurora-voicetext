@@ -442,7 +442,9 @@ async function getWhisper(onProgress: (message: string) => void): Promise<Engine
       transformers.env.useBrowserCache = true;
       // A single WASM thread is slower on some devices but avoids fragile
       // multi-thread initialization in Android WebView and low-memory phones.
-      transformers.env.backends.onnx.wasm.numThreads = 1;
+      if (transformers.env.backends.onnx.wasm) {
+        transformers.env.backends.onnx.wasm.numThreads = 1;
+      }
       const model = await transformers.pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny', {
         device: 'wasm',
         dtype: 'q8',
