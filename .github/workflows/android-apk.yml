@@ -50,6 +50,7 @@ jobs:
       - name: Build web application
         run: npm run build
         env:
+          VITE_API_BASE_URL: https://aurora-voicetext.vercel.app
           VITE_BACKUP_API_BASE_URL: ${{ vars.BACKUP_API_BASE_URL }}
           VITE_BACKUP_API_PUBLIC_FALLBACK: 'true'
 
