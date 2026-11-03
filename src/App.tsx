@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -967,7 +967,7 @@ function App() {
 
     if (failures.length) {
       setOfflinePrepStatus('Offline setup is not complete yet. Connect to the internet and try again.');
-      setError('Offline transcription could not be fully prepared on this device. You can still use Auto or Online mode.');
+      setError('Offline setup details: ' + failures.join(' | ') + ' You can still use Auto or Online mode.');
     } else {
       setOfflinePrepStatus('Offline transcription is ready on this device.');
       setError('');
@@ -1024,7 +1024,9 @@ function App() {
           try {
             parts = await runOffline();
           } catch (offlineProblem) {
-            throw new Error('We could not finish transcribing this recording. Your completed sections have been kept where device storage allows. Check your connection or try again with a shorter audio file.');
+            const onlineMessage = onlineProblem instanceof Error ? onlineProblem.message : String(onlineProblem);
+            const offlineMessage = offlineProblem instanceof Error ? offlineProblem.message : String(offlineProblem);
+            throw new Error('Online transcription failed: ' + onlineMessage + ' Offline fallback failed: ' + offlineMessage + ' Completed sections remain saved where device storage allows.');
           }
         }
       }
@@ -1035,7 +1037,7 @@ function App() {
       setError('');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Transcription failed.';
-      setError(message.includes('could not finish transcribing') ? message : 'Transcription could not be completed. Your recording is still selected, so you can safely try again.');
+      setError(message);
       setStatus('Your recording remains selected. You can retry without starting over from completed sections.');
     } finally {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.stop().catch(() => undefined);
@@ -1197,8 +1199,8 @@ function App() {
       const finalAudio = combineMp3Chunks(audioParts);
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
       setStatus('Your voice audio is ready. Preview it or download the MP3.');
-    } catch {
-      setError('Voice generation is unavailable right now. Check your connection and try again.');
+    } catch (reason) {
+      setError(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
       setStatus('');
     } finally { setVoiceBusy(false); }
   }
@@ -1210,7 +1212,7 @@ function App() {
       const { data } = await requestFeature('/api/subtitles', { query: subtitleQuery.trim(), languages: subtitleLanguage, type: subtitleType });
       setSubtitleResults(Array.isArray(data?.results) ? data.results : []);
       setSubtitleStatus(data?.results?.length ? 'Choose a matching subtitle release below.' : 'No matching subtitles were found. Try another title or language.');
-    } catch { setSubtitleStatus('Subtitle search is unavailable right now. Please try again later.'); }
+    } catch (reason) { setSubtitleStatus(reason instanceof Error ? 'Subtitle search failed: ' + reason.message : 'Subtitle search is unavailable right now. Please try again later.'); }
     finally { setSubtitleBusy(false); }
   }
 
@@ -1236,7 +1238,7 @@ function App() {
       setSubtitleText(exportText); setSubtitleFilename(safeName);
       downloadFile(safeName + (translate ? '-' + subtitleTranslateLanguage.toLowerCase().replace(/\s+/g, '-') : '') + (vtt ? '.vtt' : '.srt'), exportText, vtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip;charset=utf-8');
       setSubtitleStatus(translate ? 'Translated subtitle exported. Review the timing and wording before use.' : 'Subtitle downloaded.');
-    } catch { setSubtitleStatus('This subtitle could not be downloaded or translated. Please try another release.'); }
+    } catch (reason) { setSubtitleStatus(reason instanceof Error ? 'Subtitle download failed: ' + reason.message : 'This subtitle could not be downloaded or translated. Please try another release.'); }
     finally { setSubtitleBusy(false); }
   }
 
@@ -1257,9 +1259,22 @@ function App() {
   function updateTimedSegment(index: number, value: string) {
     if (!active) return;
     const segments = [...(active.timedSegments || [])];
-    if (!segments[index]) return;
+    const previousText = segments[index]?.text;
+    if (previousText === undefined) return;
     segments[index] = { ...segments[index], text: value };
-    setFiles(current => current.map(item => item.id === active.id ? { ...item, timedSegments: segments, transcript: segments.map(segment => segment.text).join(' ') } : item));
+    const completeTimedText = segments.map(segment => segment.text).join(' ');
+    const previousTimedText = [...segments.slice(0, index), { ...segments[index], text: previousText }, ...segments.slice(index + 1)].map(segment => segment.text).join(' ');
+    const timingCoversTranscript = normalizeTranscriptForCompare(previousTimedText) === normalizeTranscriptForCompare(active.transcript);
+    let transcript = active.transcript;
+    if (timingCoversTranscript) {
+      transcript = completeTimedText;
+    } else if (previousText && active.transcript.includes(previousText)) {
+      // Preserve any words that have no timing metadata by replacing only the edited segment.
+      transcript = active.transcript.replace(previousText, value);
+    } else {
+      setStatus('Segment timing was updated, but the full transcript was preserved because this segment could not be matched safely.');
+    }
+    setFiles(current => current.map(item => item.id === active.id ? { ...item, timedSegments: segments, transcript } : item));
   }
 
   const filteredLibrary = library.filter(item => (item.name + ' ' + item.transcript).toLowerCase().includes(search.toLowerCase()));
