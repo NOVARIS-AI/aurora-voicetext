@@ -316,13 +316,15 @@ async function cacheVoskModel(onProgress?: (message: string) => void): Promise<v
   const reader = response.body?.getReader();
   let blob: Blob;
   if (reader) {
-    const chunks: Uint8Array[] = [];
+    const chunks: BlobPart[] = [];
     let received = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value) {
-        chunks.push(value);
+        const chunkBuffer = new ArrayBuffer(value.byteLength);
+        new Uint8Array(chunkBuffer).set(value);
+        chunks.push(chunkBuffer);
         received += value.length;
         if (total > 0) onProgress?.('Downloading Vosk model · ' + Math.min(100, Math.round(received / total * 100)) + '%');
       }
