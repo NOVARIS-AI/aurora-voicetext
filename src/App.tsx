@@ -634,6 +634,7 @@ async function transcribeOpusOfflineInSegments(
     onPart(parts.filter(Boolean));
     onTimedParts(timedSegments);
     onProgress(checkpoint.nextChunk, total);
+    let checkpointStorageWarningShown = false;
     for (let index = checkpoint.nextChunk; index < total; index++) {
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
@@ -682,7 +683,14 @@ async function transcribeOpusOfflineInSegments(
       checkpoint.parts = parts;
       checkpoint.segments = timedSegments;
       checkpoint.nextChunk = index + 1;
-      try { await writeSavedCheckpoint(fileKey + '|offline', checkpoint); } catch { /* Keep in-session progress. */ }
+      try {
+        await writeSavedCheckpoint(fileKey + '|offline', checkpoint);
+      } catch {
+        if (!checkpointStorageWarningShown) {
+          checkpointStorageWarningShown = true;
+          onStatus('Section ' + (index + 1) + ' is complete, but this device could not save its resume checkpoint. Keep AURORA open until transcription finishes.');
+        }
+      }
       onProgress(index + 1, total);
       onPart(parts.filter(Boolean));
       onTimedParts(timedSegments);
