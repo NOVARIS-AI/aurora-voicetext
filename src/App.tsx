@@ -949,7 +949,7 @@ function App() {
 
   async function prepareOfflineEngine() {
     if (offlinePrepBusy) return;
-    setOfflinePrepBusy(true); setOfflinePrepStatus('Checking offline engines one by one…'); setError('');
+    setOfflinePrepBusy(true); setOfflinePrepStatus('Getting offline transcription ready…'); setError('');
     const failures: string[] = [];
     const describe = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
@@ -992,10 +992,10 @@ function App() {
     }
 
     if (failures.length) {
-      setOfflinePrepStatus('Offline preparation is partial. The failed engine(s) are listed below; other engines were checked independently.');
-      setError(failures.join(' | '));
+      setOfflinePrepStatus('Offline setup is not complete yet. Connect to the internet and try again.');
+      setError('Offline transcription could not be fully prepared on this device. You can still use Auto or Online mode.');
     } else {
-      setOfflinePrepStatus('Offline engine checks passed: Whisper Tiny loaded, Vosk model + recognizer initialized, and FFmpeg WASM loaded. First preparation needs internet; cached assets are reused later.');
+      setOfflinePrepStatus('Offline transcription is ready on this device.');
       setError('');
     }
     setOfflinePrepBusy(false);
@@ -1047,9 +1047,9 @@ function App() {
     const onTimedParts = (segments: TimedSegment[]) => {
       setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item));
     };
-    const onProgress = (completed: number, total: number, engine: string) => {
+    const onProgress = (completed: number, total: number, _engine: string) => {
       setProgress({ completed, total });
-      setStatus(engine + ' · completed ' + completed + ' of ' + total + ' sections…');
+      setStatus('Transcribing your recording…');
     };
     const runOffline = () => transcribeOpusOfflineInSegments(
       selected.file,
@@ -1077,16 +1077,11 @@ function App() {
           );
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
-          setStatus('Online transcription could not finish. Switching to on-device Whisper, then Vosk if needed…');
+          setStatus('The online service is unavailable. Trying another available method…');
           try {
             parts = await runOffline();
           } catch (offlineProblem) {
-            throw new Error(
-              'Automatic transcription could not complete. Online: ' +
-              (onlineProblem instanceof Error ? onlineProblem.message : String(onlineProblem)) +
-              ' · Offline: ' +
-              (offlineProblem instanceof Error ? offlineProblem.message : String(offlineProblem)),
-            );
+            throw new Error('We could not finish transcribing this recording. Your completed sections have been kept where device storage allows. Check your connection or try again with a shorter audio file.');
           }
         }
       }
@@ -1099,7 +1094,7 @@ function App() {
       setError('');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Transcription failed.';
-      setError(message + ' Completed sections are checkpointed when browser storage is available. Tap Transcribe again with the same recording to resume.');
+      setError(message.includes('could not finish transcribing') ? message : 'Transcription could not be completed. Your recording is still selected, so you can safely try again.');
       setStatus('Your recording remains selected. You can retry without starting over from completed sections.');
     } finally {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.stop().catch(() => undefined);
@@ -1186,7 +1181,6 @@ function App() {
     const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
     const documentTitle = safeFileBaseName(baseName, 'Transcript');
     const attribution = 'Transcribed by AURORA VoiceText';
-    const transcriptDocument = documentTitle + '\\n\\n' + attribution + '\\n\\n' + (includeTimestamps && timestampsCoverTranscript ? timestamped : text);
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
@@ -1376,7 +1370,7 @@ function App() {
             <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
             <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round(item.file.size / 1024))} KB · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => inputRef.current?.click()}><Plus size={16}/> Add more audio</button>}
-            <p className="privacy-hint"><ShieldCheck size={15}/> Auto sends audio to your configured online provider. With AssemblyAI configured, online transcription detects language and labels speaker turns; offline mode never uploads audio.</p>
+
           </section>
           <section className="card">
             <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">AUTO LANGUAGE</span></div>
@@ -1385,15 +1379,14 @@ function App() {
               <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
 
               <div className="mode-switch" role="group" aria-label="Transcription mode">
-                <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Groq first · offline backup</small></button>
-                <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Device only · Whisper → Vosk</small></button>
-                <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
+                <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Recommended</small></button>
+                <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Keep audio on this device</small></button>
+                <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Use online processing</small></button>
               </div>
-              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button><button className="secondary full-button" type="button" disabled={connectionCheckBusy || busy} onClick={checkOnlineConnection}>{connectionCheckBusy ? <LoaderCircle className="spin" size={16}/> : <ShieldCheck size={16}/>} {connectionCheckBusy ? 'Checking online connection…' : 'Test online connection'}</button></div>
+              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing…' : 'Set up offline use'}</button><button className="secondary full-button" type="button" disabled={connectionCheckBusy || busy} onClick={checkOnlineConnection}>{connectionCheckBusy ? <LoaderCircle className="spin" size={16}/> : <ShieldCheck size={16}/>} {connectionCheckBusy ? 'Checking…' : 'Check connection'}</button></div>
               {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
               {connectionCheckStatus && <div className="status-message" role="status">{connectionCheckStatus}</div>}
-              {mode === 'auto' && <p className="mode-explainer"><strong>Recommended · Best available quality</strong><span>Uses the best configured online provider. When AssemblyAI is configured, it detects the language and returns speaker-labelled utterances. If online processing fails, AURORA can switch to on-device Whisper Tiny and Vosk.</span></p>}
-              {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk backup is included; its English model is about 41 MB.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses the configured online transcription service. With AssemblyAI configured, language detection and speaker labels are enabled; otherwise the app uses the available Whisper provider.</span></p>}
+
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
