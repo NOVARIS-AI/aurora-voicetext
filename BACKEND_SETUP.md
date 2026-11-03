@@ -35,9 +35,8 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `BACKUP_API_TOKEN` (same value as Vercel `BACKUP_BACKEND_TOKEN`)
-- `ASSEMBLYAI_API_KEY` (optional; enables detected language and speaker-labelled utterances on the Cloudflare Worker)
+- `ASSEMBLYAI_API_KEY` (optional; enables language detection and speaker diarization on both the Cloudflare Worker and primary online transcription service)
 - `GROQ_API_KEY` and/or `OPENAI_API_KEY` (fallback transcription providers)
-- `ASSEMBLYAI_API_KEY` (optional; enables language detection and speaker diarization in the primary online transcription service)
 - `GROQ_API_KEY`
 - `OPENAI_API_KEY`
 - `ELEVENLABS_API_KEY`
