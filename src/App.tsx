@@ -6,7 +6,7 @@ import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
-  ShieldCheck, Clock3, WandSparkles, LoaderCircle, FileText,
+  ShieldCheck, WandSparkles, LoaderCircle, FileText,
   Settings2, Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform,
 } from 'lucide-react';
 
