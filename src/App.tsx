@@ -337,6 +337,14 @@ function normalizeTranscriptForCompare(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function subtitleToSrt(value: string): string {
+  const normalized = value.replace(/^\\uFEFF/, '').replace(/\\r\\n?/g, '\\n').trim();
+  const lines = normalized.split('\\n');
+  if (lines.length && /^WEBVTT(?:\\s|$)/i.test(lines[0])) lines.shift();
+  const converted = lines.map(line => line.replace(/(\\d{2}:\\d{2}:\\d{2})\\.(\\d{3})/g, '$1,$2'));
+  return converted.join('\\n').trim() + '\\n';
+}
+
 function subtitleToVtt(value: string): string {
   const normalized = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
   const lines = normalized ? normalized.split('\n') : [];
@@ -1406,7 +1414,7 @@ function App() {
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
           {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div className="subtitle-result-main"><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''}</p><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button></div></article>)}</div>}
-          {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW</small><h2>{subtitleFilename}</h2></div><span className="count">Editable</span></div><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleText,'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+          {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW</small><h2>{subtitleFilename}</h2></div><span className="count">Editable</span></div><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
         </section>
       </section>}
 
