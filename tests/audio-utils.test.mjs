@@ -66,17 +66,18 @@ test('keeps an empty timed WebVTT file valid', () => {
 });
 
 
+
 test('normalizes WebVTT timestamps and CRLF into valid SRT', () => {
-  const source = 'WEBVTT\\r\\n\\r\\n00:00:01.250 --> 00:00:02.500\\r\\nHello\\r\\n';
-  assert.equal(normalizeSubtitleText(source, 'srt'), '00:00:01,250 --> 00:00:02,500\\nHello\\n');
+  const source = 'WEBVTT\r\n\r\n00:00:01.250 --> 00:00:02.500\r\nHello\r\n';
+  assert.equal(normalizeSubtitleText(source, 'srt'), '00:00:01,250 --> 00:00:02,500\nHello\n');
 });
 
 test('normalizes SRT timestamps and adds the WebVTT header', () => {
-  const source = '1\\n00:00:01,250 --> 00:00:02,500\\nHello';
-  assert.equal(normalizeSubtitleText(source, 'vtt'), 'WEBVTT\\n\\n1\\n00:00:01.250 --> 00:00:02.500\\nHello\\n');
+  const source = '1\n00:00:01,250 --> 00:00:02,500\nHello';
+  assert.equal(normalizeSubtitleText(source, 'vtt'), 'WEBVTT\n\n1\n00:00:01.250 --> 00:00:02.500\nHello\n');
 });
 
 test('handles empty subtitle input and strips a Unicode BOM', () => {
   assert.equal(normalizeSubtitleText('', 'srt'), '');
-  assert.equal(normalizeSubtitleText('\\uFEFFWEBVTT\\n', 'vtt'), 'WEBVTT\\n');
+  assert.equal(normalizeSubtitleText('\uFEFFWEBVTT\n', 'vtt'), 'WEBVTT\n');
 });
