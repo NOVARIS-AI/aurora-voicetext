@@ -1,5 +1,5 @@
-export type TranscriptSegment = { start: number; end: number; text: string };
-export type TranscriptionResult = { text: string; segments: TranscriptSegment[]; provider: string };
+export type TranscriptSegment = { start: number; end: number; text: string; speaker?: string };
+export type TranscriptionResult = { text: string; segments: TranscriptSegment[]; provider: string; language?: string };
 type AudioInput = { audioBase64: string; mimeType: string; languageHint?: string };
 
 function extensionFor(mime: string) {
@@ -24,7 +24,7 @@ async function requestTranscription(endpoint: string, key: string, model: string
   form.append("temperature", "0");
   if (input.languageHint) form.append("prompt", "Transcribe accurately. Preserve the words and language actually spoken. Do not translate, summarize, or invent unclear words. Language context: " + input.languageHint.slice(0, 120));
   const response = await fetch(endpoint, { method: "POST", headers: { Authorization: "Bearer " + key }, body: form, signal: AbortSignal.timeout(110000) });
-  const payload = await response.json().catch(() => ({})) as { text?: string; segments?: Array<{ start?: number; end?: number; text?: string }>; error?: { message?: string } | string };
+  const payload = await response.json().catch(() => ({})) as { text?: string; language?: string; segments?: Array<{ start?: number; end?: number; text?: string }>; error?: { message?: string } | string };
   if (!response.ok) {
     const detail = typeof payload.error === "string" ? payload.error : payload.error?.message;
     throw Object.assign(new Error(detail || provider + " returned HTTP " + response.status), { status: response.status });
@@ -32,24 +32,91 @@ async function requestTranscription(endpoint: string, key: string, model: string
   if (!payload.text?.trim()) throw new Error(provider + " returned an empty transcript.");
   return {
     text: payload.text.trim(),
+    language: payload.language,
     segments: Array.isArray(payload.segments) ? payload.segments.filter((s): s is { start: number; end: number; text: string } => typeof s.start === "number" && typeof s.end === "number" && typeof s.text === "string") : [],
     provider,
   };
 }
 
+/**
+ * AssemblyAI provides actual language detection and speaker diarization.
+ * The API key is server-only. Labels are scoped to each uploaded audio chunk:
+ * speaker identities are not guaranteed to remain the same across separate chunks.
+ */
+async function requestAssemblyAi(input: AudioInput, key: string): Promise<TranscriptionResult> {
+  const bytes = Buffer.from(input.audioBase64, "base64");
+  const upload = await fetch("https://api.assemblyai.com/v2/upload", {
+    method: "POST",
+    headers: { authorization: key, "content-type": "application/octet-stream" },
+    body: bytes,
+    signal: AbortSignal.timeout(110000),
+  });
+  const uploadPayload = await upload.json().catch(() => ({})) as { upload_url?: string; error?: string };
+  if (!upload.ok || !uploadPayload.upload_url) throw new Error(uploadPayload.error || "AssemblyAI audio upload failed (HTTP " + upload.status + ").");
+
+  const submitted = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { authorization: key, "content-type": "application/json" },
+    body: JSON.stringify({
+      audio_url: uploadPayload.upload_url,
+      speech_models: ["universal-3-pro", "universal-2"],
+      language_detection: true,
+      speaker_labels: true,
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const submittedPayload = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
+  if (!submitted.ok || !submittedPayload.id) throw new Error(submittedPayload.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
+
+  const deadline = Date.now() + 105000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(submittedPayload.id), {
+      headers: { authorization: key },
+      signal: AbortSignal.timeout(20000),
+    });
+    const result = await polled.json().catch(() => ({})) as {
+      status?: string; text?: string; language_code?: string; error?: string;
+      utterances?: Array<{ start?: number; end?: number; text?: string; speaker?: string }>;
+    };
+    if (!polled.ok) throw new Error(result.error || "AssemblyAI polling failed (HTTP " + polled.status + ").");
+    if (result.status === "error") throw new Error(result.error || "AssemblyAI could not transcribe this audio section.");
+    if (result.status === "completed") {
+      const segments = Array.isArray(result.utterances) ? result.utterances
+        .filter(item => typeof item.start === "number" && typeof item.end === "number" && typeof item.text === "string")
+        .map(item => ({
+          start: (item.start as number) / 1000,
+          end: (item.end as number) / 1000,
+          text: (item.text as string).trim(),
+          speaker: typeof item.speaker === "string" && item.speaker ? "Speaker " + item.speaker : undefined,
+        })).filter(item => item.text.length > 0) : [];
+      const text = (result.text || segments.map(item => item.text).join(" ")).trim();
+      if (!text) throw new Error("AssemblyAI returned an empty transcript.");
+      return { text, segments, language: result.language_code, provider: "assemblyai" };
+    }
+  }
+  throw new Error("AssemblyAI transcription timed out while waiting for the audio section.");
+}
+
 export async function transcribeWithFallback(input: AudioInput): Promise<TranscriptionResult> {
+  const failures: string[] = [];
+  if (process.env.ASSEMBLYAI_API_KEY) {
+    try { return await requestAssemblyAi(input, process.env.ASSEMBLYAI_API_KEY); }
+    catch (error) { failures.push("assemblyai: " + (error instanceof Error ? error.message : "request failed")); }
+  }
   const providers = [
     { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/audio/transcriptions", model: process.env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3-turbo" },
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/audio/transcriptions", model: process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1" },
   ].filter(provider => Boolean(provider.key));
-  if (!providers.length) throw Object.assign(new Error("No transcription provider is configured. Add GROQ_API_KEY or OPENAI_API_KEY to the backend environment."), { status: 503, code: "NO_PROVIDER" });
-  const failures: string[] = [];
+  if (!providers.length) {
+    const detail = failures.length ? " " + failures.join(" | ") : "";
+    throw Object.assign(new Error("No transcription provider is configured. Add ASSEMBLYAI_API_KEY, GROQ_API_KEY or OPENAI_API_KEY to the backend environment." + detail), { status: 503, code: "NO_PROVIDER" });
+  }
   for (const provider of providers) {
     try { return await requestTranscription(provider.url, provider.key!, provider.model, input, provider.name); }
     catch (error) {
       const status = (error as { status?: number }).status;
       failures.push(provider.name + ": " + (error instanceof Error ? error.message : "request failed"));
-      // Client errors usually indicate invalid input; don't spend another provider call on the same payload.
       if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) break;
     }
   }

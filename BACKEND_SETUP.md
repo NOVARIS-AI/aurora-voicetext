@@ -5,7 +5,7 @@
 The Android app and web app call same-origin `/api/*` routes. They never receive provider credentials.
 
 1. The primary API runs on Vercel and reads runtime environment variables.
-2. Provider adapters try configured providers in order (Groq/OpenAI for transcription and translation; OpenAI/ElevenLabs for speech; OpenSubtitles for subtitle search).
+2. Provider adapters try configured providers in order (AssemblyAI first for online transcription when `ASSEMBLYAI_API_KEY` is set, then Groq/OpenAI; OpenAI/Groq for translation; OpenAI/ElevenLabs for speech; OpenSubtitles for subtitle search).
 3. If the primary provider chain fails, the API calls the independent Cloudflare Worker using `BACKUP_BACKEND_URL` and `BACKUP_BACKEND_TOKEN`.
 4. The Worker has its own provider secrets. The app can use it as a direct secondary endpoint through the build-time `VITE_BACKUP_API_BASE_URL` setting when the primary host is unreachable or returns a retryable failure. Server-side Vercel functions can also call it using the private token.
 
@@ -13,6 +13,7 @@ The Android app and web app call same-origin `/api/*` routes. They never receive
 
 Set these in Vercel Project Settings → Environment Variables. Do not prefix secrets with `VITE_`.
 
+- `ASSEMBLYAI_API_KEY` — optional online transcription provider with automatic language detection and speaker diarization. When configured, AssemblyAI is tried first; Groq/OpenAI remain fallbacks.
 - `GROQ_API_KEY` — transcription and translation provider.
 - `OPENAI_API_KEY` — transcription, translation and AI speech provider.
 - `ELEVENLABS_API_KEY` — optional AI speech fallback.
@@ -34,6 +35,7 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `BACKUP_API_TOKEN` (same value as Vercel `BACKUP_BACKEND_TOKEN`)
+- `ASSEMBLYAI_API_KEY` (optional; enables language detection and speaker diarization in the primary online transcription service)
 - `GROQ_API_KEY`
 - `OPENAI_API_KEY`
 - `ELEVENLABS_API_KEY`
@@ -67,3 +69,10 @@ After the GitHub Actions secrets are added, push a change under `backup-worker/`
 - `POST /api/translate` — AI translation while preserving subtitle structure.
 - `POST /api/subtitles` and `POST /api/subtitles-download` — OpenSubtitles catalogue search and authorized file download.
 - `GET /api/health` — provider configuration status without exposing keys.
+
+
+## Multilingual transcription and speaker labels
+
+When `ASSEMBLYAI_API_KEY` is configured on the Vercel project, online audio sections are uploaded to AssemblyAI with automatic language detection and speaker diarization enabled. The API returns utterances with timestamps and generic speaker labels, which AURORA displays in the timestamped preview. If AssemblyAI is not configured or does not support a particular audio section/language feature, the service falls back to Groq/OpenAI Whisper; those fallback providers may not return speaker labels. Language detection is most reliable with at least 15 seconds of spoken audio. Since long recordings are processed in separate sections to protect mobile memory, speaker labels are section-local and are not guaranteed to identify the same person consistently across different sections. Offline Whisper Tiny does not provide speaker diarization.
+
+AssemblyAI usage is subject to its account limits and pricing. Configure the key as a server-side Vercel environment variable only; never put it in a `VITE_` variable, APK, or committed file.
