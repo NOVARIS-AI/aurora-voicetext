@@ -57,10 +57,10 @@ test('filters invalid and empty timed subtitle segments', () => {
     { start: 1, end: 2, text: '   ' },
     { start: 2.25, end: 3.5, text: 'Valid segment' },
   ], 'srt');
-  assert.match(output, /^1\\n00:00:02,250 --> 00:00:03,500\\nValid segment\\n$/);
+  assert.match(output, /^1\n00:00:02,250 --> 00:00:03,500\nValid segment\n$/);
   assert.doesNotMatch(output, /invalid reversed time/);
 });
 
 test('keeps an empty timed WebVTT file valid', () => {
-  assert.equal(createTimedSubtitles([], 'vtt'), 'WEBVTT\\n');
+  assert.equal(createTimedSubtitles([], 'vtt'), 'WEBVTT\n');
 });
