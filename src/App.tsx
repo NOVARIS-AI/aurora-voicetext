@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
@@ -40,13 +40,46 @@ const VOSK_MODEL_URL = (import.meta.env.VITE_VOSK_MODEL_URL as string | undefine
 const VOSK_MODEL_CACHE_NAME = 'aurora-voicetext-vosk-model-v1';
 const VOSK_MODEL_CACHE_KEY = 'https://aurora-voicetext.local/offline-models/vosk-model-small-en-us-0.15.tar.gz';
 
+// Send JSON API requests through Android's native HTTP stack in Capacitor builds.
+ // This avoids WebView CORS restrictions without routing large model/audio downloads
+ // through the native bridge. Browser builds continue to use standard fetch.
+async function postJson(url: string, payload: unknown, readTimeout = 120000): Promise<Response> {
+  if (Capacitor.isNativePlatform()) {
+    const nativeResponse = await CapacitorHttp.request({
+      url,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      data: payload,
+      responseType: 'json',
+      connectTimeout: 20000,
+      readTimeout,
+    });
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    for (const [key, value] of Object.entries(nativeResponse.headers || {})) {
+      if (typeof value === 'string') headers.set(key, value);
+    }
+    return new Response(JSON.stringify(nativeResponse.data ?? {}), {
+      status: nativeResponse.status,
+      headers,
+    });
+  }
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: readTimeout < 120000 ? AbortSignal.timeout(readTimeout) : undefined,
+  });
+}
+
 async function requestFeature(path: string, payload: unknown, binary = false): Promise<{ response: Response; data?: any }> {
   const primary = API_BASE_URL ? API_BASE_URL + path : path;
   const urls = [primary, ...(BACKUP_API_BASE_URL ? [BACKUP_API_BASE_URL + path] : [])];
   let lastError: unknown;
   for (const url of urls) {
     try {
-      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const response = binary
+        ? await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        : await postJson(url, payload);
       if (response.ok) return { response, data: binary ? undefined : await response.json() };
       const body = binary ? null : await response.json().catch(() => null);
       lastError = new Error(body?.error || 'The service is temporarily unavailable.');
@@ -650,11 +683,7 @@ async function transcribeOpusInSegments(
       // Transcription POSTs are not safe to retry blindly: a timed-out
       // request may still be processing and could create duplicate provider jobs.
       // Try the primary once, then hand off to the independent Worker once.
-      const request = (url: string) => fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-      });
+      const request = (url: string) => postJson(url, JSON.parse(payload), 120000);
       let response: Response;
       try {
         response = await request(transcriptionApiUrl);
@@ -879,12 +908,7 @@ function App() {
       const failures: string[] = [];
       for (const endpoint of endpoints) {
         try {
-          const response = await fetch(endpoint.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: '{}',
-            signal: AbortSignal.timeout(12000),
-          });
+          const response = await postJson(endpoint.url, {}, 12000);
           const payload = await response.json().catch(() => ({})) as { error?: string };
           if (response.status === 400 && endpoint.expected.test(payload.error || '')) {
             setConnectionCheckStatus(endpoint.name + ' is reachable from this APK. Online transcription can connect.');
