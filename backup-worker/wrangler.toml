@@ -5,3 +5,8 @@ workers_dev = true
 
 [observability]
 enabled = true
+
+[[ratelimits]]
+name = "TRANSCRIPTION_LIMITER"
+namespace_id = "20261103"
+simple = { limit = 30, period = 60 }
