@@ -26,7 +26,7 @@ const BACKUP_API_PUBLIC_FALLBACK = (import.meta.env.VITE_BACKUP_API_PUBLIC_FALLB
 // The Worker is private by default. Only call it directly from the app when public fallback has
 // deliberately been enabled after rate limiting; otherwise Vercel proxies to it server-side.
 const BACKUP_API_BASE_URL = BACKUP_API_PUBLIC_FALLBACK
-  ? ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '')
+  ? ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || 'https://aurora-voicetext-backup.alwerioghenepeace563.workers.dev').replace(/\/+$/, '')
   : '';
 const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
 const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/api/transcribe` : '';
@@ -808,18 +808,33 @@ function App() {
   async function checkOnlineConnection() {
     if (connectionCheckBusy) return;
     setConnectionCheckBusy(true);
-    setConnectionCheckStatus('Checking the online transcription endpoint…');
+    setConnectionCheckStatus('Checking the primary API and independent backup…');
     try {
-      // Empty JSON reaches endpoint validation without uploading audio or using provider credits.
-      const response = await fetch(transcriptionApiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(15000) });
-      const payload = await response.json().catch(() => ({})) as { error?: string };
-      if (response.status === 400 && /audio chunk is missing/i.test(payload.error || '')) setConnectionCheckStatus('Online connection is working. API endpoint and Android network access are reachable.');
-      else if (response.status === 404) setConnectionCheckStatus('The server was reached, but /api/transcribe was not found. The backend deployment or API base URL needs fixing.');
-      else if (response.status === 503) setConnectionCheckStatus('The API is reachable, but no transcription provider is available on the server.');
-      else setConnectionCheckStatus('API responded with HTTP ' + response.status + (payload.error ? ': ' + payload.error : '.'));
-    } catch (reason) {
-      const detail = reason instanceof Error ? reason.message : String(reason);
-      setConnectionCheckStatus('Could not reach the online API from this APK. ' + detail + '. Check internet access, backend deployment, and Android WebView network/CORS settings.');
+      // Empty JSON reaches validation only; no audio is uploaded and no provider credits are used.
+      const endpoints = [
+        { name: 'Primary API', url: transcriptionApiUrl, expected: /audio chunk is missing/i },
+        ...(backupTranscriptionApiUrl ? [{ name: 'Cloudflare backup', url: backupTranscriptionApiUrl, expected: /invalid or oversized audio payload/i }] : []),
+      ];
+      const failures: string[] = [];
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(endpoint.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+            signal: AbortSignal.timeout(12000),
+          });
+          const payload = await response.json().catch(() => ({})) as { error?: string };
+          if (response.status === 400 && endpoint.expected.test(payload.error || '')) {
+            setConnectionCheckStatus(endpoint.name + ' is reachable from this APK. Online transcription can connect.');
+            return;
+          }
+          failures.push(endpoint.name + ': HTTP ' + response.status + (payload.error ? ' — ' + payload.error : ''));
+        } catch (reason) {
+          failures.push(endpoint.name + ': ' + (reason instanceof Error ? reason.message : String(reason)));
+        }
+      }
+      setConnectionCheckStatus('No online endpoint passed the connection check. ' + failures.join(' | ') + '.');
     } finally { setConnectionCheckBusy(false); }
   }
 
