@@ -384,7 +384,10 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
         const value = results.join(' ').replace(/\s+/g, ' ').trim();
         error ? reject(error) : resolve(value);
       };
-      const maxTimer = window.setTimeout(() => finish(), 20000);
+      // Vosk runs on-device and can be slower than real time on entry-level
+      // Android phones. Give each section a bounded, audio-length-aware window.
+      const maxWaitMs = Math.min(120000, Math.max(30000, Math.ceil(audio.length / 16000 * 2500)));
+      const maxTimer = window.setTimeout(() => finish(), maxWaitMs);
       recognizer.on('result', (message: any) => {
         const text = String(message?.result?.text || '').trim();
         if (text) results.push(text);
