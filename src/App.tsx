@@ -1140,6 +1140,7 @@ function App() {
     const timestamped = includeTimestamps && timestampsCoverTranscript
       ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
       : text;
+    const transcriptDocument = documentTitle + '\n\n' + attribution + '\n\n' + timestamped;
     if (exportType === 'docx') {
       try {
         const paragraphs = includeTimestamps && timestampsCoverTranscript
@@ -1170,8 +1171,8 @@ function App() {
       return;
     }
     const extensions: Record<string, { ext: string; mime: string; text: string }> = {
-      txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', text: documentTitle + '\\n\\n' + attribution + '\\n\\n' + timestamped },
-      md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# ' + documentTitle + '\\n\\n*' + attribution + '*\\n\\n' + timestamped },
+      txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', text: transcriptDocument },
+      md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# ' + documentTitle + '\n\n*' + attribution + '*\n\n' + timestamped },
       html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>"]/g, '') + '</title><main style="max-width:760px;margin:40px auto;padding:0 20px;font:16px/1.75 system-ui;color:#172033"><h1>' + documentTitle.replace(/[&<>\"]/g, '') + '</h1><p style="color:#64748b;font-size:13px">' + attribution + '</p><hr><pre style="white-space:pre-wrap;font:inherit">' + timestamped.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre></main>' },
       rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi\\b ' + documentTitle.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}') + '\\b0\\par\\i ' + attribution + '\\i0\\par\\par ' + timestamped.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
       srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'srt') : createEstimatedSubtitles(text, 'srt') },
@@ -1271,7 +1272,7 @@ function App() {
           <span className="brand-mark"><AudioLines size={24} /></span>
           <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE NOTES, MADE READABLE</small></span>
         </button>
-        <span className="local-badge"><span /> FREE WORKSPACE</span>
+        <span className="local-badge"><span /> VOICE TO TEXT</span>
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
@@ -1289,7 +1290,7 @@ function App() {
           <button className="primary" onClick={() => { setPage('transcribe'); inputRef.current?.click(); }} type="button"><Upload size={17}/> Choose voice notes</button>
           <button className="secondary" onClick={() => setPage('library')} type="button"><BookOpen size={17}/> Open my library</button>
         </div>
-        <div className="info-strip"><ShieldCheck size={18}/><div><strong>Private by default</strong><p>Auto uses the best configured online transcription provider, then tries on-device Whisper Tiny and Vosk if online transcription fails. Offline mode keeps audio on your device.</p></div></div>
+        <div className="info-strip"><ShieldCheck size={18}/><div><strong>Private by default</strong><p>Choose automatic, online or offline transcription. Your original recording stays unchanged.</p></div></div>
         <div className="feature-grid">
           <button onClick={() => setPage('transcribe')} type="button"><FileAudio/><strong>Transcribe</strong><span>Import, listen and correct audio text.</span></button>
           <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
@@ -1319,7 +1320,7 @@ function App() {
                 <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Keep audio on this device</small></button>
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Use online processing</small></button>
               </div>
-              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing…' : 'Set up offline use'}</button></div>
+              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Setting up…' : 'Prepare for offline use'}</button></div>
               {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
 
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
@@ -1330,7 +1331,7 @@ function App() {
               
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => { setPreviewInput('@' + active.file.name + ' '); setPage('preview'); }}><AudioWaveform size={15}/> Open AI Preview & timestamps</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => { setPreviewInput('@' + active.file.name + ' '); setPage('preview'); }}><AudioWaveform size={15}/> Open AI Preview</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
