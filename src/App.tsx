@@ -473,6 +473,7 @@ async function transcribeOpusInSegments(
   onProgress: (completed: number, total: number) => void,
   onPart: (parts: string[]) => void,
   onTimedParts: (segments: TimedSegment[]) => void,
+  onStatus: (message: string) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -720,6 +721,7 @@ function App() {
             (completed, total) => onProgress(completed, total, 'Groq Whisper'),
             onPart,
             (segments) => setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item)),
+            setStatus,
           );
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
