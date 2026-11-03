@@ -6,11 +6,19 @@ on:
     paths:
       - 'src/**'
       - 'api/**'
+      - 'public/**'
       - 'tests/**'
-      - 'package.json'
-      - 'capacitor.config.ts'
       - 'scripts/**'
-      - '.github/workflows/android-apk.yml'
+      - 'android/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.ts'
+      - 'tsconfig*.json'
+      - 'vite.config.*'
+      - 'postcss.config.*'
+      - 'tailwind.config.*'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
