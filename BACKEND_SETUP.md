@@ -16,6 +16,8 @@ Set these in Vercel Project Settings → Environment Variables. Do not prefix se
 - `GROQ_API_KEY` — transcription and translation provider.
 - `OPENAI_API_KEY` — transcription, translation and AI speech provider.
 - `ELEVENLABS_API_KEY` — optional AI speech fallback.
+- `ELEVENLABS_DEFAULT_VOICE_ID` — optional default ElevenLabs voice.
+- `ELEVENLABS_VOICE_NOVA_ID`, `ELEVENLABS_VOICE_SHIMMER_ID`, `ELEVENLABS_VOICE_CORAL_ID`, `ELEVENLABS_VOICE_SAGE_ID`, `ELEVENLABS_VOICE_ONYX_ID`, `ELEVENLABS_VOICE_ECHO_ID`, `ELEVENLABS_VOICE_ASH_ID`, `ELEVENLABS_VOICE_FABLE_ID`, `ELEVENLABS_VOICE_ALLOY_ID` — optional individual voice IDs. Configure only voices available in your ElevenLabs account; otherwise the default voice is used.
 - `OPENSUBTITLES_API_KEY` — subtitle search.
 - `OPENSUBTITLES_TOKEN` — optional account authorization token for direct subtitle file downloads.
 - `OPENSUBTITLES_USER_AGENT` — optional registered application user-agent.
