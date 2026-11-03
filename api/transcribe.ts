@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { transcribeWithFallback } from "./_lib/transcription-providers";
 
-type Body = { audioBase64?: string; mimeType?: string; chunkNumber?: number; totalChunks?: number; languageHint?: string };
+type Body = { audioBase64?: string; mimeType?: string; chunkNumber?: number; totalChunks?: number; languageHint?: string; detectLanguage?: boolean; speakerLabels?: boolean };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
@@ -27,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const primary = await transcribeWithFallback({ audioBase64: input.audioBase64, mimeType, languageHint: input.languageHint });
-    return res.status(200).json({ text: primary.text, segments: primary.segments, provider: primary.provider, chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
+    return res.status(200).json({ text: primary.text, language: primary.language, segments: primary.segments, provider: primary.provider, chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
   } catch (primaryError) {
     const backupUrl = process.env.BACKUP_BACKEND_URL?.replace(/\/$/, "");
     const backupToken = process.env.BACKUP_BACKEND_TOKEN;
@@ -39,9 +39,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           body: JSON.stringify({ audioBase64: input.audioBase64, mimeType, languageHint: input.languageHint, chunkNumber: input.chunkNumber, totalChunks: input.totalChunks }),
           signal: AbortSignal.timeout(115000),
         });
-        const result = await backup.json().catch(() => ({})) as { text?: string; segments?: Array<{start?:number;end?:number;text?:string}>; error?: string; provider?: string };
+        const result = await backup.json().catch(() => ({})) as { text?: string; language?: string; language_name?: string; segments?: Array<{start?:number;end?:number;text?:string;speaker?:string;speaker_id?:string}>; error?: string; provider?: string };
         if (backup.ok && typeof result.text === "string" && result.text.trim()) {
-          return res.status(200).json({ text: result.text.trim(), segments: Array.isArray(result.segments) ? result.segments : [], provider: "backup-" + (result.provider || "worker"), chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
+          return res.status(200).json({ text: result.text.trim(), language: result.language_name || result.language, segments: Array.isArray(result.segments) ? result.segments : [], provider: "backup-" + (result.provider || "worker"), chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
         }
         console.error("Backup transcription backend failed", backup.status, result.error || "invalid response");
       } catch (backupError) { console.error("Backup backend unavailable", backupError); }
