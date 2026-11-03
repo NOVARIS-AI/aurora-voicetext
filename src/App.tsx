@@ -244,13 +244,14 @@ function normalizeTranscriptForCompare(value: string): string {
 
 function subtitleToVtt(value: string): string {
   const normalized = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
-  if (/^WEBVTT(?:\s|$)/i.test(normalized)) return normalized + '\n';
-  const converted = normalized.split('\n').map(line =>
+  const lines = normalized ? normalized.split('\n') : [];
+  const header = lines.length && /^WEBVTT(?:\s|$)/i.test(lines[0]) ? lines.shift()! : 'WEBVTT';
+  const converted = lines.map(line =>
     /^\s*\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}/.test(line)
       ? line.replace(/,(\d{3})/g, '.$1')
       : line
-  ).join('\n');
-  return 'WEBVTT\n\n' + converted + '\n';
+  );
+  return [header, '', ...converted].join('\n').trimEnd() + '\n';
 }
 
 function makeSummary(text: string) {
