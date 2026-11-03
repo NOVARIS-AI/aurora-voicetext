@@ -52,7 +52,7 @@ The deploy workflow transfers the provider secrets to Cloudflare Worker secrets 
 
 ## Deploy
 
-After the GitHub Actions secrets are added, run **Deploy AURORA VoiceText Cloudflare backend** from Actions → Workflows → Run workflow, or merge a change under `backup-worker/` into `main`. The workflow deploys `backup-worker/` independently of Vercel. It skips deployment when Cloudflare credentials are absent. Add the deployed Worker origin (without a trailing slash) as the GitHub Actions repository variable `BACKUP_API_BASE_URL`; the APK build injects it as `VITE_BACKUP_API_BASE_URL`.
+After the GitHub Actions secrets are added, run **Deploy AURORA VoiceText backup worker** from Actions → Workflows → Run workflow, or merge a change under `backup-worker/` into `main`. The workflow deploys `backup-worker/` independently of Vercel. It skips deployment when Cloudflare credentials are absent. Add the deployed Worker origin (without a trailing slash) as the GitHub Actions repository variable `BACKUP_API_BASE_URL`; the APK build injects it as `VITE_BACKUP_API_BASE_URL`.
 
 ## Important limits
 
@@ -84,6 +84,6 @@ AssemblyAI usage is subject to its account limits and pricing. Configure the key
 
 The Cloudflare Worker now tries AssemblyAI first when its server-side `ASSEMBLYAI_API_KEY` secret is present. It enables automatic language detection and speaker diarization, returning `language`, timestamped `segments`, and `speaker` labels. If AssemblyAI fails or is not configured, the Worker falls back to Groq and then OpenAI Whisper. Speaker labels are scoped to each uploaded audio section and are not guaranteed to remain consistent across separate sections.
 
-The Worker deployment workflow is `.github/workflows/deploy-cloudflare-backend.yml`. It requires GitHub Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `ASSEMBLYAI_API_KEY`; `GROQ_API_KEY`, `OPENAI_API_KEY`, and `BACKUP_API_TOKEN` are also used when configured. Never put provider keys in Vite variables or the Android APK.
+The Worker deployment workflow is `.github/workflows/backup-worker-deploy.yml` (the existing standalone Worker workflow). It requires GitHub Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `ASSEMBLYAI_API_KEY`; `GROQ_API_KEY`, `OPENAI_API_KEY`, and `BACKUP_API_TOKEN` are also used when configured. Never put provider keys in Vite variables or the Android APK.
 
 For direct app fallback, set the GitHub Actions repository variable `BACKUP_API_BASE_URL` to `https://aurora-voicetext-backup.alwerioghenepeace563.workers.dev` so Android builds can inject `VITE_BACKUP_API_BASE_URL`. The Worker remains private by default: `BACKUP_PUBLIC_FALLBACK` must not be enabled until Cloudflare rate limiting and abuse controls are configured. Do not embed `BACKUP_API_TOKEN` in the APK.
