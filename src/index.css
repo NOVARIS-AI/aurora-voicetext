@@ -171,3 +171,46 @@ h1 span{color:#73cde4;background:linear-gradient(90deg,#71e0e8,#b79cff);-webkit-
 @media(max-width:650px){.studio-grid{grid-template-columns:1fr}.subtitle-result{align-items:flex-start;flex-direction:column}.subtitle-actions{width:100%;justify-content:flex-start}.subtitle-actions button{flex:1}.preview-segment{grid-template-columns:54px minmax(0,1fr)}.timestamp-toggle{align-items:flex-start}}
 
 .engine-setup-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}.engine-setup-actions .full-button{margin:0;min-height:42px}@media(max-width:420px){.engine-setup-actions{grid-template-columns:1fr}}
+
+
+/* Product polish: stronger contrast, restrained glass and focused chat workspace */
+:root{color-scheme:dark}
+body{background:radial-gradient(ellipse at 85% -10%,rgba(45,212,230,.09),transparent 38%),#080d17}
+.main-nav{background:#080e19;backdrop-filter:none;border-bottom:1px solid rgba(145,171,216,.12)}
+.nav-link{background:#111b2b;border-color:#25344b;color:#aab9ce}
+.nav-link.active{background:#12303b;border-color:#2b8791;color:#a8f1f2}
+.card{background:#121d2e;border-color:#2a3a52;box-shadow:0 16px 40px rgba(0,0,0,.22)}
+.feature-grid button{background:#142136;border-color:#2a3b53}
+.recording-row{background:#172337}
+.recording-row.selected{background:#15313c;border-color:#347e89}
+.library-card{background:#142136;border-color:#2a3b53}
+.upload-box{background:#122536;border-style:solid;border-color:#347e89}
+.transcript-input,.preview-segment textarea,.subtitle-preview textarea{background:#091321;border-color:#30415a}
+.status-message{background:#142b38;border:1px solid #28505b;color:#c0eff0}
+.info-strip{background:#132735;border-color:#294c5b}
+.local-badge{background:#122a35}
+.preview-chat-card{max-width:860px;margin:0 auto;padding:0;overflow:hidden}
+.preview-context{display:flex;align-items:center;gap:9px;padding:15px 18px;background:#0e1929;border-bottom:1px solid #2a3b53;color:#d8e7f7;font-size:12px;font-weight:700}
+.preview-context>span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-context button{margin-left:auto;flex-shrink:0;border:0;background:none;color:#79dce5;font-size:11px;font-weight:700}
+.context-dot{width:8px;height:8px;border-radius:50%;background:#4ed4c0;box-shadow:0 0 10px #4ed4c0}
+.preview-chat-feed{display:flex;flex-direction:column;gap:13px;min-height:260px;max-height:55vh;overflow:auto;padding:20px;background:#0c1523}
+.chat-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:220px;text-align:center;color:#8fa3bd}
+.chat-welcome svg{color:#70dce7}
+.chat-welcome strong{color:#e4edf9;font-size:15px}
+.chat-welcome p{max-width:390px;margin:0;font-size:12px;line-height:1.7}
+.chat-message{max-width:88%;padding:12px 14px;border:1px solid #2a3b53;border-radius:15px;background:#172337}
+.chat-message.user{align-self:flex-end;background:#12303b;border-color:#2d6670}
+.chat-message>span{display:block;margin-bottom:5px;color:#79dce5;font-size:9px;font-weight:800;letter-spacing:.1em}
+.chat-message p{margin:0;color:#e2eaf5;font-size:13px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-typing{display:flex;align-items:center;gap:8px;color:#9bb1c9;font-size:11px}
+.preview-composer{padding:14px;background:#111d2d;border-top:1px solid #2a3b53}
+.preview-composer textarea{width:100%;min-height:76px;resize:vertical;padding:12px;border:1px solid #344861;border-radius:12px;background:#091321;color:#f0f5ff;font-size:13px;line-height:1.6}
+.preview-composer>div{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:9px}
+.preview-composer small{color:#8fa2bb;font-size:10px}
+.chat-result{margin:0 14px 14px;padding:15px;border:1px solid #2a3b53;border-radius:14px;background:#0e1929}
+.preview-edit-details{margin:0 14px 14px;padding:13px 15px;border:1px solid #2a3b53;border-radius:12px;background:#0e1929}
+.preview-edit-details summary{color:#9eb1c9;font-size:11px;font-weight:700;cursor:pointer}
+.preview-edit-details[open] summary{margin-bottom:12px;color:#7de0e8}
+.preview-edit-details .preview-timeline{max-height:48vh}
+@media(max-width:650px){.preview-chat-feed{min-height:230px;padding:14px}.chat-message{max-width:95%}.preview-context{padding:13px}.preview-composer{padding:12px}.preview-edit-details{margin:0 10px 10px}}
