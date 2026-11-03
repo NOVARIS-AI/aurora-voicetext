@@ -723,6 +723,8 @@ function App() {
   const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
+  const [connectionCheckBusy, setConnectionCheckBusy] = useState(false);
+  const [connectionCheckStatus, setConnectionCheckStatus] = useState('');
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
@@ -814,6 +816,24 @@ function App() {
       setOfflinePrepStatus('Offline preparation failed. Connect to a stable network and retry.');
       setError(reason instanceof Error ? reason.message : 'Could not prepare the offline engine.');
     } finally { setOfflinePrepBusy(false); }
+  }
+
+  async function checkOnlineConnection() {
+    if (connectionCheckBusy) return;
+    setConnectionCheckBusy(true);
+    setConnectionCheckStatus('Checking the online transcription endpoint…');
+    try {
+      // Empty JSON reaches endpoint validation without uploading audio or using provider credits.
+      const response = await fetch(transcriptionApiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(15000) });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (response.status === 400 && /audio chunk is missing/i.test(payload.error || '')) setConnectionCheckStatus('Online connection is working. API endpoint and Android network access are reachable.');
+      else if (response.status === 404) setConnectionCheckStatus('The server was reached, but /api/transcribe was not found. The backend deployment or API base URL needs fixing.');
+      else if (response.status === 503) setConnectionCheckStatus('The API is reachable, but no transcription provider is available on the server.');
+      else setConnectionCheckStatus('API responded with HTTP ' + response.status + (payload.error ? ': ' + payload.error : '.'));
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason);
+      setConnectionCheckStatus('Could not reach the online API from this APK. ' + detail + '. Check internet access, backend deployment, and Android WebView network/CORS settings.');
+    } finally { setConnectionCheckBusy(false); }
   }
 
   async function transcribe() {
@@ -1125,8 +1145,11 @@ function App() {
                 <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Device only · Whisper → Vosk</small></button>
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
               </div>
+              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button><button className="secondary full-button" type="button" disabled={connectionCheckBusy || busy} onClick={checkOnlineConnection}>{connectionCheckBusy ? <LoaderCircle className="spin" size={16}/> : <ShieldCheck size={16}/>} {connectionCheckBusy ? 'Checking online connection…' : 'Test online connection'}</button></div>
+              {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
+              {connectionCheckStatus && <div className="status-message" role="status">{connectionCheckStatus}</div>}
               {mode === 'auto' && <p className="mode-explainer"><strong>Recommended · Best available quality</strong><span>Uses the best configured online provider. When AssemblyAI is configured, it detects the language and returns speaker-labelled utterances. If online processing fails, AURORA can switch to on-device Whisper Tiny and Vosk.</span></p>}
-              {mode === 'offline' && <><p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk backup is included; Prepare offline engine downloads its model (about 41 MB) for this device.</span></p><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button>{offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}</>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses the configured online transcription service. With AssemblyAI configured, language detection and speaker labels are enabled; otherwise the app uses the available Whisper provider.</span></p>}
+              {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk backup is included; its English model is about 41 MB.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses the configured online transcription service. With AssemblyAI configured, language detection and speaker labels are enabled; otherwise the app uses the available Whisper provider.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
