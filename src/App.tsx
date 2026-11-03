@@ -106,7 +106,12 @@ async function postBinary(url: string, payload: unknown, readTimeout = 120000): 
     } else if (raw instanceof ArrayBuffer) {
       body = raw;
     } else if (ArrayBuffer.isView(raw)) {
-      body = raw as Uint8Array;
+      // Copy into a standalone ArrayBuffer so TypeScript and the WebView Response
+      // constructor do not receive an ArrayBufferLike-backed typed array.
+      const view = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+      const copy = new Uint8Array(view.byteLength);
+      copy.set(view);
+      body = copy.buffer;
     } else if (raw != null) {
       body = JSON.stringify(raw);
       if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
