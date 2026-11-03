@@ -570,6 +570,7 @@ async function transcribeOpusInSegments(
   onPart: (parts: string[]) => void,
   onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
+  onLanguage: (language: string) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -662,7 +663,7 @@ async function transcribeOpusInSegments(
       // makes every completed section independently resumable after interruption.
       const result = await uploadPrepared(prepared);
       parts[index] = result.text;
-      if (result.language) onStatus('Detected language: ' + result.language + ' · section ' + (index + 1) + ' of ' + totalParts);
+      if (result.language) { onLanguage(result.language); onStatus('Detected language: ' + result.language + ' · section ' + (index + 1) + ' of ' + totalParts); }
       const sectionSegments = result.segments.filter(segment =>
         typeof segment.start === 'number' && typeof segment.end === 'number' &&
         typeof segment.text === 'string' && (result.index === 0 || segment.start >= overlapSeconds)
@@ -844,6 +845,7 @@ function App() {
             onPart,
             (segments) => setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item)),
             setStatus,
+            language => setFiles(current => current.map(item => item.id === selected.id ? { ...item, detectedLanguage: language } : item)),
           );
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
