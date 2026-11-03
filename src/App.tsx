@@ -11,10 +11,10 @@ import {
 } from 'lucide-react';
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
-type TimedSegment = { start: number; end: number; text: string };
+type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
-type AudioFile = { id: string; file: File; url: string; transcript: string; timedSegments?: TimedSegment[] };
+type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[] };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
@@ -570,6 +570,7 @@ async function transcribeOpusInSegments(
   onPart: (parts: string[]) => void,
   onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
+  onLanguage: (language: string) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -616,7 +617,8 @@ async function transcribeOpusInSegments(
         mimeType: 'audio/mpeg',
         chunkNumber: prepared.index + 1,
         totalChunks: totalParts,
-        languageHint: 'English and Nigerian Pidgin',
+        detectLanguage: true,
+        speakerLabels: true,
       });
       const request = (url: string) => fetchWithRetry(url, {
         method: 'POST',
@@ -630,14 +632,14 @@ async function transcribeOpusInSegments(
         if (!backupTranscriptionApiUrl) throw primaryNetworkError;
         response = await request(backupTranscriptionApiUrl);
       }
-      let result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
+      let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
       if (!response.ok && backupTranscriptionApiUrl && ([408, 425, 429].includes(response.status) || response.status >= 500)) {
         response = await request(backupTranscriptionApiUrl);
-        result = await response.json().catch(() => ({})) as { text?: string; error?: string; segments?: Array<{ start?: number; end?: number; text?: string }> };
+        result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
       }
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.');
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
-      return { index: prepared.index, start: prepared.start, text: result.text.trim(), segments: result.segments ?? [] };
+      return { index: prepared.index, start: prepared.start, text: result.text.trim(), language: result.language_name || result.language || '', segments: result.segments ?? [] };
     };
 
     let checkpointStorageWarningShown = false;
@@ -661,6 +663,7 @@ async function transcribeOpusInSegments(
       // makes every completed section independently resumable after interruption.
       const result = await uploadPrepared(prepared);
       parts[index] = result.text;
+      if (result.language) { onLanguage(result.language); onStatus('Detected language: ' + result.language + ' · section ' + (index + 1) + ' of ' + totalParts); }
       const sectionSegments = result.segments.filter(segment =>
         typeof segment.start === 'number' && typeof segment.end === 'number' &&
         typeof segment.text === 'string' && (result.index === 0 || segment.start >= overlapSeconds)
@@ -668,6 +671,7 @@ async function transcribeOpusInSegments(
         start: result.start + (segment.start as number),
         end: result.start + (segment.end as number),
         text: (segment.text as string).trim(),
+        speaker: segment.speaker || segment.speaker_id || undefined,
       })).filter(segment => segment.text.length > 0);
       timedSegments.push(...sectionSegments);
       checkpoint.segments = timedSegments;
@@ -739,6 +743,8 @@ function App() {
   const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number}>>([]);
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
+  const [transcriptTargetLanguage, setTranscriptTargetLanguage] = useState('English');
+  const [translationBusy, setTranslationBusy] = useState(false);
   const [subtitleStatus, setSubtitleStatus] = useState('');
   const [subtitleText, setSubtitleText] = useState('');
   const [subtitleFilename, setSubtitleFilename] = useState('subtitle');
@@ -839,6 +845,7 @@ function App() {
             onPart,
             (segments) => setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item)),
             setStatus,
+            language => setFiles(current => current.map(item => item.id === selected.id ? { ...item, detectedLanguage: language } : item)),
           );
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
@@ -857,10 +864,10 @@ function App() {
       }
       const completedText = mergeTranscriptParts(parts);
       if (!completedText) throw new Error('No clear speech was detected. Try a recording with clearer speech and less background noise.');
-      setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: completedText } : item));
+      setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: completedText, translatedTranscript: '' } : item));
       setStatus(mode === 'offline'
-        ? 'Offline transcription complete. Audio was processed on this device.'
-        : 'Transcription complete. Review names, numbers and Nigerian Pidgin before sharing.');
+        ? 'Offline transcription complete. Whisper automatically detects supported speech languages; review the original transcript.'
+        : 'Transcription complete. Review the original-language transcript before translating.');
       setError('');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Transcription failed.';
@@ -871,6 +878,25 @@ function App() {
       setBusy(false);
     }
   }
+  async function translateActiveTranscript() {
+    if (!active?.transcript.trim() || translationBusy) return;
+    setTranslationBusy(true);
+    setError('');
+    try {
+      const { data } = await requestFeature('/api/translate', {
+        text: active.transcript,
+        targetLanguage: transcriptTargetLanguage,
+        sourceLanguage: active.detectedLanguage || 'auto',
+      });
+      const translated = String(data?.text || '').trim();
+      if (!translated) throw new Error('The translation service returned an empty result.');
+      setFiles(current => current.map(item => item.id === active.id ? { ...item, translatedTranscript: translated } : item));
+      setStatus('Translation ready · original transcript has been preserved.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Translation failed. Check the translation service and try again.');
+    } finally { setTranslationBusy(false); }
+  }
+
   function updateTranscript(text: string) {
     if (!active) return;
     setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
@@ -1082,7 +1108,7 @@ function App() {
             <p className="privacy-hint"><ShieldCheck size={15}/> Auto sends audio to Groq first, then uses on-device backups if needed. Offline never uploads audio. Online always uses Groq.</p>
           </section>
           <section className="card">
-            <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">EN + PIDGIN</span></div>
+            <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">AUTO LANGUAGE</span></div>
             {active ? <>
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
               <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
@@ -1097,8 +1123,11 @@ function App() {
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
-              <label className="field-label" htmlFor="transcript">Transcript text</label>
-              <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Your words will appear here. Review names, numbers and Pidgin, then edit anything AURORA missed."/>
+              <label className="field-label" htmlFor="transcript">Original transcript <small>{active.detectedLanguage ? 'Detected: ' + active.detectedLanguage : 'Language detection: automatic'}</small></label>
+              <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Speech will appear here in its original language. Review names and wording, then edit anything AURORA missed."/>
+              <div className="translation-toolbar"><label className="field-label">Translate original into<select value={transcriptTargetLanguage} onChange={event => setTranscriptTargetLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option><option>German</option><option>Chinese</option><option>Hindi</option><option>Swahili</option></select></label><button className="secondary" type="button" disabled={translationBusy || !active.transcript.trim()} onClick={translateActiveTranscript}>{translationBusy ? <LoaderCircle className="spin" size={16}/> : <Languages size={16}/>} {translationBusy ? 'Translating…' : 'Translate transcript'}</button></div>
+              <label className="field-label" htmlFor="translated-transcript">Translated transcript</label>
+              <textarea id="translated-transcript" className="transcript-input" value={active.translatedTranscript || ''} readOnly placeholder="The translation will appear here. Your original transcript stays unchanged."/>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
               <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => setPage('preview')}><AudioWaveform size={15}/> Open AI Preview & timestamps</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
@@ -1118,7 +1147,7 @@ function App() {
         {active ? <section className="card preview-card">
           <div className="card-title"><div><small>TRANSCRIPT WORKSPACE</small><h2>{active.file.name}</h2></div><span className="count">{active.timedSegments?.length || 0} timed lines</span></div>
           <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
-          {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead >= segment.start && audioPlayhead < segment.end ? "timestamp-chip active" : "timestamp-chip"} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value)} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
+          {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead >= segment.start && audioPlayhead < segment.end ? "timestamp-chip active" : "timestamp-chip"} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker ? segment.speaker + ': ' : '') + segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
           <div className="studio-actions"><button className="primary" type="button" disabled={assistBusy} onClick={polishTranscript}>{assistBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} AI polish transcript</button><button className="primary" type="button" onClick={saveToLibrary}><Save size={16}/> Save changes</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={16}/> Export transcript</button></div>
         </section> : <div className="empty-state"><AudioWaveform/><strong>Select a recording first</strong><span>Open Transcribe and choose a recording to edit its transcript.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
       </section>}
