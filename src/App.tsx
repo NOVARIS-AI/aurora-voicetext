@@ -232,8 +232,25 @@ function downloadFile(name: string, content: string | Blob, type: string) {
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = name;
+  document.body.appendChild(anchor);
   anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1200);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function normalizeTranscriptForCompare(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function subtitleToVtt(value: string): string {
+  const normalized = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+  if (/^WEBVTT(?:\s|$)/i.test(normalized)) return normalized + '\n';
+  const converted = normalized.split('\n').map(line =>
+    /^\s*\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}/.test(line)
+      ? line.replace(/,(\d{3})/g, '.$1')
+      : line
+  ).join('\n');
+  return 'WEBVTT\n\n' + converted + '\n';
 }
 
 function makeSummary(text: string) {
@@ -600,7 +617,8 @@ function App() {
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
-  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;downloads:number}>>([]);
+  const [subtitleType, setSubtitleType] = useState<'movie' | 'episode' | undefined>(undefined);
+  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number}>>([]);
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
   const [subtitleStatus, setSubtitleStatus] = useState('');
@@ -741,18 +759,24 @@ function App() {
 
   async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
-    const timestamped = includeTimestamps && timedSegments?.length
-      ? timedSegments.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
+    const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
+    const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
+      normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
+    const timestamped = includeTimestamps && timestampsCoverTranscript
+      ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
       : text;
     if (exportType === 'docx') {
       try {
-        const paragraphs = includeTimestamps && timedSegments?.length
-          ? timedSegments.map(segment => new Paragraph({ children: [new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91' }), new TextRun(segment.text)], spacing: { after: 120 } }))
+        const paragraphs = includeTimestamps && timestampsCoverTranscript
+          ? timedSegments!.map(segment => new Paragraph({ children: [new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91' }), new TextRun(segment.text)], spacing: { after: 120 } }))
           : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
         const doc = new Document({ sections: [{ properties: {}, children: [new Paragraph({ children: [new TextRun({ text: 'AURORA VoiceText Transcript', bold: true, size: 30 })], spacing: { after: 300 } }), ...paragraphs] }] });
         const blob = await Packer.toBlob(doc);
         downloadFile(baseName + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-        setError(''); setStatus('DOCX document prepared.');
+        setError('');
+        setStatus(includeTimestamps && timedSegments?.length && !timestampsCoverTranscript
+          ? 'DOCX exported with the complete transcript. Timestamps were omitted because the timed segments did not cover all edited text.'
+          : 'DOCX document prepared with the complete transcript.');
       } catch (error) { setError(error instanceof Error ? error.message : 'DOCX export failed.'); }
       return;
     }
@@ -774,8 +798,9 @@ function App() {
     };
     const selected = extensions[exportType] ?? extensions.txt;
     downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
-    if (exportType === 'srt' || exportType === 'vtt') setStatus(timedSegments?.length ? 'Exported speech-aligned timestamps from the transcription engine.' : 'No speech-aligned timestamps were returned; this subtitle file uses estimated timings.');
-    else if (includeTimestamps && timedSegments?.length) setStatus('Exported the complete transcript with timestamps.');
+    if (exportType === 'srt' || exportType === 'vtt') setStatus(timedSegments?.length ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'No speech-aligned timestamps were returned; this subtitle file uses estimated timings.');
+    else if (includeTimestamps && timedSegments?.length && !timestampsCoverTranscript) setStatus('Exported the complete transcript without timestamps because the timing data did not cover all edited text.');
+    else if (includeTimestamps && timestampsCoverTranscript) setStatus('Exported the complete transcript with timestamps.');
     setError('');
   }
 
@@ -807,16 +832,22 @@ function App() {
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
     setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Generating AI voice…');
     try {
-      const chunks = splitLongText(studioText, 22000);
+      // Keep provider requests small enough for common TTS limits and mobile memory.
+      const chunks = splitLongText(studioText, 3500);
       const audioParts: Blob[] = [];
+      const providers = new Set<string>();
       for (let index = 0; index < chunks.length; index++) {
         setStatus('Generating voice section ' + (index + 1) + ' of ' + chunks.length + '…');
-        const { response } = await requestFeature('/api/tts', { text: chunks[index], voice: voiceName, style: voiceStyle + '. Accent: ' + voiceAccent + '. Emphasis: ' + voiceEmphasis + '. Pauses: ' + voicePauses, emotion: voiceEmotion, rate: voiceRate, pitch: voicePitch }, true);
-        audioParts.push(await response.blob());
+        const { response } = await requestFeature('/api/tts', { text: chunks[index], voice: voiceName, style: voiceStyle + '. Accent / pronunciation preference: ' + voiceAccent + '. Emphasis: ' + voiceEmphasis + '. Pauses: ' + voicePauses, emotion: voiceEmotion, rate: voiceRate, pitch: voicePitch }, true);
+        const provider = response.headers.get('X-AURORA-Provider');
+        if (provider) providers.add(provider);
+        const audioPart = await response.blob();
+        if (!audioPart.size) throw new Error('The speech provider returned an empty audio section (' + (index + 1) + ').');
+        audioParts.push(audioPart);
       }
       const finalAudio = await mergeMp3ChunksToWav(audioParts);
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
-      setVoiceProvider(chunks.length > 1 ? 'AI speech · merged ' + chunks.length + ' sections' : 'AI speech provider');
+      setVoiceProvider([providers.size ? Array.from(providers).join(' + ') : 'AI speech provider', chunks.length > 1 ? 'merged ' + chunks.length + ' sections' : 'single section'].join(' · '));
       setStatus('AI voice generated. Preview it below, then download the complete WAV audio.');
     } catch (error) { setError(error instanceof Error ? error.message : 'AI voice generation failed.'); setStatus(''); }
     finally { setVoiceBusy(false); }
@@ -826,7 +857,7 @@ function App() {
     if (subtitleQuery.trim().length < 2) { setError('Enter a film or episode title first.'); return; }
     setSubtitleBusy(true); setSubtitleStatus('Searching OpenSubtitles…'); setSubtitleResults([]); setError('');
     try {
-      const { data } = await requestFeature('/api/subtitles', { query: subtitleQuery.trim(), languages: subtitleLanguage });
+      const { data } = await requestFeature('/api/subtitles', { query: subtitleQuery.trim(), languages: subtitleLanguage, type: subtitleType });
       setSubtitleResults(Array.isArray(data?.results) ? data.results : []);
       setSubtitleStatus(data?.results?.length ? 'Choose a matching subtitle release below.' : 'No matching subtitles were found. Try another title or language.');
     } catch (error) { setError(error instanceof Error ? error.message : 'Subtitle search failed.'); setSubtitleStatus(''); }
@@ -851,8 +882,9 @@ function App() {
       }
       const vtt = /^WEBVTT/m.test(output) || /\.vtt$/i.test(releaseName);
       const safeName = releaseName.replace(/\.[^.]+$/, '').replace(/[^a-z0-9-_]+/gi, '-').slice(0, 70) || 'subtitle';
-      setSubtitleText(output); setSubtitleFilename(safeName);
-      downloadFile(safeName + (translate ? '-' + subtitleTranslateLanguage.toLowerCase().replace(/\s+/g, '-') : '') + (vtt ? '.vtt' : '.srt'), output, vtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip;charset=utf-8');
+      const exportText = vtt ? subtitleToVtt(output) : output.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim() + '\n';
+      setSubtitleText(exportText); setSubtitleFilename(safeName);
+      downloadFile(safeName + (translate ? '-' + subtitleTranslateLanguage.toLowerCase().replace(/\s+/g, '-') : '') + (vtt ? '.vtt' : '.srt'), exportText, vtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip;charset=utf-8');
       setSubtitleStatus(translate ? 'Translated subtitle exported. Review the timing and wording before use.' : 'Subtitle downloaded.');
     } catch (error) { setError(error instanceof Error ? error.message : 'Subtitle download or translation failed.'); setSubtitleStatus(''); }
     finally { setSubtitleBusy(false); }
@@ -980,11 +1012,11 @@ function App() {
         <div className="page-heading"><div className="eyebrow">SUBTITLE FINDER</div><h1>Find subtitles for a video.</h1><p>Search available subtitle releases, download an authorized file, translate it, and export SRT or VTT.</p></div>
         <section className="card subtitle-card">
           <label className="field-label" htmlFor="subtitle-query">Movie or episode title<input id="subtitle-query" value={subtitleQuery} onChange={event=>setSubtitleQuery(event.target.value)} placeholder="Enter a film or series title"/></label>
-          <div className="studio-grid"><label className="field-label">Subtitle language<select value={subtitleLanguage} onChange={event=>setSubtitleLanguage(event.target.value)}><option value="en">English</option><option value="yo">Yoruba</option><option value="ig">Igbo</option><option value="ha">Hausa</option><option value="fr">French</option><option value="es">Spanish</option><option value="pt">Portuguese</option><option value="ar">Arabic</option><option value="de">German</option></select></label><label className="field-label">Translate to<select value={subtitleTranslateLanguage} onChange={event=>setSubtitleTranslateLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option></select></label></div>
+          <div className="studio-grid"><label className="field-label">Content type<select value={subtitleType || 'all'} onChange={event=>setSubtitleType(event.target.value === 'all' ? undefined : event.target.value as 'movie' | 'episode')}><option value="all">Movies & series</option><option value="movie">Movie</option><option value="episode">TV episode</option></select></label><label className="field-label">Subtitle language<select value={subtitleLanguage} onChange={event=>setSubtitleLanguage(event.target.value)}><option value="en">English</option><option value="yo">Yoruba</option><option value="ig">Igbo</option><option value="ha">Hausa</option><option value="fr">French</option><option value="es">Spanish</option><option value="pt">Portuguese</option><option value="ar">Arabic</option><option value="de">German</option></select></label><label className="field-label">Translate to<select value={subtitleTranslateLanguage} onChange={event=>setSubtitleTranslateLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option></select></label></div>
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} Search subtitle catalogue</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
-          {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName} · {item.downloads.toLocaleString()} downloads</p></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate & export</button></div></article>)}</div>}
-          {subtitleText && <div className="subtitle-preview"><strong>Last subtitle output · {subtitleFilename}</strong><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={8}/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleText,'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleText.replace(/^WEBVTT\s*/,'').replace(/,/g,'.').replace(/^/,'WEBVTT\n\n'),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+          {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''} · {item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</p></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate & export</button></div></article>)}</div>}
+          {subtitleText && <div className="subtitle-preview"><strong>Last subtitle output · {subtitleFilename}</strong><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={8}/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleText,'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
           <p className="privacy-hint"><ShieldCheck size={15}/> Uses the configured OpenSubtitles catalogue. AURORA does not invent missing subtitle files. Translation needs a configured AI text provider.</p>
         </section>
       </section>}
