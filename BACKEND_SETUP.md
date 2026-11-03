@@ -7,7 +7,7 @@ The Android app and web app call same-origin `/api/*` routes. They never receive
 1. The primary API runs on Vercel and reads runtime environment variables.
 2. Provider adapters try configured providers in order (AssemblyAI first for online transcription when `ASSEMBLYAI_API_KEY` is set, then Groq/OpenAI; OpenAI/Groq for translation; OpenAI/ElevenLabs for speech; OpenSubtitles for subtitle search).
 3. If the primary provider chain fails, the API calls the independent Cloudflare Worker using `BACKUP_BACKEND_URL` and `BACKUP_BACKEND_TOKEN`.
-4. The Worker has its own provider secrets. The app can use it as a direct secondary endpoint through the build-time `VITE_BACKUP_API_BASE_URL` setting when the primary host is unreachable or returns a retryable failure. Server-side Vercel functions can also call it using the private token.
+4. The Worker has its own provider secrets, including optional `ASSEMBLYAI_API_KEY` for language detection and speaker diarization. The app can use it as a direct secondary endpoint through the build-time `VITE_BACKUP_API_BASE_URL` setting when the primary host is unreachable or returns a retryable failure. Server-side Vercel functions can also call it using the private token.
 
 ## Vercel runtime environment variables
 
@@ -35,6 +35,8 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `BACKUP_API_TOKEN` (same value as Vercel `BACKUP_BACKEND_TOKEN`)
+- `ASSEMBLYAI_API_KEY` (optional; enables detected language and speaker-labelled utterances on the Cloudflare Worker)
+- `GROQ_API_KEY` and/or `OPENAI_API_KEY` (fallback transcription providers)
 - `ASSEMBLYAI_API_KEY` (optional; enables language detection and speaker diarization in the primary online transcription service)
 - `GROQ_API_KEY`
 - `OPENAI_API_KEY`
@@ -50,7 +52,7 @@ The deploy workflow transfers the provider secrets to Cloudflare Worker secrets 
 
 ## Deploy
 
-After the GitHub Actions secrets are added, push a change under `backup-worker/` or run the **Deploy AURORA VoiceText backup worker** workflow manually. It skips deployment when Cloudflare credentials are absent. Add the deployed Worker origin (without a trailing slash) as the GitHub Actions repository variable `BACKUP_API_BASE_URL`; the APK build injects it as `VITE_BACKUP_API_BASE_URL`.
+After the GitHub Actions secrets are added, run **Deploy AURORA VoiceText Cloudflare backend** from Actions → Workflows → Run workflow, or merge a change under `backup-worker/` into `main`. The workflow deploys `backup-worker/` independently of Vercel. It skips deployment when Cloudflare credentials are absent. Add the deployed Worker origin (without a trailing slash) as the GitHub Actions repository variable `BACKUP_API_BASE_URL`; the APK build injects it as `VITE_BACKUP_API_BASE_URL`.
 
 ## Important limits
 
@@ -76,3 +78,12 @@ After the GitHub Actions secrets are added, push a change under `backup-worker/`
 When `ASSEMBLYAI_API_KEY` is configured on the Vercel project, online audio sections are uploaded to AssemblyAI with automatic language detection and speaker diarization enabled. The API returns utterances with timestamps and generic speaker labels, which AURORA displays in the timestamped preview. If AssemblyAI is not configured or does not support a particular audio section/language feature, the service falls back to Groq/OpenAI Whisper; those fallback providers may not return speaker labels. Language detection is most reliable with at least 15 seconds of spoken audio. Since long recordings are processed in separate sections to protect mobile memory, speaker labels are section-local and are not guaranteed to identify the same person consistently across different sections. Offline Whisper Tiny does not provide speaker diarization.
 
 AssemblyAI usage is subject to its account limits and pricing. Configure the key as a server-side Vercel environment variable only; never put it in a `VITE_` variable, APK, or committed file.
+
+
+## Cloudflare backend migration notes
+
+The Cloudflare Worker now tries AssemblyAI first when its server-side `ASSEMBLYAI_API_KEY` secret is present. It enables automatic language detection and speaker diarization, returning `language`, timestamped `segments`, and `speaker` labels. If AssemblyAI fails or is not configured, the Worker falls back to Groq and then OpenAI Whisper. Speaker labels are scoped to each uploaded audio section and are not guaranteed to remain consistent across separate sections.
+
+The Worker deployment workflow is `.github/workflows/deploy-cloudflare-backend.yml`. It requires GitHub Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `ASSEMBLYAI_API_KEY`; `GROQ_API_KEY`, `OPENAI_API_KEY`, and `BACKUP_API_TOKEN` are also used when configured. Never put provider keys in Vite variables or the Android APK.
+
+For direct app fallback, set the GitHub Actions repository variable `BACKUP_API_BASE_URL` to `https://aurora-voicetext-backup.alwerioghenepeace563.workers.dev` so Android builds can inject `VITE_BACKUP_API_BASE_URL`. The Worker remains private by default: `BACKUP_PUBLIC_FALLBACK` must not be enabled until Cloudflare rate limiting and abuse controls are configured. Do not embed `BACKUP_API_TOKEN` in the APK.
