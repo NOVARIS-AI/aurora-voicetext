@@ -240,6 +240,11 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
   });
 }
 
+function safeFileBaseName(value: string, fallback = 'aurora-transcript'): string {
+  const cleaned = value.trim().replace(/\\.[a-z0-9]{1,8}$/i, '').replace(/[\\/:*?"<>|\\u0000-\\u001f]/g, '-').replace(/\\s+/g, ' ').replace(/[. ]+$/g, '').slice(0, 100);
+  return cleaned || fallback;
+}
+
 function downloadFile(name: string, content: string | Blob, type: string) {
   const url = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type }));
   const anchor = document.createElement('a');
@@ -618,6 +623,8 @@ function App() {
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
   const [exportType, setExportType] = useState('txt');
+  const [exportFilename, setExportFilename] = useState('');
+  const [voiceFilename, setVoiceFilename] = useState('aurora-voice');
   const [studioText, setStudioText] = useState('');
   const [voiceRate, setVoiceRate] = useState(1);
   const [voicePitch, setVoicePitch] = useState(1);
@@ -778,6 +785,7 @@ function App() {
 
   async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
+    const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
@@ -791,7 +799,7 @@ function App() {
           : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
         const doc = new Document({ sections: [{ properties: {}, children: [new Paragraph({ children: [new TextRun({ text: 'AURORA VoiceText Transcript', bold: true, size: 30 })], spacing: { after: 300 } }), ...paragraphs] }] });
         const blob = await Packer.toBlob(doc);
-        downloadFile(baseName + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
         setStatus(includeTimestamps && timedSegments?.length && !timestampsCoverTranscript
           ? 'DOCX exported with the complete transcript. Timestamps were omitted because the timed segments did not cover all edited text.'
@@ -816,7 +824,7 @@ function App() {
       vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
-    downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
+    downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
     if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'The timing data did not cover all transcript text; exported estimated timings so no words are omitted.');
     else if (includeTimestamps && timedSegments?.length && !timestampsCoverTranscript) setStatus('Exported the complete transcript without timestamps because the timing data did not cover all edited text.');
     else if (includeTimestamps && timestampsCoverTranscript) setStatus('Exported the complete transcript with timestamps.');
@@ -1022,7 +1030,7 @@ function App() {
           <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
           <div className="studio-actions"><button className="primary" type="button" disabled={voiceBusy} onClick={generateVoice}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating AI audio…':'Generate AI voice'}</button><button className="secondary" type="button" onClick={()=>{setStudioText('');if(voiceAudioUrl)URL.revokeObjectURL(voiceAudioUrl);setVoiceAudioUrl('');}}>Clear</button></div>
           {status && <div className="status-message" role="status">{status}</div>}
-          {voiceAudioUrl && <div className="generated-audio"><strong>AI-generated audio · {voiceProvider}</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download="aurora-ai-voice.wav"><Download size={16}/> Download WAV audio</a></div>}
+          {voiceAudioUrl && <div className="generated-audio"><strong>AI-generated audio · {voiceProvider}</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.wav'}><Download size={16}/> Download WAV audio</a></div>}
           <p className="privacy-hint"><ShieldCheck size={15}/> Uses the configured AI speech provider, not your phone's built-in speech synthesis. API credentials remain on the server. Voice options depend on provider support.</p>
         </section>
       </section>}
