@@ -169,3 +169,5 @@ h1 span{color:#73cde4;background:linear-gradient(90deg,#71e0e8,#b79cff);-webkit-
 .subtitle-result strong{font-size:12px}.subtitle-result p{margin:5px 0 0;color:#91a2bc;font-size:10px;line-height:1.6}
 .subtitle-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 @media(max-width:650px){.studio-grid{grid-template-columns:1fr}.subtitle-result{align-items:flex-start;flex-direction:column}.subtitle-actions{width:100%;justify-content:flex-start}.subtitle-actions button{flex:1}.preview-segment{grid-template-columns:54px minmax(0,1fr)}.timestamp-toggle{align-items:flex-start}}
+
+.engine-setup-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}.engine-setup-actions .full-button{margin:0;min-height:42px}@media(max-width:420px){.engine-setup-actions{grid-template-columns:1fr}}
