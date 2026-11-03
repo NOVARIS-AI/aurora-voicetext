@@ -1336,6 +1336,7 @@ function App() {
                   <label className="field-label" htmlFor="export-template">Template<select id="export-template" value={exportTemplate} onChange={event=>setExportTemplate(event.target.value)}><option value="standard">Professional transcript</option><option value="meeting">Meeting notes</option><option value="study">Study notes</option></select></label>
                   <label className="field-label" htmlFor="export-type">File format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><optgroup label="Documents"><option value="docx">Word document (.docx)</option><option value="pdf">PDF document (.pdf)</option><option value="rtf">Rich text (.rtf)</option><option value="html">Web document (.html)</option><option value="md">Markdown (.md)</option><option value="txt">Plain text (.txt)</option></optgroup><optgroup label="Subtitles"><option value="srt">SubRip subtitles (.srt)</option><option value="vtt">Web subtitles (.vtt)</option></optgroup></select></label>
                 </div>
+                <label className="export-option"><input type="checkbox" checked={includeTimestamps} onChange={event=>setIncludeTimestamps(event.target.checked)}/> Include timestamps when available</label>
                 <div className="export-actions"><button className="primary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
               </section>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
@@ -1372,7 +1373,7 @@ function App() {
       </section>}
 
       {page === 'studio' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">AI VOICE STUDIO</div><h1>Give your words a voice.</h1><p>Generate downloadable AI speech, preview it, and export a single WAV file, including longer scripts processed in sections.</p></div>
+        <div className="page-heading"><div className="eyebrow">AI VOICE STUDIO</div><h1>Give your words a voice.</h1><p>Generate downloadable AI speech, preview it, and export MP3 audio, including longer scripts processed in sections.</p></div>
         <section className="card studio-card">
           <div className="studio-icon"><Volume2 size={23}/></div>
           <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
