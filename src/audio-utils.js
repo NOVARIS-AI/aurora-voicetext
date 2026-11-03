@@ -77,19 +77,20 @@ export function createTimedSubtitles(segments, format = 'srt') {
 }
 
 
-/** Normalize subtitle documents without treating escaped text as line breaks. */
+/** Normalize subtitle documents and line endings for SRT/WebVTT exports. */
 export function normalizeSubtitleText(value, format = 'srt') {
-  const normalized = String(value || '').replace(/^\\uFEFF/, '').replace(/\\r\\n?/g, '\\n').trim();
-  const lines = normalized ? normalized.split('\\n') : [];
+  const normalized = String(value || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+  const lines = normalized ? normalized.split('\n') : [];
   if (format === 'vtt') {
-    const header = lines.length && /^WEBVTT(?:\\s|$)/i.test(lines[0]) ? lines.shift() : 'WEBVTT';
+    const header = lines.length && /^WEBVTT(?:\s|$)/i.test(lines[0]) ? lines.shift() : 'WEBVTT';
     const converted = lines.map(line =>
-      /^\\s*\\d{2}:\\d{2}:\\d{2},\\d{3}\\s+-->\\s+\\d{2}:\\d{2}:\\d{2},\\d{3}/.test(line)
-        ? line.replace(/,(\\d{3})/g, '.$1')
+      /^\s*\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}/.test(line)
+        ? line.replace(/,(\d{3})/g, '.$1')
         : line
     );
-    return [header, '', ...converted].join('\\n').trimEnd() + '\\n';
+    return [header, '', ...converted].join('\n').trimEnd() + '\n';
   }
-  if (lines.length && /^WEBVTT(?:\\s|$)/i.test(lines[0])) lines.shift();
-  return lines.map(line => line.replace(/(\\d{2}:\\d{2}:\\d{2})\\.(\\d{3})/g, '$1,$2')).join('\\n').trim() + (lines.length ? '\\n' : '');
+  if (lines.length && /^WEBVTT(?:\s|$)/i.test(lines[0])) lines.shift();
+  const output = lines.map(line => line.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2')).join('\n').trim();
+  return output ? output + '\n' : '';
 }
