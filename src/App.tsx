@@ -367,6 +367,20 @@ async function getWhisper(onProgress: (message: string) => void): Promise<Engine
   return pipelinePromise;
 }
 
+async function getCachedOfflineAssetUrl(url: string, mime: string): Promise<string> {
+  if ('caches' in window) {
+    const cache = await caches.open('aurora-voicetext-offline-assets-v1');
+    let response = await cache.match(url);
+    if (!response) {
+      response = await fetch(url);
+      if (!response.ok) throw new Error('Could not download the offline audio decoder. Connect to the internet once, then tap Prepare offline engine.');
+      await cache.put(url, response.clone());
+    }
+    return URL.createObjectURL(await response.blob());
+  }
+  return toBlobURL(url, mime);
+}
+
 async function transcribeOpusOfflineInSegments(
   file: File,
   onProgress: (completed: number, total: number) => void,
@@ -399,8 +413,8 @@ async function transcribeOpusOfflineInSegments(
   try {
     onStatus('Loading on-device audio decoder…');
     await ffmpeg.load({
-      coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
-      wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
+      coreURL: await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
     });
     // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
     await ffmpeg.createDir('/audio-input');
@@ -619,6 +633,8 @@ function App() {
   const [library, setLibrary] = useState<Recording[]>(readLibrary);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<TranscriptionMode>('auto');
+  const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
+  const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
@@ -692,6 +708,22 @@ function App() {
     setError('');
   }
 
+
+  async function prepareOfflineEngine() {
+    if (offlinePrepBusy) return;
+    setOfflinePrepBusy(true); setOfflinePrepStatus('Preparing offline Whisper model and audio decoder…'); setError('');
+    try {
+      await getWhisper(message => setOfflinePrepStatus(message));
+      const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+      const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
+      const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
+      URL.revokeObjectURL(coreUrl); URL.revokeObjectURL(wasmUrl);
+      setOfflinePrepStatus('Offline engine prepared on this device. Keep this app data and browser cache; the first preparation needs internet.');
+    } catch (reason) {
+      setOfflinePrepStatus('Offline preparation failed. Connect to a stable network and retry.');
+      setError(reason instanceof Error ? reason.message : 'Could not prepare the offline engine.');
+    } finally { setOfflinePrepBusy(false); }
+  }
 
   async function transcribe() {
     if (!active || busy) return;
@@ -983,7 +1015,7 @@ function App() {
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
               </div>
               {mode === 'auto' && <p className="mode-explainer"><strong>Recommended · Best available quality</strong><span>Tries Groq Whisper first. If the connection or API fails, AURORA switches to Whisper Tiny, then Vosk on your device. Online processing sends audio to the server.</span></p>}
-              {mode === 'offline' && <p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny, then Vosk if a compatible Vosk model is configured. The first model download needs internet.</span></p>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
+              {mode === 'offline' && <><p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk is an optional backup and needs its own model configuration.</span></p><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button>{offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}</>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
