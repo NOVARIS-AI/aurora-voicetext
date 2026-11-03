@@ -338,23 +338,11 @@ function normalizeTranscriptForCompare(value: string): string {
 }
 
 function subtitleToSrt(value: string): string {
-  const normalized = value.replace(/^\\uFEFF/, '').replace(/\\r\\n?/g, '\\n').trim();
-  const lines = normalized.split('\\n');
-  if (lines.length && /^WEBVTT(?:\\s|$)/i.test(lines[0])) lines.shift();
-  const converted = lines.map(line => line.replace(/(\\d{2}:\\d{2}:\\d{2})\\.(\\d{3})/g, '$1,$2'));
-  return converted.join('\\n').trim() + '\\n';
+  return normalizeSubtitleText(value, 'srt');
 }
 
 function subtitleToVtt(value: string): string {
-  const normalized = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
-  const lines = normalized ? normalized.split('\n') : [];
-  const header = lines.length && /^WEBVTT(?:\s|$)/i.test(lines[0]) ? lines.shift()! : 'WEBVTT';
-  const converted = lines.map(line =>
-    /^\s*\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}/.test(line)
-      ? line.replace(/,(\d{3})/g, '.$1')
-      : line
-  );
-  return [header, '', ...converted].join('\n').trimEnd() + '\n';
+  return normalizeSubtitleText(value, 'vtt');
 }
 
 function makeSummary(text: string) {
