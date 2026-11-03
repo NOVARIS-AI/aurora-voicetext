@@ -314,10 +314,12 @@ async function cacheVoskModel(onProgress?: (message: string) => void): Promise<v
   const existing = await cache.match(key);
   if (existing) {
     const cachedBlob = await existing.blob();
-    if (cachedBlob.size > 5_000_000) {
+    const cachedHeader = new Uint8Array(await cachedBlob.slice(0, 2).arrayBuffer());
+    if (cachedBlob.size > 5_000_000 && cachedHeader[0] === 0x1f && cachedHeader[1] === 0x8b) {
       onProgress?.('Vosk backup model is already saved on this device.');
       return;
     }
+    // A truncated or non-gzip cache entry must not block future preparation attempts.
     await cache.delete(key);
   }
 
@@ -347,7 +349,10 @@ async function cacheVoskModel(onProgress?: (message: string) => void): Promise<v
   } else {
     blob = await response.blob();
   }
-  if (blob.size < 5_000_000) throw new Error('The Vosk model download is incomplete. Please retry preparation.');
+  const archiveHeader = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  if (blob.size < 5_000_000 || archiveHeader[0] !== 0x1f || archiveHeader[1] !== 0x8b) {
+    throw new Error('The Vosk model download is incomplete or is not a valid gzip archive. Please retry preparation.');
+  }
   await cache.put(key, new Response(blob, {
     headers: { 'Content-Type': 'application/gzip', 'Content-Length': String(blob.size) }
   }));
@@ -367,6 +372,11 @@ async function getVoskModel(): Promise<any> {
       try {
         const vosk = await import('vosk-browser');
         return await vosk.createModel(modelUrl);
+      } catch (error) {
+        // Remove a cached archive that cannot be opened so Prepare offline engine can
+        // fetch a clean copy instead of repeatedly reusing a broken model.
+        await cache.delete(new Request(VOSK_MODEL_CACHE_KEY)).catch(() => false);
+        throw error;
       } finally {
         URL.revokeObjectURL(modelUrl);
       }
@@ -430,6 +440,9 @@ async function getWhisper(onProgress: (message: string) => void): Promise<Engine
       const transformers = await import('@huggingface/transformers');
       transformers.env.allowLocalModels = false;
       transformers.env.useBrowserCache = true;
+      // A single WASM thread is slower on some devices but avoids fragile
+      // multi-thread initialization in Android WebView and low-memory phones.
+      transformers.env.backends.onnx.wasm.numThreads = 1;
       const model = await transformers.pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny', {
         device: 'wasm',
         dtype: 'q8',
