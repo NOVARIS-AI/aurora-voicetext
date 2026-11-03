@@ -627,7 +627,10 @@ async function transcribeOpusInSegments(
         detectLanguage: true,
         speakerLabels: true,
       });
-      const request = (url: string) => fetchWithRetry(url, {
+      // Transcription POSTs are not safe to retry blindly: a timed-out
+      // request may still be processing and could create duplicate provider jobs.
+      // Try the primary once, then hand off to the independent Worker once.
+      const request = (url: string) => fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload,
@@ -640,10 +643,6 @@ async function transcribeOpusInSegments(
         response = await request(backupTranscriptionApiUrl);
       }
       let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
-      if (!response.ok && backupTranscriptionApiUrl && ([408, 425, 429].includes(response.status) || response.status >= 500)) {
-        response = await request(backupTranscriptionApiUrl);
-        result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
-      }
       if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.');
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
       return { index: prepared.index, start: prepared.start, text: result.text.trim(), language: result.language_name || result.language || '', segments: result.segments ?? [] };
