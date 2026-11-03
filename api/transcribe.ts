@@ -26,31 +26,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (input.totalChunks !== undefined && (!Number.isInteger(input.totalChunks) || input.totalChunks < 1 || input.totalChunks > 2000)) return res.status(400).json({ error: "Invalid total audio section count." });
 
   try {
-    const primary = await transcribeWithFallback({ audioBase64: input.audioBase64, mimeType, languageHint: input.languageHint });
-    return res.status(200).json({ text: primary.text, language: primary.language, segments: primary.segments, provider: primary.provider, chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
-  } catch (primaryError) {
-    const backupUrl = process.env.BACKUP_BACKEND_URL?.replace(/\/$/, "");
-    const backupToken = process.env.BACKUP_BACKEND_TOKEN;
-    if (backupUrl && backupToken) {
-      try {
-        const backup = await fetch(backupUrl + "/api/transcribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + backupToken },
-          body: JSON.stringify({ audioBase64: input.audioBase64, mimeType, languageHint: input.languageHint, chunkNumber: input.chunkNumber, totalChunks: input.totalChunks }),
-          signal: AbortSignal.timeout(115000),
-        });
-        const result = await backup.json().catch(() => ({})) as { text?: string; language?: string; language_name?: string; segments?: Array<{start?:number;end?:number;text?:string;speaker?:string;speaker_id?:string}>; error?: string; provider?: string };
-        if (backup.ok && typeof result.text === "string" && result.text.trim()) {
-          return res.status(200).json({ text: result.text.trim(), language: result.language_name || result.language, segments: Array.isArray(result.segments) ? result.segments : [], provider: "backup-" + (result.provider || "worker"), chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
-        }
-        console.error("Backup transcription backend failed", backup.status, result.error || "invalid response");
-      } catch (backupError) { console.error("Backup backend unavailable", backupError); }
-    }
-    const message = primaryError instanceof Error ? primaryError.message : "Transcription providers unavailable.";
-    const status = (primaryError as {status?:number}).status || 502;
+    const result = await transcribeWithFallback({ audioBase64: input.audioBase64, mimeType, languageHint: input.languageHint });
+    return res.status(200).json({ text: result.text, language: result.language, segments: result.segments, provider: result.provider, chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Primary transcription providers unavailable.";
+    const status = (error as {status?:number}).status || 503;
+    // The Android/web client sees this 5xx and immediately hands the same
+    // section to the separately hosted Cloudflare Worker. Do not proxy that
+    // long-running request through a 60-second Vercel function.
     return res.status(status >= 400 && status < 500 ? status : 503).json({
-      error: backupUrl && backupToken ? "Primary and backup transcription services are unavailable. " + message.slice(0, 220) : message.slice(0, 420),
-      fallbackAvailable: Boolean(backupUrl && backupToken),
+      error: message.slice(0, 420),
+      fallbackAvailable: true,
+      retryOnBackup: true,
     });
   }
 }
