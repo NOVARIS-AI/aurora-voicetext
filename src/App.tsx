@@ -511,8 +511,8 @@ async function transcribeOpusInSegments(
     onPart(parts);
     onTimedParts(timedSegments);
     onProgress(checkpoint.nextChunk, totalParts);
-    // Encode sequentially because FFmpeg shares one virtual output file.
-    // Then overlap the two network requests to reduce idle provider wait time.
+    // Encode and upload one section at a time because FFmpeg shares one virtual output file.
+    // Sequential requests also cap peak memory and make each completed section resumable.
     const uploadPrepared = async (prepared: { index: number; start: number; bytes: Uint8Array }) => {
       const payload = JSON.stringify({
         audioBase64: toBase64(prepared.bytes),
