@@ -50,7 +50,7 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
         headers: { authorization: env.ASSEMBLYAI_API_KEY, "content-type": "application/json" },
         body: JSON.stringify({
           audio_url: uploaded.upload_url,
-          speech_models: ["universal-3-pro", "universal-2"],
+          speech_models: ["universal-3-5-pro", "universal-2"],
           language_detection: true,
           speaker_labels: true,
         }),
