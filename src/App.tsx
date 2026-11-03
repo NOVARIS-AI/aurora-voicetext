@@ -618,8 +618,17 @@ async function transcribeOpusInSegments(
         if (!backupTranscriptionApiUrl) throw primaryNetworkError;
         response = await request(backupTranscriptionApiUrl);
       }
+      let primaryFailure = '';
+      if (!response.ok && backupTranscriptionApiUrl &&
+          ([408, 425, 429].includes(response.status) || response.status >= 500)) {
+        const primaryPayload = await response.clone().json().catch(() => ({})) as { error?: string };
+        primaryFailure = primaryPayload.error || 'Primary transcription service returned HTTP ' + response.status + '.';
+        // The independent Worker is a separate host and is called only once.
+        // Do not retry a request after a successful response or a permanent 4xx.
+        response = await request(backupTranscriptionApiUrl);
+      }
       let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
-      if (!response.ok) throw new Error(result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.');
+      if (!response.ok) throw new Error((result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.') + (primaryFailure ? ' Primary service: ' + primaryFailure : ''));
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
       return { index: prepared.index, start: prepared.start, text: result.text.trim(), language: result.language_name || result.language || '', segments: result.segments ?? [] };
     };
