@@ -27,6 +27,10 @@ const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
 const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/api/transcribe` : '';
 let pipelinePromise: Promise<Engine> | null = null;
 let voskModelPromise: Promise<any> | null = null;
+const VOSK_MODEL_URL = (import.meta.env.VITE_VOSK_MODEL_URL as string | undefined) ||
+  'https://huggingface.co/zzzlll/vosk-model-small-en-us-0.15/resolve/main/vosk-model-small-en-us-0.15.tar.gz';
+const VOSK_MODEL_CACHE_NAME = 'aurora-voicetext-vosk-model-v1';
+const VOSK_MODEL_CACHE_KEY = 'https://aurora-voicetext.local/offline-models/vosk-model-small-en-us-0.15.tar.gz';
 
 async function requestFeature(path: string, payload: unknown, binary = false): Promise<{ response: Response; data?: any }> {
   const primary = API_BASE_URL ? API_BASE_URL + path : path;
@@ -284,16 +288,74 @@ function makeSummary(text: string) {
 }
 
 
-async function transcribeWithVosk(audio: Float32Array): Promise<string> {
-  const modelUrl = import.meta.env.VITE_VOSK_MODEL_URL as string | undefined;
-  if (!modelUrl) throw new Error('Vosk model URL is not configured.');
+async function cacheVoskModel(onProgress?: (message: string) => void): Promise<void> {
+  if (!('caches' in window)) throw new Error('This device does not support persistent model storage. Vosk cannot be prepared for offline use here.');
+  const cache = await caches.open(VOSK_MODEL_CACHE_NAME);
+  const key = new Request(VOSK_MODEL_CACHE_KEY);
+  const existing = await cache.match(key);
+  if (existing) {
+    const cachedBlob = await existing.blob();
+    if (cachedBlob.size > 5_000_000) {
+      onProgress?.('Vosk backup model is already saved on this device.');
+      return;
+    }
+    await cache.delete(key);
+  }
+
+  onProgress?.('Downloading Vosk small English model · about 41 MB…');
+  const response = await fetch(VOSK_MODEL_URL, { mode: 'cors' });
+  if (!response.ok || response.type === 'opaque') {
+    throw new Error('Could not download the Vosk model. Check your connection and try again.');
+  }
+  const total = Number(response.headers.get('content-length')) || 0;
+  const reader = response.body?.getReader();
+  let blob: Blob;
+  if (reader) {
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        received += value.length;
+        if (total > 0) onProgress?.('Downloading Vosk model · ' + Math.min(100, Math.round(received / total * 100)) + '%');
+      }
+    }
+    blob = new Blob(chunks, { type: 'application/gzip' });
+  } else {
+    blob = await response.blob();
+  }
+  if (blob.size < 5_000_000) throw new Error('The Vosk model download is incomplete. Please retry preparation.');
+  await cache.put(key, new Response(blob, {
+    headers: { 'Content-Type': 'application/gzip', 'Content-Length': String(blob.size) }
+  }));
+  onProgress?.('Vosk backup model saved on this device.');
+}
+
+async function getVoskModel(): Promise<any> {
   if (!voskModelPromise) {
     voskModelPromise = (async () => {
-      const vosk = await import('vosk-browser');
-      return vosk.createModel(modelUrl);
+      if (!('caches' in window)) throw new Error('Persistent model storage is unavailable.');
+      const cache = await caches.open(VOSK_MODEL_CACHE_NAME);
+      const cached = await cache.match(new Request(VOSK_MODEL_CACHE_KEY));
+      if (!cached) throw new Error('Vosk model is not prepared yet. Connect to the internet and tap Prepare offline engine.');
+      const modelBlob = await cached.blob();
+      if (modelBlob.size < 5_000_000) throw new Error('The saved Vosk model is incomplete. Prepare the offline engine again.');
+      const modelUrl = URL.createObjectURL(modelBlob);
+      try {
+        const vosk = await import('vosk-browser');
+        return await vosk.createModel(modelUrl);
+      } finally {
+        URL.revokeObjectURL(modelUrl);
+      }
     })().catch(error => { voskModelPromise = null; throw error; });
   }
-  const model = await voskModelPromise;
+  return voskModelPromise;
+}
+
+async function transcribeWithVosk(audio: Float32Array): Promise<string> {
+  const model = await getVoskModel();
   const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
   if (!AudioContextClass) throw new Error('AudioContext is unavailable.');
   const context = new AudioContextClass({ sampleRate: 16000 });
@@ -305,24 +367,39 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
     buffer.copyToChannel(channelData, 0);
     const transcript = await new Promise<string>((resolve, reject) => {
       let settled = false;
-      const timer = window.setTimeout(() => finish(''), 6000);
-      const finish = (value: string, error?: Error) => {
+      let quietTimer: number | undefined;
+      const results: string[] = [];
+      const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timer);
+        window.clearTimeout(maxTimer);
+        if (quietTimer !== undefined) window.clearTimeout(quietTimer);
+        const value = results.join(' ').replace(/\\s+/g, ' ').trim();
         error ? reject(error) : resolve(value);
       };
-      recognizer.on('result', (message: any) => finish(message.result?.text?.trim() || ''));
-      recognizer.acceptWaveform(buffer);
+      const maxTimer = window.setTimeout(() => finish(), 20000);
+      recognizer.on('result', (message: any) => {
+        const text = String(message?.result?.text || '').trim();
+        if (text) results.push(text);
+        if (quietTimer !== undefined) window.clearTimeout(quietTimer);
+        quietTimer = window.setTimeout(() => finish(), 900);
+      });
+      recognizer.on('error', (message: any) => finish(new Error(message?.error || 'Vosk recognition failed.')));
+      try {
+        recognizer.acceptWaveform(buffer);
+        if (typeof recognizer.retrieveFinalResult === 'function') recognizer.retrieveFinalResult();
+        else window.setTimeout(() => finish(), 6000);
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
     });
-    if (!transcript) throw new Error('Vosk returned no final speech segment.');
+    if (!transcript) throw new Error('Vosk returned no speech. Try a clearer recording or use Whisper Tiny.');
     return transcript;
   } finally {
     recognizer.remove();
-    await context.close();
+    await context.close().catch(() => undefined);
   }
 }
-
 async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, onRetry?: (attempt: number) => void): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= 3; attempt++) {
@@ -711,14 +788,15 @@ function App() {
 
   async function prepareOfflineEngine() {
     if (offlinePrepBusy) return;
-    setOfflinePrepBusy(true); setOfflinePrepStatus('Preparing offline Whisper model and audio decoder…'); setError('');
+    setOfflinePrepBusy(true); setOfflinePrepStatus('Preparing Whisper Tiny, Vosk backup model and audio decoder…'); setError('');
     try {
       await getWhisper(message => setOfflinePrepStatus(message));
+      await cacheVoskModel(message => setOfflinePrepStatus(message));
       const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
       const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
       const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
       URL.revokeObjectURL(coreUrl); URL.revokeObjectURL(wasmUrl);
-      setOfflinePrepStatus('Offline engine prepared on this device. Keep this app data and browser cache; the first preparation needs internet.');
+      setOfflinePrepStatus('Offline engines prepared: Whisper Tiny + Vosk backup + audio decoder. Keep this app data and browser cache; first preparation needs internet.');
     } catch (reason) {
       setOfflinePrepStatus('Offline preparation failed. Connect to a stable network and retry.');
       setError(reason instanceof Error ? reason.message : 'Could not prepare the offline engine.');
@@ -1015,7 +1093,7 @@ function App() {
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Groq Whisper</small></button>
               </div>
               {mode === 'auto' && <p className="mode-explainer"><strong>Recommended · Best available quality</strong><span>Tries Groq Whisper first. If the connection or API fails, AURORA switches to Whisper Tiny, then Vosk on your device. Online processing sends audio to the server.</span></p>}
-              {mode === 'offline' && <><p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk is an optional backup and needs its own model configuration.</span></p><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button>{offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}</>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
+              {mode === 'offline' && <><p className="mode-explainer"><strong>Private device processing</strong><span>Uses Whisper Tiny on this device. Prepare the model and decoder once while online; later offline runs can reuse cached assets. Vosk backup is included; Prepare offline engine downloads its model (about 41 MB) for this device.</span></p><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing offline engine…' : 'Prepare offline engine'}</button>{offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}</>}{mode === 'online' && <p className="mode-explainer"><strong>Hosted transcription</strong><span>Uses Groq Whisper only. Your audio is sent securely to the configured transcription endpoint.</span></p>}
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
