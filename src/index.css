@@ -214,3 +214,29 @@ body{background:radial-gradient(ellipse at 85% -10%,rgba(45,212,230,.09),transpa
 .preview-edit-details[open] summary{margin-bottom:12px;color:#7de0e8}
 .preview-edit-details .preview-timeline{max-height:48vh}
 @media(max-width:650px){.preview-chat-feed{min-height:230px;padding:14px}.chat-message{max-width:95%}.preview-context{padding:13px}.preview-composer{padding:12px}.preview-edit-details{margin:0 10px 10px}}
+
+
+/* AURORA VoiceText visual refinement: solid, readable surfaces */
+:root{color-scheme:dark}
+.main-nav{background:#080e19;backdrop-filter:none}
+.nav-link{background:#121c2b;border-color:#26364c;color:#b3c2d8}
+.nav-link.active{background:#12313d;border-color:#287b89;color:#a4f1f4}
+.card{background:#121d2d;border-color:#2a3a50;box-shadow:0 16px 40px rgba(0,0,0,.22)}
+.feature-grid button{background:#142237;border-color:#2b3d55}
+.upload-box{background:#102333;border-color:#328393}
+.recording-row{background:#172438}
+.recording-row.selected{background:#153340;border-color:#328393}
+.library-card{background:#142237;border-color:#2a3d55}
+.transcript-input,.preview-segment textarea,.subtitle-preview textarea{background:#080f1b;border-color:#33445b}
+.mode-option{background:#172438;border-color:#2c3f57}
+.mode-option.selected{background:#173542;border-color:#3b9ba8}
+.mode-explainer,.info-strip,.status-message{background:#15283a;border-color:#2c5363}
+.summary-box{background:#211e38;border-color:#514777}
+.progress-wrap{background:#111d2d;border-color:#2b3d55}
+.preview-chat-feed{background:#0d1725!important;border:1px solid #2b3d55;border-radius:15px}
+.chat-message.user{background:#173543!important;border-color:#2f7582!important}
+.chat-message.assistant{background:#182438!important;border-color:#33445b!important}
+.preview-composer{background:#111d2d!important;border-color:#34475f!important}
+.preview-composer textarea{background:#080f1b!important}
+.preview-context{background:#14303b!important;border-color:#327b88!important}
+@media(max-width:760px){.main-nav{background:#080e19}.card{background:#121d2d}}
