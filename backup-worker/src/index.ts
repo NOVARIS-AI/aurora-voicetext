@@ -18,6 +18,7 @@ export interface Env {
   OPENSUBTITLES_USER_AGENT?: string;
   BACKUP_API_TOKEN?: string;
   BACKUP_PUBLIC_FALLBACK?: string;
+  TRANSCRIPTION_LIMITER?: { limit: (options: { key: string }) => Promise<{ success: boolean }> };
   GROQ_TRANSCRIPTION_MODEL?: string;
   OPENAI_TRANSCRIPTION_MODEL?: string;
   OPENAI_TTS_MODEL?: string;
@@ -231,8 +232,26 @@ export default {
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
     if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
     const bearer = Boolean(env.BACKUP_API_TOKEN) && request.headers.get("authorization") === "Bearer " + env.BACKUP_API_TOKEN;
-    const publicAllowed = env.BACKUP_PUBLIC_FALLBACK === "true" && originAllowed;
-    if (!bearer && !publicAllowed) return json({ error: "Unauthorized or origin not allowed." }, 401, cors);
+    // APK clients cannot contain the private Worker token. Allow only transcription
+    // through an explicit rate-limited binding; all other routes remain bearer-only.
+    let publicTranscriptionAllowed = false;
+    if (!bearer && url.pathname === "/api/transcribe" && originAllowed && env.TRANSCRIPTION_LIMITER) {
+      const clientIp = request.headers.get("cf-connecting-ip") || "unknown-client";
+      try {
+        const limit = await env.TRANSCRIPTION_LIMITER.limit({ key: clientIp });
+        publicTranscriptionAllowed = limit.success;
+        if (!limit.success) {
+          const limitedHeaders = new Headers(cors);
+          limitedHeaders.set("Retry-After", "60");
+          return json({ error: "Too many transcription sections from this network. Wait one minute, then continue." }, 429, limitedHeaders);
+        }
+      } catch {
+        return json({ error: "The backup transcription rate limiter is temporarily unavailable." }, 503, cors);
+      }
+    }
+    if (!bearer && !publicTranscriptionAllowed) return json({ error: "Unauthorized or origin not allowed." }, 401, cors);
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (url.pathname === "/api/transcribe" && contentLength > 2_000_000) return json({ error: "Audio request is too large." }, 413, cors);
     const body = await request.json().catch(() => null) as (AudioBody & VoiceBody & TranslateBody & SubtitleBody & {fileId?:number}) | null;
     if (!body) return json({ error: "Invalid JSON request." }, 400, cors);
     try {
