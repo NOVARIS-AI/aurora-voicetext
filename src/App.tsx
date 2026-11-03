@@ -1240,7 +1240,7 @@ function App() {
     const output = format === 'srt'
       ? hasFullTiming ? createTimedSubtitles(segments, 'srt') : createEstimatedSubtitles(active.transcript, 'srt')
       : hasFullTiming ? createTimedSubtitles(segments, 'vtt') : createEstimatedSubtitles(active.transcript, 'vtt');
-    const name = safeFileBaseName(active.file.name.replace(/\\.[^.]+$/, ''), 'aurora-subtitles');
+    const name = safeFileBaseName(active.file.name.replace(/\.[^.]+$/, ''), 'aurora-subtitles');
     setSubtitleText(output); setSubtitleFilename(name);
     downloadFile(name + '.' + format, output, format === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8');
     setSubtitleStatus(hasFullTiming ? 'Your speech-aligned subtitles are ready.' : 'Your subtitles are ready with estimated timing. Review them before use.');
@@ -1323,12 +1323,12 @@ function App() {
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
               <section className="export-panel"><div className="export-panel-heading"><div><small>YOUR DOCUMENT</small><strong>Choose an export style</strong></div><FileDown size={20}/></div>
-                <label className="field-label" htmlFor="export-filename">Document name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter document name"/></label>
+                <label className="field-label" htmlFor="export-filename">Document name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter document name"/></label>
                 <div className="export-row">
                   <label className="field-label" htmlFor="export-template">Template<select id="export-template" value={exportTemplate} onChange={event=>setExportTemplate(event.target.value)}><option value="standard">Professional transcript</option><option value="meeting">Meeting notes</option><option value="study">Study notes</option></select></label>
                   <label className="field-label" htmlFor="export-type">File format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><optgroup label="Documents"><option value="docx">Word document (.docx)</option><option value="pdf">PDF document (.pdf)</option><option value="rtf">Rich text (.rtf)</option><option value="html">Web document (.html)</option><option value="md">Markdown (.md)</option><option value="txt">Plain text (.txt)</option></optgroup><optgroup label="Subtitles"><option value="srt">SubRip subtitles (.srt)</option><option value="vtt">Web subtitles (.vtt)</option></optgroup></select></label>
                 </div>
-                <div className="export-actions"><button className="primary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
+                <div className="export-actions"><button className="primary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
               </section>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
