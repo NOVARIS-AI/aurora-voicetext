@@ -18,10 +18,13 @@ type AudioFile = { id: string; file: File; url: string; transcript: string; tran
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
-type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
+type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
-const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
+// Browser builds use same-origin API routes. Capacitor runs on https://localhost, so
+// native builds must use the deployed API origin unless explicitly overridden at build time.
+const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+  (Capacitor.isNativePlatform() ? 'https://aurora-voicetext.vercel.app' : '')).replace(/\/+$/, '');
 const BACKUP_API_PUBLIC_FALLBACK = (import.meta.env.VITE_BACKUP_API_PUBLIC_FALLBACK as string | undefined) === 'true';
 // The Worker is private by default. Only call it directly from the app when public fallback has
 // deliberately been enabled after rate limiting; otherwise Vercel proxies to it server-side.
@@ -158,9 +161,11 @@ async function writeSavedCheckpoint(fileKey: string, checkpoint: TranscriptionCh
   const db = await openCheckpointDb();
   try {
     await new Promise<void>((resolve, reject) => {
-      const request = db.transaction('checkpoints', 'readwrite').objectStore('checkpoints').put({ fileKey, checkpoint, savedAt: Date.now() });
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      const transaction = db.transaction('checkpoints', 'readwrite');
+      transaction.objectStore('checkpoints').put({ fileKey, checkpoint, savedAt: Date.now() });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not commit the transcription checkpoint.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Transcription checkpoint save was interrupted.'));
     });
   } finally { db.close(); }
 }
@@ -168,9 +173,11 @@ async function removeSavedCheckpoint(fileKey: string): Promise<void> {
   const db = await openCheckpointDb();
   try {
     await new Promise<void>((resolve, reject) => {
-      const request = db.transaction('checkpoints', 'readwrite').objectStore('checkpoints').delete(fileKey);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      const transaction = db.transaction('checkpoints', 'readwrite');
+      transaction.objectStore('checkpoints').delete(fileKey);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not clear the completed checkpoint.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Checkpoint cleanup was interrupted.'));
     });
   } finally { db.close(); }
 }
@@ -189,15 +196,20 @@ function getAudioSegmentSeconds(): number {
   return 120;
 }
 
-function isUsableCheckpoint(value: unknown, totalChunks: number): value is TranscriptionCheckpoint {
+function isUsableCheckpoint(
+  value: unknown,
+  totalChunks: number,
+  mode: 'online' | 'offline',
+  segmentSeconds: number,
+  overlapSeconds: number,
+): value is TranscriptionCheckpoint {
   if (!value || typeof value !== 'object') return false;
   const checkpoint = value as Partial<TranscriptionCheckpoint>;
-  return checkpoint.totalChunks === totalChunks &&
+  return checkpoint.mode === mode && checkpoint.segmentSeconds === segmentSeconds &&
+    checkpoint.overlapSeconds === overlapSeconds && checkpoint.totalChunks === totalChunks &&
     Number.isInteger(checkpoint.nextChunk) &&
-    (checkpoint.nextChunk as number) >= 0 &&
-    (checkpoint.nextChunk as number) <= totalChunks &&
-    Array.isArray(checkpoint.parts) &&
-    checkpoint.parts.length === checkpoint.nextChunk &&
+    (checkpoint.nextChunk as number) >= 0 && (checkpoint.nextChunk as number) <= totalChunks &&
+    Array.isArray(checkpoint.parts) && checkpoint.parts.length === checkpoint.nextChunk &&
     checkpoint.parts.every(part => typeof part === 'string') &&
     (checkpoint.segments === undefined || Array.isArray(checkpoint.segments));
 }
@@ -206,12 +218,14 @@ async function makeAudioFileKey(file: File): Promise<string> {
   const identity = [file.name, file.size, file.lastModified, file.type].join('|');
   try {
     if (!globalThis.crypto?.subtle) return identity;
-    const sampleSize = 64 * 1024;
-    const head = new Uint8Array(await file.slice(0, sampleSize).arrayBuffer());
-    const tail = file.size > sampleSize ? new Uint8Array(await file.slice(Math.max(sampleSize, file.size - sampleSize)).arrayBuffer()) : new Uint8Array();
-    const sample = new Uint8Array(head.length + tail.length);
-    sample.set(head);
-    sample.set(tail, head.length);
+    // Sample across the recording, not just its head and tail, to reduce resume-key collisions.
+    const sampleSize = Math.min(64 * 1024, Math.max(1, Math.floor(file.size / 5)));
+    const maxOffset = Math.max(0, file.size - sampleSize);
+    const offsets = [0, 0.25, 0.5, 0.75, 1].map(fraction => Math.floor(maxOffset * fraction));
+    const samples = await Promise.all(offsets.map(offset => file.slice(offset, offset + sampleSize).arrayBuffer()));
+    const sample = new Uint8Array(samples.reduce((total, item) => total + item.byteLength, 0));
+    let sampleOffset = 0;
+    for (const item of samples) { sample.set(new Uint8Array(item), sampleOffset); sampleOffset += item.byteLength; }
     const digest = await globalThis.crypto.subtle.digest('SHA-256', sample);
     const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
     return identity + '|' + fingerprint;
@@ -455,9 +469,8 @@ async function transcribeOpusOfflineInSegments(
   const inputPath = '/audio-input/' + file.name;
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
-  const segmentSeconds = Math.min(60, getAudioSegmentSeconds());
+  const defaultSegmentSeconds = Math.min(60, getAudioSegmentSeconds());
   const overlapSeconds = 2;
-  const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
   const pcmToFloat = (bytes: Uint8Array): Float32Array => {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     let offset = 12, dataStart = -1, dataLength = 0;
@@ -484,14 +497,18 @@ async function transcribeOpusOfflineInSegments(
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
-    const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
-    if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
     const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
-    try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
-    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, total)
+    try { saved = await readSavedCheckpoint(fileKey + '|offline'); } catch { /* Continue without persistent resume. */ }
+    // Reuse the original section size on resume if device capability detection changes.
+    const segmentSeconds = saved?.mode === 'offline' && Number.isFinite(saved.segmentSeconds) && (saved.segmentSeconds as number) >= 15
+      ? saved.segmentSeconds as number : defaultSegmentSeconds;
+    const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
+    const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
+    if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
+    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, total, 'offline', segmentSeconds, overlapSeconds)
       ? { ...saved, fileId: fileKey }
-      : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: total };
+      : { fileId: fileKey, mode: 'offline', segmentSeconds, overlapSeconds, parts: [], nextChunk: 0, totalChunks: total };
     parts.push(...checkpoint.parts);
     onPart(parts.filter(Boolean));
     onProgress(checkpoint.nextChunk, total);
@@ -534,14 +551,14 @@ async function transcribeOpusOfflineInSegments(
       }
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
-      try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session progress. */ }
+      try { await writeSavedCheckpoint(fileKey + '|offline', checkpoint); } catch { /* Keep in-session progress. */ }
       onProgress(index + 1, total);
       onPart(parts.filter(Boolean));
       try { await ffmpeg.deleteFile(outputName); } catch { /* The next write replaces this temporary file. */ }
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.some(Boolean)) throw new Error('No clear speech was detected in this recording.');
-    try { await removeSavedCheckpoint(fileKey); } catch { /* Transcript is already available. */ }
+    try { await removeSavedCheckpoint(fileKey + '|offline'); } catch { /* Transcript is already available. */ }
     return parts.filter(Boolean);
   } finally {
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
@@ -579,17 +596,19 @@ async function transcribeOpusInSegments(
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
-    const segmentSeconds = Math.min(90, getAudioSegmentSeconds()); // Adapt chunk size to device memory and CPU; small chunks keep Android Go working sets modest.
+    const defaultSegmentSeconds = Math.min(90, getAudioSegmentSeconds()); // Keep Android Go working sets modest.
     const overlapSeconds = 2;
+    const fileKey = await makeAudioFileKey(file);
+    let saved: TranscriptionCheckpoint | null = null;
+    try { saved = await readSavedCheckpoint(fileKey + '|online'); } catch { /* Continue without persistent resume. */ }
+    const segmentSeconds = saved?.mode === 'online' && Number.isFinite(saved.segmentSeconds) && (saved.segmentSeconds as number) >= 15
+      ? saved.segmentSeconds as number : defaultSegmentSeconds;
     const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
     const totalParts = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!totalParts || totalParts > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
-    const fileKey = await makeAudioFileKey(file);
-    let saved: TranscriptionCheckpoint | null = null;
-    try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
-    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, totalParts)
+    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, totalParts, 'online', segmentSeconds, overlapSeconds)
       ? { ...saved, fileId: fileKey }
-      : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: totalParts };
+      : { fileId: fileKey, mode: 'online', segmentSeconds, overlapSeconds, parts: [], nextChunk: 0, totalChunks: totalParts };
     const parts: string[] = [...checkpoint.parts];
     const timedSegments: TimedSegment[] = [...(checkpoint.segments ?? [])];
     onPart(parts);
@@ -672,7 +691,7 @@ async function transcribeOpusInSegments(
       checkpoint.parts = parts;
       checkpoint.nextChunk = index + 1;
       try {
-        await writeSavedCheckpoint(fileKey, checkpoint);
+        await writeSavedCheckpoint(fileKey + '|online', checkpoint);
       } catch {
         if (!checkpointStorageWarningShown) {
           checkpointStorageWarningShown = true;
@@ -685,7 +704,7 @@ async function transcribeOpusInSegments(
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.length) throw new Error('The audio decoder found no transcribable speech sections.');
-    try { await removeSavedCheckpoint(fileKey); } catch { /* Completed transcript is already available. */ }
+    try { await removeSavedCheckpoint(fileKey + '|online'); } catch { /* Completed transcript is already available. */ }
     return parts;
   } finally {
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
