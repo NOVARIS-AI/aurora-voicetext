@@ -57,6 +57,9 @@ jobs:
       - name: Generate Android project
         run: npx cap add android
 
+      - name: Generate AURORA VoiceText launcher icons
+        run: python3 scripts/generate-android-icons.py
+
       - name: Install Android foreground transcription service
         run: node scripts/patch-android-background.mjs
 
