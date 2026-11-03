@@ -36,3 +36,31 @@ test('exports actual speech timestamps as SRT and WebVTT', () => {
   assert.match(createTimedSubtitles(segments, 'srt'), /00:00:12,400 --> 00:00:14,100/);
   assert.match(createTimedSubtitles(segments, 'vtt'), /00:00:12\.400 --> 00:00:14\.100/);
 });
+
+test('merges overlapping section text without dropping non-overlapping words', () => {
+  assert.equal(
+    mergeTranscriptParts(['The quick brown fox jumps over', 'jumps over the lazy dog']),
+    'The quick brown fox jumps over the lazy dog',
+  );
+});
+
+test('keeps non-overlapping repeated words from separate sections', () => {
+  assert.equal(
+    mergeTranscriptParts(['yes we can', 'we can do it']),
+    'yes we can do it',
+  );
+});
+
+test('filters invalid and empty timed subtitle segments', () => {
+  const output = createTimedSubtitles([
+    { start: 4, end: 3, text: 'invalid reversed time' },
+    { start: 1, end: 2, text: '   ' },
+    { start: 2.25, end: 3.5, text: 'Valid segment' },
+  ], 'srt');
+  assert.match(output, /^1\\n00:00:02,250 --> 00:00:03,500\\nValid segment\\n$/);
+  assert.doesNotMatch(output, /invalid reversed time/);
+});
+
+test('keeps an empty timed WebVTT file valid', () => {
+  assert.equal(createTimedSubtitles([], 'vtt'), 'WEBVTT\\n');
+});
