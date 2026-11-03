@@ -1,4 +1,5 @@
 export interface Env {
+  ASSEMBLYAI_API_KEY?: string;
   GROQ_API_KEY?: string;
   OPENAI_API_KEY?: string;
   ELEVENLABS_API_KEY?: string;
@@ -33,12 +34,67 @@ const json = (data: unknown, status = 200, headers?: HeadersInit) => new Respons
 const safeRate = (value: unknown) => Number.isFinite(Number(value)) ? Math.min(2, Math.max(0.5, Number(value))) : 1;
 
 async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHint?: string) {
+  const failures: string[] = [];
+  if (env.ASSEMBLYAI_API_KEY) {
+    try {
+      const upload = await fetch("https://api.assemblyai.com/v2/upload", {
+        method: "POST",
+        headers: { authorization: env.ASSEMBLYAI_API_KEY, "content-type": "application/octet-stream" },
+        body: bytes,
+        signal: AbortSignal.timeout(20000),
+      });
+      const uploaded = await upload.json().catch(() => ({})) as { upload_url?: string; error?: string };
+      if (!upload.ok || !uploaded.upload_url) throw new Error(uploaded.error || "AssemblyAI upload failed (HTTP " + upload.status + ").");
+      const submitted = await fetch("https://api.assemblyai.com/v2/transcript", {
+        method: "POST",
+        headers: { authorization: env.ASSEMBLYAI_API_KEY, "content-type": "application/json" },
+        body: JSON.stringify({
+          audio_url: uploaded.upload_url,
+          speech_models: ["universal-3-pro", "universal-2"],
+          language_detection: true,
+          speaker_labels: true,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const job = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
+      if (!submitted.ok || !job.id) throw new Error(job.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
+      const deadline = Date.now() + 22000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(job.id), {
+          headers: { authorization: env.ASSEMBLYAI_API_KEY },
+          signal: AbortSignal.timeout(10000),
+        });
+        const result = await polled.json().catch(() => ({})) as {
+          status?: string; text?: string; language_code?: string; error?: string;
+          utterances?: Array<{ start?: number; end?: number; text?: string; speaker?: string }>;
+        };
+        if (!polled.ok) throw new Error(result.error || "AssemblyAI polling failed (HTTP " + polled.status + ").");
+        if (result.status === "error") throw new Error(result.error || "AssemblyAI could not transcribe this audio.");
+        if (result.status === "completed") {
+          const segments = Array.isArray(result.utterances) ? result.utterances
+            .filter(item => typeof item.start === "number" && typeof item.end === "number" && typeof item.text === "string")
+            .map(item => ({
+              start: item.start! / 1000,
+              end: item.end! / 1000,
+              text: item.text!.trim(),
+              speaker: typeof item.speaker === "string" && item.speaker ? "Speaker " + item.speaker : undefined,
+            })).filter(item => item.text.length > 0) : [];
+          const text = (result.text || segments.map(item => item.text).join(" ")).trim();
+          if (!text) throw new Error("AssemblyAI returned an empty transcript.");
+          return { text, language: result.language_code, segments, provider: "assemblyai" };
+        }
+      }
+      throw new Error("AssemblyAI did not finish this audio section within the Worker request window.");
+    } catch (error) {
+      failures.push("assemblyai: " + (error instanceof Error ? error.message : "request failed"));
+    }
+  }
   const providers = [
     { key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/audio/transcriptions", model: env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3-turbo", name: "groq" },
     { key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/audio/transcriptions", model: env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1", name: "openai" },
   ].filter(p => p.key);
-  if (!providers.length) throw new Error("No backup transcription provider configured.");
-  const failures: string[] = [];
+  if (!providers.length) throw new Error("No backup transcription provider configured. " + failures.join(" | "));
   for (const provider of providers) {
     try {
       const form = new FormData();
@@ -48,12 +104,12 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
       form.append("model", provider.model); form.append("response_format", "verbose_json"); form.append("timestamp_granularities[]", "segment"); form.append("temperature", "0");
       if (languageHint) form.append("prompt", "Transcribe accurately. Preserve the spoken language. " + languageHint.slice(0, 120));
       const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key }, body: form, signal: AbortSignal.timeout(110000) });
-      const payload = await response.json().catch(() => ({})) as { text?: string; segments?: Array<{start?:number;end?:number;text?:string}>; error?: {message?:string}|string };
+      const payload = await response.json().catch(() => ({})) as { text?: string; language?: string; segments?: Array<{start?:number;end?:number;text?:string}>; error?: {message?:string}|string };
       if (!response.ok || !payload.text?.trim()) {
         const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
         throw Object.assign(new Error(message || provider.name + " transcription failed."), { status: response.status });
       }
-      return { text: payload.text.trim(), segments: Array.isArray(payload.segments) ? payload.segments.filter(s => typeof s.start === "number" && typeof s.end === "number" && typeof s.text === "string") : [], provider: provider.name };
+      return { text: payload.text.trim(), language: payload.language, segments: Array.isArray(payload.segments) ? payload.segments.filter(s => typeof s.start === "number" && typeof s.end === "number" && typeof s.text === "string") : [], provider: provider.name };
     } catch (error) {
       const status = (error as {status?:number}).status;
       failures.push(provider.name + ": " + (error instanceof Error ? error.message : "failed"));
@@ -170,7 +226,7 @@ export default {
       cors.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS"); cors.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.GROQ_API_KEY || env.OPENAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
+    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
     const routes = new Set(["/api/transcribe", "/api/tts", "/api/assist", "/api/translate", "/api/subtitles", "/api/subtitles-download"]);
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
     if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
