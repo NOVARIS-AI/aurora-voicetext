@@ -180,6 +180,19 @@ function getAudioSegmentSeconds(): number {
   return 120;
 }
 
+function isUsableCheckpoint(value: unknown, totalChunks: number): value is TranscriptionCheckpoint {
+  if (!value || typeof value !== 'object') return false;
+  const checkpoint = value as Partial<TranscriptionCheckpoint>;
+  return checkpoint.totalChunks === totalChunks &&
+    Number.isInteger(checkpoint.nextChunk) &&
+    (checkpoint.nextChunk as number) >= 0 &&
+    (checkpoint.nextChunk as number) <= totalChunks &&
+    Array.isArray(checkpoint.parts) &&
+    checkpoint.parts.length === checkpoint.nextChunk &&
+    checkpoint.parts.every(part => typeof part === 'string') &&
+    (checkpoint.segments === undefined || Array.isArray(checkpoint.segments));
+}
+
 async function makeAudioFileKey(file: File): Promise<string> {
   const identity = [file.name, file.size, file.lastModified, file.type].join('|');
   try {
@@ -394,7 +407,7 @@ async function transcribeOpusOfflineInSegments(
     const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
-    const checkpoint: TranscriptionCheckpoint = saved && saved.totalChunks === total
+    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, total)
       ? { ...saved, fileId: fileKey }
       : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: total };
     parts.push(...checkpoint.parts);
@@ -482,7 +495,7 @@ async function transcribeOpusInSegments(
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
-    const segmentSeconds = 90; // Online MP3 chunks are 64 kbps, so 90 seconds stays below the upload limit even on low-memory phones.
+    const segmentSeconds = Math.min(90, getAudioSegmentSeconds()); // Adapt chunk size to device memory and CPU; small chunks keep Android Go working sets modest.
     const overlapSeconds = 2;
     const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
     const totalParts = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
@@ -490,7 +503,7 @@ async function transcribeOpusInSegments(
     const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey); } catch { /* Continue without persistent resume. */ }
-    const checkpoint: TranscriptionCheckpoint = saved && saved.totalChunks === totalParts
+    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, totalParts)
       ? { ...saved, fileId: fileKey }
       : { fileId: fileKey, parts: [], nextChunk: 0, totalChunks: totalParts };
     const parts: string[] = [...checkpoint.parts];
@@ -530,47 +543,50 @@ async function transcribeOpusInSegments(
       return { index: prepared.index, start: prepared.start, text: result.text.trim(), segments: result.segments ?? [] };
     };
 
-    for (let index = checkpoint.nextChunk; index < totalParts; index += 2) {
-      const batchIndexes = [index, index + 1].filter(value => value < totalParts);
-      const prepared: Array<{ index: number; start: number; bytes: Uint8Array }> = [];
-      for (const chunkIndex of batchIndexes) {
-        const start = chunkIndex * stepSeconds;
-        const length = Math.min(segmentSeconds, duration - start);
-        const encodeExitCode = await ffmpeg.exec([
-          '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
-          '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-          '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
-        ]);
-        if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (chunkIndex + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
-        const output = await ffmpeg.readFile(outputName);
-        if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
-        if (!output.length) throw new Error('The audio decoder created an empty section.');
-        if (output.length > 1250000) throw new Error('Audio section ' + (chunkIndex + 1) + ' is too large to upload safely. Reduce the section length and retry.');
-        prepared.push({ index: chunkIndex, start, bytes: new Uint8Array(output) });
-        try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
-      }
+    let checkpointStorageWarningShown = false;
+    for (let index = checkpoint.nextChunk; index < totalParts; index++) {
+      const start = index * stepSeconds;
+      const length = Math.min(segmentSeconds, duration - start);
+      const encodeExitCode = await ffmpeg.exec([
+        '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
+        '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+        '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
+      ]);
+      if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (index + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
+      const output = await ffmpeg.readFile(outputName);
+      if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
+      if (!output.length) throw new Error('The audio decoder created an empty section.');
+      if (output.length > 1250000) throw new Error('Audio section ' + (index + 1) + ' is too large to upload safely. Reduce the section length and retry.');
+      const prepared = { index, start, bytes: new Uint8Array(output) };
+      try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
 
-      const batchResults = await Promise.all(prepared.map(uploadPrepared));
-      batchResults.sort((a, b) => a.index - b.index);
-      for (const result of batchResults) {
-        parts.push(result.text);
-        const sectionSegments = result.segments.filter(segment =>
-          typeof segment.start === 'number' && typeof segment.end === 'number' &&
-          typeof segment.text === 'string' && (result.index === 0 || segment.start >= overlapSeconds)
-        ).map(segment => ({
-          start: result.start + (segment.start as number),
-          end: result.start + (segment.end as number),
-          text: (segment.text as string).trim(),
-        })).filter(segment => segment.text.length > 0);
-        timedSegments.push(...sectionSegments);
-        checkpoint.segments = timedSegments;
-        checkpoint.parts = parts;
-        checkpoint.nextChunk = result.index + 1;
-        try { await writeSavedCheckpoint(fileKey, checkpoint); } catch { /* Keep in-session partial transcript. */ }
-        onProgress(result.index + 1, totalParts);
-        onPart(parts);
-        onTimedParts(timedSegments);
+      // Process one section at a time: this limits peak memory on Android Go and
+      // makes every completed section independently resumable after interruption.
+      const result = await uploadPrepared(prepared);
+      parts[index] = result.text;
+      const sectionSegments = result.segments.filter(segment =>
+        typeof segment.start === 'number' && typeof segment.end === 'number' &&
+        typeof segment.text === 'string' && (result.index === 0 || segment.start >= overlapSeconds)
+      ).map(segment => ({
+        start: result.start + (segment.start as number),
+        end: result.start + (segment.end as number),
+        text: (segment.text as string).trim(),
+      })).filter(segment => segment.text.length > 0);
+      timedSegments.push(...sectionSegments);
+      checkpoint.segments = timedSegments;
+      checkpoint.parts = parts;
+      checkpoint.nextChunk = index + 1;
+      try {
+        await writeSavedCheckpoint(fileKey, checkpoint);
+      } catch {
+        if (!checkpointStorageWarningShown) {
+          checkpointStorageWarningShown = true;
+          onStatus('Section ' + (index + 1) + ' is complete. This device could not save a resume checkpoint, so keep the app open until transcription finishes.');
+        }
       }
+      onProgress(index + 1, totalParts);
+      onPart(parts.filter(Boolean));
+      onTimedParts(timedSegments);
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.length) throw new Error('The audio decoder found no transcribable speech sections.');
