@@ -1140,7 +1140,6 @@ function App() {
     const timestamped = includeTimestamps && timestampsCoverTranscript
       ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
       : text;
-    const transcriptDocument = documentTitle + '\n\n' + attribution + '\n\n' + timestamped;
     if (exportType === 'docx') {
       try {
         const paragraphs = includeTimestamps && timestampsCoverTranscript
