@@ -16,7 +16,7 @@ type BackgroundTranscriptionBridge = { start: () => Promise<void>; stop: () => P
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[] };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
-type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number }) => Promise<{ text?: string }>;
+type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
 
@@ -517,6 +517,7 @@ async function transcribeOpusOfflineInSegments(
   file: File,
   onProgress: (completed: number, total: number) => void,
   onPart: (parts: string[]) => void,
+  onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
@@ -524,6 +525,7 @@ async function transcribeOpusOfflineInSegments(
   const inputPath = '/audio-input/' + file.name;
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
+  let timedSegments: TimedSegment[] = [];
   const defaultSegmentSeconds = Math.min(60, getAudioSegmentSeconds());
   const overlapSeconds = 2;
   const pcmToFloat = (bytes: Uint8Array): Float32Array => {
@@ -565,7 +567,9 @@ async function transcribeOpusOfflineInSegments(
       ? { ...saved, fileId: fileKey }
       : { fileId: fileKey, mode: 'offline', segmentSeconds, overlapSeconds, parts: [], nextChunk: 0, totalChunks: total };
     parts.push(...checkpoint.parts);
+    timedSegments = [...(checkpoint.segments ?? [])];
     onPart(parts.filter(Boolean));
+    onTimedParts(timedSegments);
     onProgress(checkpoint.nextChunk, total);
     for (let index = checkpoint.nextChunk; index < total; index++) {
       const start = index * stepSeconds;
@@ -588,9 +592,17 @@ async function transcribeOpusOfflineInSegments(
         try {
           onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
           const whisper = await getWhisper(onStatus);
-          const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5 });
+          const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5, return_timestamps: true });
           transcript = result.text?.trim() || '';
           if (!transcript) throw new Error('Whisper Tiny returned an empty result.');
+          const sectionSegments = (result.chunks ?? []).map(chunk => {
+            const startTime = chunk.timestamp?.[0];
+            const endTime = chunk.timestamp?.[1];
+            if (typeof startTime !== 'number' || typeof endTime !== 'number' || endTime <= startTime || !chunk.text?.trim()) return null;
+            if (index > 0 && startTime < overlapSeconds) return null;
+            return { start: start + startTime, end: start + endTime, text: chunk.text.trim() };
+          }).filter((segment): segment is TimedSegment => segment !== null);
+          timedSegments.push(...sectionSegments);
         } catch (reason) {
           whisperProblem = reason instanceof Error ? reason.message : String(reason);
         }
@@ -605,10 +617,12 @@ async function transcribeOpusOfflineInSegments(
         parts.push(transcript);
       }
       checkpoint.parts = parts;
+      checkpoint.segments = timedSegments;
       checkpoint.nextChunk = index + 1;
       try { await writeSavedCheckpoint(fileKey + '|offline', checkpoint); } catch { /* Keep in-session progress. */ }
       onProgress(index + 1, total);
       onPart(parts.filter(Boolean));
+      onTimedParts(timedSegments);
       try { await ffmpeg.deleteFile(outputName); } catch { /* The next write replaces this temporary file. */ }
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
@@ -905,21 +919,25 @@ function App() {
         { name: 'Primary API', url: transcriptionApiUrl, expected: /audio chunk is missing/i },
         ...(backupTranscriptionApiUrl ? [{ name: 'Cloudflare backup', url: backupTranscriptionApiUrl, expected: /invalid or oversized audio payload/i }] : []),
       ];
-      const failures: string[] = [];
-      for (const endpoint of endpoints) {
+      const checks = await Promise.all(endpoints.map(async endpoint => {
         try {
           const response = await postJson(endpoint.url, {}, 12000);
           const payload = await response.json().catch(() => ({})) as { error?: string };
           if (response.status === 400 && endpoint.expected.test(payload.error || '')) {
-            setConnectionCheckStatus(endpoint.name + ' is reachable from this APK. Online transcription can connect.');
-            return;
+            return endpoint.name + ': reachable and responding correctly to the safe validation test.';
           }
-          failures.push(endpoint.name + ': HTTP ' + response.status + (payload.error ? ' — ' + payload.error : ''));
+          return endpoint.name + ': server reached, but returned HTTP ' + response.status + (payload.error ? ' — ' + payload.error : '') + '.';
         } catch (reason) {
-          failures.push(endpoint.name + ': ' + (reason instanceof Error ? reason.message : String(reason)));
+          return endpoint.name + ': connection failed — ' + (reason instanceof Error ? reason.message : String(reason)) + '.';
         }
-      }
-      setConnectionCheckStatus('No online endpoint passed the connection check. ' + failures.join(' | ') + '.');
+      }));
+      const passed = checks.filter(item => item.includes('reachable and responding correctly')).length;
+      const reachable = checks.filter(item => item.includes('server reached') || item.includes('reachable and responding correctly')).length;
+      setConnectionCheckStatus((passed === endpoints.length
+        ? 'All configured online endpoints passed the connection check. '
+        : reachable > 0
+          ? passed + ' of ' + endpoints.length + ' endpoints passed; ' + reachable + ' server(s) responded. '
+          : 'No online endpoint could be reached. ') + checks.join(' | '));
     } finally { setConnectionCheckBusy(false); }
   }
 
@@ -934,6 +952,9 @@ function App() {
       const partial = mergeTranscriptParts(parts);
       if (partial) setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: partial } : item));
     };
+    const onTimedParts = (segments: TimedSegment[]) => {
+      setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item));
+    };
     const onProgress = (completed: number, total: number, engine: string) => {
       setProgress({ completed, total });
       setStatus(engine + ' · completed ' + completed + ' of ' + total + ' sections…');
@@ -942,6 +963,7 @@ function App() {
       selected.file,
       (completed, total) => onProgress(completed, total, 'On-device transcription'),
       onPart,
+      onTimedParts,
       setStatus,
     );
     try {
@@ -957,7 +979,7 @@ function App() {
             selected.file,
             (completed, total) => onProgress(completed, total, 'Online transcription'),
             onPart,
-            (segments) => setFiles(current => current.map(item => item.id === selected.id ? { ...item, timedSegments: segments } : item)),
+            onTimedParts,
             setStatus,
             language => setFiles(current => current.map(item => item.id === selected.id ? { ...item, detectedLanguage: language } : item)),
           );
