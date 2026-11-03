@@ -794,12 +794,12 @@ function App() {
       md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# AURORA VoiceText\n\n' + timestamped },
       html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>AURORA VoiceText</title><pre style="white-space:pre-wrap;font:16px system-ui">' + timestamped.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre>' },
       rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi ' + timestamped.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
-      srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: timedSegments?.length ? createTimedSubtitles(timedSegments, 'srt') : createEstimatedSubtitles(text, 'srt') },
-      vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timedSegments?.length ? createTimedSubtitles(timedSegments, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
+      srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'srt') : createEstimatedSubtitles(text, 'srt') },
+      vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
     downloadFile(baseName + '.' + selected.ext, selected.text, selected.mime);
-    if (exportType === 'srt' || exportType === 'vtt') setStatus(timedSegments?.length ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'No speech-aligned timestamps were returned; this subtitle file uses estimated timings.');
+    if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'The timing data did not cover all transcript text; exported estimated timings so no words are omitted.');
     else if (includeTimestamps && timedSegments?.length && !timestampsCoverTranscript) setStatus('Exported the complete transcript without timestamps because the timing data did not cover all edited text.');
     else if (includeTimestamps && timestampsCoverTranscript) setStatus('Exported the complete transcript with timestamps.');
     setError('');
