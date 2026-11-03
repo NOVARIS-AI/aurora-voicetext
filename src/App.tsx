@@ -882,7 +882,6 @@ function App() {
   const [voiceEmphasis, setVoiceEmphasis] = useState('Natural emphasis');
   const [voicePauses, setVoicePauses] = useState('Natural pauses');
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const [assistBusy, setAssistBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
   const [voiceProvider, setVoiceProvider] = useState('');
   const [audioPlayhead, setAudioPlayhead] = useState(0);
@@ -894,7 +893,6 @@ function App() {
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
   const [transcriptTargetLanguage, setTranscriptTargetLanguage] = useState('English');
-  const [translationBusy, setTranslationBusy] = useState(false);
   const [previewMessages, setPreviewMessages] = useState<PreviewMessage[]>([]);
   const [previewInput, setPreviewInput] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -1073,16 +1071,6 @@ function App() {
     return translated;
   }
 
-  async function translateActiveTranscript() {
-    if (!active?.transcript.trim() || translationBusy) return;
-    setTranslationBusy(true); setError('');
-    try {
-      const translated = await translateText(active.transcript, transcriptTargetLanguage);
-      setFiles(current => current.map(item => item.id === active.id ? { ...item, translatedTranscript: translated } : item));
-      setStatus('Translation ready. Your original transcript is unchanged.');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Translation failed. Please try again.'); }
-    finally { setTranslationBusy(false); }
-  }
 
   async function sendPreviewMessage() {
     const prompt = previewInput.trim();
@@ -1202,23 +1190,6 @@ function App() {
     catch { setError('Copy is unavailable in this browser. Select the text and copy it manually.'); }
   }
 
-  async function polishTranscript() {
-    if (!active?.transcript.trim()) { setError('Select a transcript with text first.'); return; }
-    setAssistBusy(true); setError(''); setStatus('AI is polishing the transcript while preserving its meaning…');
-    try {
-      const chunks = splitLongText(active.transcript, 18000);
-      const output: string[] = [];
-      for (let i = 0; i < chunks.length; i++) {
-        setStatus('Polishing section ' + (i + 1) + ' of ' + chunks.length + '…');
-        const { data } = await requestFeature('/api/assist', { text: chunks[i] });
-        if (!data?.text) throw new Error('The AI returned an empty transcript section.');
-        output.push(data.text);
-      }
-      updateTranscript(output.join('\n\n'));
-      setStatus('Transcript polished. Review the wording before saving or exporting.');
-    } catch (error) { setError(error instanceof Error ? error.message : 'AI transcript polishing failed.'); setStatus(''); }
-    finally { setAssistBusy(false); }
-  }
 
   async function generateVoice() {
     if (!studioText.trim()) { setError('Enter text before generating AI speech.'); return; }
