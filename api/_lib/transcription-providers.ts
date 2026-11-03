@@ -23,7 +23,7 @@ async function requestTranscription(endpoint: string, key: string, model: string
   form.append("timestamp_granularities[]", "segment");
   form.append("temperature", "0");
   if (input.languageHint) form.append("prompt", "Transcribe accurately. Preserve the words and language actually spoken. Do not translate, summarize, or invent unclear words. Language context: " + input.languageHint.slice(0, 120));
-  const response = await fetch(endpoint, { method: "POST", headers: { Authorization: "Bearer " + key }, body: form, signal: AbortSignal.timeout(110000) });
+  const response = await fetch(endpoint, { method: "POST", headers: { Authorization: "Bearer " + key }, body: form, signal: AbortSignal.timeout(12000) });
   const payload = await response.json().catch(() => ({})) as { text?: string; language?: string; segments?: Array<{ start?: number; end?: number; text?: string }>; error?: { message?: string } | string };
   if (!response.ok) {
     const detail = typeof payload.error === "string" ? payload.error : payload.error?.message;
@@ -39,9 +39,9 @@ async function requestTranscription(endpoint: string, key: string, model: string
 }
 
 /**
- * AssemblyAI provides actual language detection and speaker diarization.
- * The API key is server-only. Labels are scoped to each uploaded audio chunk:
- * speaker identities are not guaranteed to remain the same across separate chunks.
+ * The synchronous Vercel route has a 60-second ceiling. Keep its AssemblyAI
+ * attempt deliberately short; the separately hosted Worker owns the longer
+ * asynchronous-style wait and provider retries for difficult/long sections.
  */
 async function requestAssemblyAi(input: AudioInput, key: string): Promise<TranscriptionResult> {
   const bytes = Buffer.from(input.audioBase64, "base64");
@@ -49,7 +49,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
     method: "POST",
     headers: { authorization: key, "content-type": "application/octet-stream" },
     body: bytes,
-    signal: AbortSignal.timeout(110000),
+    signal: AbortSignal.timeout(8000),
   });
   const uploadPayload = await upload.json().catch(() => ({})) as { upload_url?: string; error?: string };
   if (!upload.ok || !uploadPayload.upload_url) throw new Error(uploadPayload.error || "AssemblyAI audio upload failed (HTTP " + upload.status + ").");
@@ -63,17 +63,17 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
       language_detection: true,
       speaker_labels: true,
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(8000),
   });
   const submittedPayload = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
   if (!submitted.ok || !submittedPayload.id) throw new Error(submittedPayload.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
 
-  const deadline = Date.now() + 105000;
+  const deadline = Date.now() + 22000;
   while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    await new Promise(resolve => setTimeout(resolve, 1500));
     const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(submittedPayload.id), {
       headers: { authorization: key },
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(5000),
     });
     const result = await polled.json().catch(() => ({})) as {
       status?: string; text?: string; language_code?: string; error?: string;
@@ -95,7 +95,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
       return { text, segments, language: result.language_code, provider: "assemblyai" };
     }
   }
-  throw new Error("AssemblyAI transcription timed out while waiting for the audio section.");
+  throw new Error("AssemblyAI is still processing this section; handing off to the longer-running backup service.");
 }
 
 export async function transcribeWithFallback(input: AudioInput): Promise<TranscriptionResult> {
@@ -120,5 +120,5 @@ export async function transcribeWithFallback(input: AudioInput): Promise<Transcr
       if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) break;
     }
   }
-  throw Object.assign(new Error("All configured transcription providers failed. " + failures.join(" | ").slice(0, 500)), { status: 502, code: "ALL_PROVIDERS_FAILED" });
+  throw Object.assign(new Error("Primary transcription window ended or all primary providers failed. " + failures.join(" | ").slice(0, 500)), { status: 503, code: "PRIMARY_WINDOW_EXHAUSTED" });
 }
