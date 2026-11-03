@@ -866,8 +866,6 @@ function App() {
   const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
-  const [connectionCheckBusy, setConnectionCheckBusy] = useState(false);
-  const [connectionCheckStatus, setConnectionCheckStatus] = useState('');
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
@@ -955,8 +953,8 @@ function App() {
 
     // Verify Vosk before loading Whisper so two large speech models are not resident together.
     try {
-      await cacheVoskModel(message => setOfflinePrepStatus(message));
-      setOfflinePrepStatus('Loading Vosk model and checking its 16 kHz recognizer…');
+      await cacheVoskModel(() => setOfflinePrepStatus('Preparing offline transcription…'));
+      setOfflinePrepStatus('Preparing offline transcription…');
       await verifyVoskEngine();
       setOfflinePrepStatus('Vosk model and recognizer passed initialization.');
     } catch (reason) {
@@ -966,7 +964,7 @@ function App() {
     // Load the actual FFmpeg WASM core, not merely download its two files.
     try {
       const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-      setOfflinePrepStatus('Loading offline FFmpeg audio decoder…');
+      setOfflinePrepStatus('Preparing offline transcription…');
       const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
       const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
       const ffmpeg = new FFmpeg();
@@ -984,9 +982,9 @@ function App() {
 
     // Whisper is loaded last to avoid holding its memory alongside the Vosk verification worker.
     try {
-      setOfflinePrepStatus('Loading Whisper Tiny speech model…');
-      await getWhisper(message => setOfflinePrepStatus(message));
-      setOfflinePrepStatus('Whisper Tiny model loaded successfully.');
+      setOfflinePrepStatus('Preparing offline transcription…');
+      await getWhisper(() => setOfflinePrepStatus('Preparing offline transcription…'));
+      setOfflinePrepStatus('Preparing offline transcription…');
     } catch (reason) {
       failures.push('Whisper Tiny: ' + describe(reason));
     }
@@ -1001,37 +999,6 @@ function App() {
     setOfflinePrepBusy(false);
   }
 
-  async function checkOnlineConnection() {
-    if (connectionCheckBusy) return;
-    setConnectionCheckBusy(true);
-    setConnectionCheckStatus('Checking the primary API and independent backup…');
-    try {
-      // Empty JSON reaches validation only; no audio is uploaded and no provider credits are used.
-      const endpoints = [
-        { name: 'Primary API', url: transcriptionApiUrl, expected: /audio chunk is missing/i },
-        ...(backupTranscriptionApiUrl ? [{ name: 'Cloudflare backup', url: backupTranscriptionApiUrl, expected: /invalid or oversized audio payload/i }] : []),
-      ];
-      const checks = await Promise.all(endpoints.map(async endpoint => {
-        try {
-          const response = await postJson(endpoint.url, {}, 12000);
-          const payload = await response.json().catch(() => ({})) as { error?: string };
-          if (response.status === 400 && endpoint.expected.test(payload.error || '')) {
-            return endpoint.name + ': reachable and responding correctly to the safe validation test.';
-          }
-          return endpoint.name + ': server reached, but returned HTTP ' + response.status + (payload.error ? ' — ' + payload.error : '') + '.';
-        } catch (reason) {
-          return endpoint.name + ': connection failed — ' + (reason instanceof Error ? reason.message : String(reason)) + '.';
-        }
-      }));
-      const passed = checks.filter(item => item.includes('reachable and responding correctly')).length;
-      const reachable = checks.filter(item => item.includes('server reached') || item.includes('reachable and responding correctly')).length;
-      setConnectionCheckStatus((passed === endpoints.length
-        ? 'All configured online endpoints passed the connection check. '
-        : reachable > 0
-          ? passed + ' of ' + endpoints.length + ' endpoints passed; ' + reachable + ' server(s) responded. '
-          : 'No online endpoint could be reached. ') + checks.join(' | '));
-    } finally { setConnectionCheckBusy(false); }
-  }
 
   async function transcribe() {
     if (!active || busy) return;
@@ -1053,10 +1020,10 @@ function App() {
     };
     const runOffline = () => transcribeOpusOfflineInSegments(
       selected.file,
-      (completed, total) => onProgress(completed, total, 'On-device transcription'),
+      (completed, total) => onProgress(completed, total, 'Transcription'),
       onPart,
       onTimedParts,
-      setStatus,
+      () => setStatus('Preparing offline transcription…'),
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
@@ -1088,9 +1055,7 @@ function App() {
       const completedText = mergeTranscriptParts(parts);
       if (!completedText) throw new Error('No clear speech was detected. Try a recording with clearer speech and less background noise.');
       setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: completedText, translatedTranscript: '' } : item));
-      setStatus(mode === 'offline'
-        ? 'Offline transcription complete. Whisper automatically detects supported speech languages; review the original transcript.'
-        : 'Transcription complete. Review the original-language transcript before translating.');
+      setStatus('Transcription complete. Your transcript is ready to review.');
       setError('');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Transcription failed.';
@@ -1383,9 +1348,8 @@ function App() {
                 <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Keep audio on this device</small></button>
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Use online processing</small></button>
               </div>
-              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing…' : 'Set up offline use'}</button><button className="secondary full-button" type="button" disabled={connectionCheckBusy || busy} onClick={checkOnlineConnection}>{connectionCheckBusy ? <LoaderCircle className="spin" size={16}/> : <ShieldCheck size={16}/>} {connectionCheckBusy ? 'Checking…' : 'Check connection'}</button></div>
+              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Preparing…' : 'Set up offline use'}</button></div>
               {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
-              {connectionCheckStatus && <div className="status-message" role="status">{connectionCheckStatus}</div>}
 
               <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
               {status && <div className="status-message" role="status">{status}</div>}
