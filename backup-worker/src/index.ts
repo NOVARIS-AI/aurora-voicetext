@@ -3,6 +3,15 @@ export interface Env {
   OPENAI_API_KEY?: string;
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_DEFAULT_VOICE_ID?: string;
+  ELEVENLABS_VOICE_NOVA_ID?: string;
+  ELEVENLABS_VOICE_SHIMMER_ID?: string;
+  ELEVENLABS_VOICE_CORAL_ID?: string;
+  ELEVENLABS_VOICE_SAGE_ID?: string;
+  ELEVENLABS_VOICE_ONYX_ID?: string;
+  ELEVENLABS_VOICE_ECHO_ID?: string;
+  ELEVENLABS_VOICE_ASH_ID?: string;
+  ELEVENLABS_VOICE_FABLE_ID?: string;
+  ELEVENLABS_VOICE_ALLOY_ID?: string;
   OPENSUBTITLES_API_KEY?: string;
   OPENSUBTITLES_TOKEN?: string;
   OPENSUBTITLES_USER_AGENT?: string;
@@ -71,7 +80,9 @@ async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuf
   if (env.ELEVENLABS_API_KEY) {
     try {
       const builtInVoiceNames = new Set(["nova","shimmer","coral","sage","onyx","echo","ash","fable","alloy"]);
-      const voice = input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) && !builtInVoiceNames.has(input.voice.toLowerCase()) ? input.voice : (env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL");
+      const voiceKey = ("ELEVENLABS_VOICE_" + (input.voice || "").toUpperCase() + "_ID") as keyof Env;
+      const configuredVoiceId = env[voiceKey];
+      const voice = (typeof configuredVoiceId === "string" && configuredVoiceId) || (input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) && !builtInVoiceNames.has(input.voice.toLowerCase()) ? input.voice : (env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL"));
       const response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(voice), {
         method: "POST", headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
         body: JSON.stringify({ text, model_id: env.ELEVENLABS_TTS_MODEL || "eleven_multilingual_v2", voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.25, use_speaker_boost: true, speed: safeRate(input.rate) } }),
