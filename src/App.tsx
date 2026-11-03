@@ -1134,13 +1134,13 @@ function App() {
     const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
     const documentTitle = safeFileBaseName(baseName, 'Transcript');
     const attribution = 'Transcribed by AURORA VoiceText';
-    const transcriptDocument = documentTitle + '\n\n' + attribution + '\n\n' + timestamped;
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
     const timestamped = includeTimestamps && timestampsCoverTranscript
       ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
       : text;
+    const transcriptDocument = documentTitle + '\n\n' + attribution + '\n\n' + timestamped;
     if (exportType === 'docx') {
       try {
         const paragraphs = includeTimestamps && timestampsCoverTranscript
