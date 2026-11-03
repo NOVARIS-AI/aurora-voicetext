@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
+type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
@@ -896,6 +897,9 @@ function App() {
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
   const [transcriptTargetLanguage, setTranscriptTargetLanguage] = useState('English');
   const [translationBusy, setTranslationBusy] = useState(false);
+  const [previewMessages, setPreviewMessages] = useState<PreviewMessage[]>([]);
+  const [previewInput, setPreviewInput] = useState('');
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [subtitleStatus, setSubtitleStatus] = useState('');
   const [subtitleText, setSubtitleText] = useState('');
   const [subtitleFilename, setSubtitleFilename] = useState('subtitle');
@@ -1102,23 +1106,57 @@ function App() {
       setBusy(false);
     }
   }
+  async function translateText(text: string, targetLanguage: string): Promise<string> {
+    const { data } = await requestFeature('/api/translate', { text, targetLanguage, sourceLanguage: active?.detectedLanguage || 'auto' });
+    const translated = String(data?.text || '').trim();
+    if (!translated) throw new Error('Translation could not be completed. Please try again.');
+    return translated;
+  }
+
   async function translateActiveTranscript() {
     if (!active?.transcript.trim() || translationBusy) return;
-    setTranslationBusy(true);
-    setError('');
+    setTranslationBusy(true); setError('');
     try {
-      const { data } = await requestFeature('/api/translate', {
-        text: active.transcript,
-        targetLanguage: transcriptTargetLanguage,
-        sourceLanguage: active.detectedLanguage || 'auto',
-      });
-      const translated = String(data?.text || '').trim();
-      if (!translated) throw new Error('The translation service returned an empty result.');
+      const translated = await translateText(active.transcript, transcriptTargetLanguage);
       setFiles(current => current.map(item => item.id === active.id ? { ...item, translatedTranscript: translated } : item));
-      setStatus('Translation ready · original transcript has been preserved.');
+      setStatus('Translation ready. Your original transcript is unchanged.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Translation failed. Please try again.'); }
+    finally { setTranslationBusy(false); }
+  }
+
+  async function sendPreviewMessage() {
+    const prompt = previewInput.trim();
+    if (!prompt || previewBusy) return;
+    if (!active?.transcript.trim()) { setError('Choose a transcript in Transcribe before using AI Preview.'); return; }
+    const userMessage: PreviewMessage = { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'user', text: prompt };
+    setPreviewMessages(current => [...current, userMessage]); setPreviewInput(''); setPreviewBusy(true); setError('');
+    try {
+      const lower = prompt.toLowerCase();
+      let result = '';
+      const translateMatch = lower.match(/(?:translate|translation)\s+(?:this\s+)?(?:transcript\s+)?(?:to|into)\s+([a-z][a-z -]{1,30})/i) || lower.match(/(?:to|into)\s+([a-z][a-z -]{1,30})\s+please\s*$/i);
+      if (translateMatch) {
+        const target = translateMatch[1].trim().replace(/[.!?]+$/, '');
+        result = await translateText(active.transcript, target);
+        setFiles(current => current.map(item => item.id === active.id ? { ...item, translatedTranscript: result } : item));
+        setTranscriptTargetLanguage(target);
+        result = `Here is the transcript translated into ${target}:\n\n${result}`;
+      } else if (/\b(summar|key points|main points|brief)\b/.test(lower)) {
+        result = makeSummary(active.transcript) || 'There is not enough transcript text to summarize.';
+      } else if (/\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\b/.test(lower)) {
+        const chunks = splitLongText(active.transcript, 18000); const output: string[] = [];
+        for (const chunk of chunks) {
+          const { data } = await requestFeature('/api/assist', { text: chunk });
+          if (!data?.text) throw new Error('AI could not prepare the edited transcript.');
+          output.push(String(data.text));
+        }
+        result = output.join('\n\n'); updateTranscript(result);
+      } else {
+        result = 'I can work with this transcript by translating it, polishing the wording, or creating a summary. Try a request such as “Translate this transcript to Yoruba”, “Polish the transcript”, or “Summarize the main points”.';
+      }
+      setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+1), role: 'assistant', text: result }]);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Translation failed. Check the translation service and try again.');
-    } finally { setTranslationBusy(false); }
+      setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+2), role: 'assistant', text: reason instanceof Error ? reason.message : 'That request could not be completed. Please try again.' }]);
+    } finally { setPreviewBusy(false); }
   }
 
   function updateTranscript(text: string) {
@@ -1146,6 +1184,9 @@ function App() {
   async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
     const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
+    const documentTitle = safeFileBaseName(baseName, 'Transcript');
+    const attribution = 'Transcribed by AURORA VoiceText';
+    const transcriptDocument = documentTitle + '\\n\\n' + attribution + '\\n\\n' + (includeTimestamps && timestampsCoverTranscript ? timestamped : text);
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
@@ -1157,7 +1198,11 @@ function App() {
         const paragraphs = includeTimestamps && timestampsCoverTranscript
           ? timedSegments!.map(segment => new Paragraph({ children: [new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91' }), new TextRun(segment.text)], spacing: { after: 120 } }))
           : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
-        const doc = new Document({ sections: [{ properties: {}, children: [new Paragraph({ children: [new TextRun({ text: 'AURORA VoiceText Transcript', bold: true, size: 30 })], spacing: { after: 300 } }), ...paragraphs] }] });
+        const doc = new Document({ sections: [{ properties: {}, children: [
+          new Paragraph({ children: [new TextRun({ text: documentTitle, bold: true, size: 32, color: '167D91' })], spacing: { after: 100 } }),
+          new Paragraph({ children: [new TextRun({ text: attribution, italics: true, color: '64748B', size: 20 })], spacing: { after: 360 } }),
+          ...paragraphs
+        ] }] });
         const blob = await Packer.toBlob(doc);
         downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
@@ -1170,16 +1215,18 @@ function App() {
     if (exportType === 'pdf') {
       const popup = window.open('', '_blank');
       if (!popup) { setError('Allow pop-ups to print or save as PDF.'); return; }
-      popup.document.write('<!doctype html><html><head><title>AURORA VoiceText</title><style>body{font:16px Arial;line-height:1.7;max-width:760px;margin:40px auto;white-space:pre-wrap;padding:0 20px} @media print{body{margin:18mm auto}}</style></head><body></body></html>');
-      popup.document.body.textContent = timestamped;
+      popup.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>\"]/g, '') + '</title><style>body{font:16px Arial;line-height:1.75;max-width:760px;margin:40px auto;padding:0 20px;color:#172033}h1{font-size:28px;margin:0 0 8px}.byline{color:#64748b;font-size:12px;margin:0 0 30px}.transcript{white-space:pre-wrap} @media print{body{margin:18mm auto}}</style></head><body><h1></h1><p class="byline"></p><div class="transcript"></div></body></html>');
+      popup.document.querySelector('h1')!.textContent = documentTitle;
+      popup.document.querySelector('.byline')!.textContent = attribution;
+      popup.document.querySelector('.transcript')!.textContent = timestamped;
       popup.document.close(); popup.focus(); popup.print();
       return;
     }
     const extensions: Record<string, { ext: string; mime: string; text: string }> = {
-      txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', text: timestamped },
-      md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# AURORA VoiceText\n\n' + timestamped },
-      html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>AURORA VoiceText</title><pre style="white-space:pre-wrap;font:16px system-ui">' + timestamped.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre>' },
-      rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi ' + timestamped.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
+      txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', text: documentTitle + '\\n\\n' + attribution + '\\n\\n' + timestamped },
+      md: { ext: 'md', mime: 'text/markdown;charset=utf-8', text: '# ' + documentTitle + '\\n\\n*' + attribution + '*\\n\\n' + timestamped },
+      html: { ext: 'html', mime: 'text/html;charset=utf-8', text: '<!doctype html><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>"]/g, '') + '</title><main style="max-width:760px;margin:40px auto;padding:0 20px;font:16px/1.75 system-ui;color:#172033"><h1>' + documentTitle.replace(/[&<>\"]/g, '') + '</h1><p style="color:#64748b;font-size:13px">' + attribution + '</p><hr><pre style="white-space:pre-wrap;font:inherit">' + timestamped.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char) ) + '</pre></main>' },
+      rtf: { ext: 'rtf', mime: 'application/rtf', text: '{\\rtf1\\ansi\\b ' + documentTitle.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}') + '\\b0\\par\\i ' + attribution + '\\i0\\par\\par ' + timestamped.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, '\\par ') + '}' },
       srt: { ext: 'srt', mime: 'application/x-subrip;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'srt') : createEstimatedSubtitles(text, 'srt') },
       vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
@@ -1299,7 +1346,7 @@ function App() {
 
       <nav className="main-nav" aria-label="Main navigation">
         {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Studio',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
-          <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
+          <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
 
@@ -1352,12 +1399,10 @@ function App() {
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
               <label className="field-label" htmlFor="transcript">Original transcript <small>{active.detectedLanguage ? 'Detected: ' + active.detectedLanguage : 'Language detection: automatic'}</small></label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Speech will appear here in its original language. Review names and wording, then edit anything AURORA missed."/>
-              <div className="translation-toolbar"><label className="field-label">Translate original into<select value={transcriptTargetLanguage} onChange={event => setTranscriptTargetLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option><option>German</option><option>Chinese</option><option>Hindi</option><option>Swahili</option></select></label><button className="secondary" type="button" disabled={translationBusy || !active.transcript.trim()} onClick={translateActiveTranscript}>{translationBusy ? <LoaderCircle className="spin" size={16}/> : <Languages size={16}/>} {translationBusy ? 'Translating…' : 'Translate transcript'}</button></div>
-              <label className="field-label" htmlFor="translated-transcript">Translated transcript</label>
-              <textarea id="translated-transcript" className="transcript-input" value={active.translatedTranscript || ''} readOnly placeholder="The translation will appear here. Your original transcript stays unchanged."/>
+              
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
-              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => setPage('preview')}><AudioWaveform size={15}/> Open AI Preview & timestamps</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
+              <div className="editor-tools"><button className="secondary small-button" type="button" onClick={() => { setPreviewInput('@' + active.file.name + ' '); setPage('preview'); }}><AudioWaveform size={15}/> Open AI Preview & timestamps</button><label className="timestamp-toggle"><input type="checkbox" checked={includeTimestamps} onChange={event => setIncludeTimestamps(event.target.checked)}/> Include timestamps where available</label></div><div className="export-row"><label className="field-label" htmlFor="export-filename">File name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter transcript filename"/></label><label className="field-label" htmlFor="export-type">Export format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option><option value="html">HTML (.html)</option><option value="rtf">Rich text (.rtf)</option><option value="docx">Word document (.docx)</option><option value="srt">Subtitles (.srt · speech timing when available)</option><option value="vtt">Web subtitles (.vtt · speech timing when available)</option><option value="pdf">Print / Save as PDF</option></select></label><button className="secondary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy</button></div>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
@@ -1370,13 +1415,25 @@ function App() {
       </section>}
 
       {page === 'preview' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">AI PREVIEW WORKSPACE</div><h1>Transcript preview</h1><p>Edit your transcript and its speech-aligned timestamps in one place. Changes stay attached to the selected recording.</p></div>
-        {active ? <section className="card preview-card">
-          <div className="card-title"><div><small>TRANSCRIPT WORKSPACE</small><h2>{active.file.name}</h2></div><span className="count">{active.timedSegments?.length || 0} timed lines</span></div>
-          <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
-          {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead >= segment.start && audioPlayhead < segment.end ? "timestamp-chip active" : "timestamp-chip"} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker ? segment.speaker + ': ' : '') + segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <><p className="privacy-hint">This recording has no speech-aligned segments. Edit the full transcript below; subtitle exports will use estimated timings.</p><textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/></>}
-          <div className="studio-actions"><button className="primary" type="button" disabled={assistBusy} onClick={polishTranscript}>{assistBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} AI polish transcript</button><button className="primary" type="button" onClick={saveToLibrary}><Save size={16}/> Save changes</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={16}/> Export transcript</button></div>
-        </section> : <div className="empty-state"><AudioWaveform/><strong>Select a recording first</strong><span>Open Transcribe and choose a recording to edit its transcript.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
+        <div className="page-heading"><div className="eyebrow">AI PREVIEW</div><h1>Work with your transcript.</h1><p>Ask for a translation, a cleaner draft, or a quick summary.</p></div>
+        {active ? <section className="card preview-chat-card">
+          <div className="preview-context"><span className="context-dot"/><span>@{active.file.name}</span><button type="button" onClick={()=>setPage('transcribe')}>Change transcript</button></div>
+          <div className="preview-chat-feed" aria-live="polite">
+            {!previewMessages.length && <div className="chat-welcome"><Sparkles size={22}/><strong>What would you like to do with this transcript?</strong><p>Try “Translate this transcript to Yoruba”, “Polish the wording”, or “Summarize the main points”.</p></div>}
+            {previewMessages.map(message=><article key={message.id} className={'chat-message '+message.role}><span>{message.role === 'user' ? 'You' : 'AURORA'}</span><p>{message.text}</p></article>)}
+            {previewBusy && <div className="chat-typing"><LoaderCircle className="spin" size={15}/> Working on your transcript…</div>}
+          </div>
+          <form className="preview-composer" onSubmit={event=>{event.preventDefault();void sendPreviewMessage();}}>
+            <textarea value={previewInput} onChange={event=>setPreviewInput(event.target.value)} placeholder={'@' + active.file.name + ' — tell AURORA what to do…'} rows={3} aria-label="Ask AURORA about this transcript"/>
+            <div><small>Transcript attached</small><button className="primary" type="submit" disabled={previewBusy || !previewInput.trim()}><Sparkles size={16}/> Send</button></div>
+          </form>
+          {active.translatedTranscript && <section className="chat-result"><div className="card-title"><div><small>TRANSLATION</small><h2>{transcriptTargetLanguage}</h2></div><button className="secondary small-button" type="button" onClick={()=>copyText(active.translatedTranscript || '')}><Copy size={14}/> Copy</button></div><textarea className="transcript-input" value={active.translatedTranscript} readOnly aria-label="Translated transcript"/></section>}
+          <div className="studio-actions"><button className="secondary" type="button" onClick={()=>{setPreviewMessages([]);setPreviewInput('@'+active.file.name+' ');}}><Plus size={15}/> New chat</button><button className="secondary" type="button" onClick={saveToLibrary}><Save size={15}/> Save transcript</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={15}/> Export</button></div>
+          <details className="preview-edit-details"><summary>Edit transcript and timestamps</summary>
+            <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>
+            {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'timestamp-chip active':'timestamp-chip'} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker?segment.speaker+': ':'')+segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/>}
+          </details>
+        </section> : <div className="empty-state"><AudioWaveform/><strong>Select a transcript first</strong><span>Choose or transcribe an audio file to start a chat.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
       </section>}
 
       {page === 'studio' && <section className="page-content">
