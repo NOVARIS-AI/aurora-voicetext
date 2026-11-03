@@ -6,10 +6,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Cache-Control", "no-store");
   const fileId = Number((req.body || {}).fileId);
   if (!Number.isInteger(fileId) || fileId < 1) return res.status(400).json({ error: "A valid subtitle file ID is required." });
-  if (!process.env.OPENSUBTITLES_API_KEY || !process.env.OPENSUBTITLES_TOKEN) {
-    return res.status(503).json({ error: "Subtitle download requires OPENSUBTITLES_API_KEY and OPENSUBTITLES_TOKEN." });
-  }
   try {
+    if (!process.env.OPENSUBTITLES_API_KEY || !process.env.OPENSUBTITLES_TOKEN) {
+      throw new Error("Primary subtitle download credentials are not configured; trying the backup provider.");
+    }
     const response = await fetch("https://api.opensubtitles.com/api/v1/download", {
       method: "POST",
       headers: { "Api-Key": process.env.OPENSUBTITLES_API_KEY, "User-Agent": process.env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0", Authorization: "Bearer " + process.env.OPENSUBTITLES_TOKEN, "Content-Type": "application/json" },
