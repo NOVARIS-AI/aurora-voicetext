@@ -97,8 +97,8 @@ jobs:
       - name: Publish direct APK release asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: aurora-voicetext-android-\${{ github.run_number }}
-          name: AURORA VoiceText Android build \${{ github.run_number }}
+          tag_name: aurora-voicetext-android-${{ github.run_number }}
+          name: AURORA VoiceText Android build ${{ github.run_number }}
           body: |
             Automatically generated debug APK from the main branch.
             Install AURORA-VoiceText.apk directly on a compatible Android device.
