@@ -24,6 +24,15 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       ELEVENLABS_DEFAULT_VOICE_ID: ${{ secrets.ELEVENLABS_DEFAULT_VOICE_ID }}
+      ELEVENLABS_VOICE_NOVA_ID: ${{ secrets.ELEVENLABS_VOICE_NOVA_ID }}
+      ELEVENLABS_VOICE_SHIMMER_ID: ${{ secrets.ELEVENLABS_VOICE_SHIMMER_ID }}
+      ELEVENLABS_VOICE_CORAL_ID: ${{ secrets.ELEVENLABS_VOICE_CORAL_ID }}
+      ELEVENLABS_VOICE_SAGE_ID: ${{ secrets.ELEVENLABS_VOICE_SAGE_ID }}
+      ELEVENLABS_VOICE_ONYX_ID: ${{ secrets.ELEVENLABS_VOICE_ONYX_ID }}
+      ELEVENLABS_VOICE_ECHO_ID: ${{ secrets.ELEVENLABS_VOICE_ECHO_ID }}
+      ELEVENLABS_VOICE_ASH_ID: ${{ secrets.ELEVENLABS_VOICE_ASH_ID }}
+      ELEVENLABS_VOICE_FABLE_ID: ${{ secrets.ELEVENLABS_VOICE_FABLE_ID }}
+      ELEVENLABS_VOICE_ALLOY_ID: ${{ secrets.ELEVENLABS_VOICE_ALLOY_ID }}
       OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
       OPENSUBTITLES_TOKEN: ${{ secrets.OPENSUBTITLES_TOKEN }}
       OPENSUBTITLES_USER_AGENT: ${{ secrets.OPENSUBTITLES_USER_AGENT }}
@@ -49,6 +58,11 @@ jobs:
           if [ -n "$OPENAI_API_KEY" ]; then printf '%s' "$OPENAI_API_KEY" | wrangler secret put OPENAI_API_KEY; fi
           if [ -n "$ELEVENLABS_API_KEY" ]; then printf '%s' "$ELEVENLABS_API_KEY" | wrangler secret put ELEVENLABS_API_KEY; fi
           if [ -n "$ELEVENLABS_DEFAULT_VOICE_ID" ]; then printf '%s' "$ELEVENLABS_DEFAULT_VOICE_ID" | wrangler secret put ELEVENLABS_DEFAULT_VOICE_ID; fi
+          for voice in NOVA SHIMMER CORAL SAGE ONYX ECHO ASH FABLE ALLOY; do
+            variable="ELEVENLABS_VOICE_${voice}_ID"
+            value="$(printenv "$variable" || true)"
+            if [ -n "$value" ]; then printf '%s' "$value" | wrangler secret put "$variable"; fi
+          done
           if [ -n "$OPENSUBTITLES_API_KEY" ]; then printf '%s' "$OPENSUBTITLES_API_KEY" | wrangler secret put OPENSUBTITLES_API_KEY; fi
           if [ -n "$OPENSUBTITLES_TOKEN" ]; then printf '%s' "$OPENSUBTITLES_TOKEN" | wrangler secret put OPENSUBTITLES_TOKEN; fi
           if [ -n "$OPENSUBTITLES_USER_AGENT" ]; then printf '%s' "$OPENSUBTITLES_USER_AGENT" | wrangler secret put OPENSUBTITLES_USER_AGENT; fi
