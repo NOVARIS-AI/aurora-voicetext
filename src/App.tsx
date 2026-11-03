@@ -463,6 +463,19 @@ async function getVoskModel(): Promise<any> {
   return voskModelPromise;
 }
 
+async function verifyVoskEngine(): Promise<void> {
+  const model = await getVoskModel();
+  let recognizer: { remove: () => void } | null = null;
+  try {
+    // Validate the WASM recognizer constructor with the required numeric sample rate.
+    recognizer = new model.KaldiRecognizer(16000);
+  } finally {
+    try { recognizer?.remove(); } catch { /* Model termination below also releases recognizers. */ }
+    try { model.terminate(); } catch { /* Release the temporary verification worker. */ }
+    voskModelPromise = null;
+  }
+}
+
 async function transcribeWithVosk(audio: Float32Array): Promise<string> {
   const model = await getVoskModel();
   const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -919,36 +932,53 @@ function App() {
 
   async function prepareOfflineEngine() {
     if (offlinePrepBusy) return;
-    setOfflinePrepBusy(true); setOfflinePrepStatus('Preparing Whisper Tiny, Vosk backup model and audio decoder…'); setError('');
+    setOfflinePrepBusy(true); setOfflinePrepStatus('Checking offline engines one by one…'); setError('');
     const failures: string[] = [];
     const describe = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
-    try {
-      setOfflinePrepStatus('Preparing Whisper Tiny speech model…');
-      await getWhisper(message => setOfflinePrepStatus(message));
-      setOfflinePrepStatus('Whisper Tiny is ready.');
-    } catch (reason) {
-      failures.push('Whisper Tiny: ' + describe(reason));
-      // Keep preparing the independent decoder and Vosk backup even if Whisper fails.
-    }
+
+    // Verify Vosk before loading Whisper so two large speech models are not resident together.
     try {
       await cacheVoskModel(message => setOfflinePrepStatus(message));
+      setOfflinePrepStatus('Loading Vosk model and checking its 16 kHz recognizer…');
+      await verifyVoskEngine();
+      setOfflinePrepStatus('Vosk model and recognizer passed initialization.');
     } catch (reason) {
       failures.push('Vosk backup: ' + describe(reason));
     }
+
+    // Load the actual FFmpeg WASM core, not merely download its two files.
     try {
       const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-      setOfflinePrepStatus('Preparing offline audio decoder…');
+      setOfflinePrepStatus('Loading offline FFmpeg audio decoder…');
       const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
       const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
-      URL.revokeObjectURL(coreUrl); URL.revokeObjectURL(wasmUrl);
+      const ffmpeg = new FFmpeg();
+      try {
+        await ffmpeg.load({ coreURL: coreUrl, wasmURL: wasmUrl });
+        setOfflinePrepStatus('FFmpeg WASM decoder passed initialization.');
+      } finally {
+        ffmpeg.terminate();
+        URL.revokeObjectURL(coreUrl);
+        URL.revokeObjectURL(wasmUrl);
+      }
     } catch (reason) {
       failures.push('Audio decoder: ' + describe(reason));
     }
+
+    // Whisper is loaded last to avoid holding its memory alongside the Vosk verification worker.
+    try {
+      setOfflinePrepStatus('Loading Whisper Tiny speech model…');
+      await getWhisper(message => setOfflinePrepStatus(message));
+      setOfflinePrepStatus('Whisper Tiny model loaded successfully.');
+    } catch (reason) {
+      failures.push('Whisper Tiny: ' + describe(reason));
+    }
+
     if (failures.length) {
-      setOfflinePrepStatus('Offline preparation is partial. See the exact component errors below and retry when connected.');
+      setOfflinePrepStatus('Offline preparation is partial. The failed engine(s) are listed below; other engines were checked independently.');
       setError(failures.join(' | '));
     } else {
-      setOfflinePrepStatus('Offline engines prepared: Whisper Tiny + Vosk backup + audio decoder. Keep this app data and browser cache; first preparation needs internet.');
+      setOfflinePrepStatus('Offline engine checks passed: Whisper Tiny loaded, Vosk model + recognizer initialized, and FFmpeg WASM loaded. First preparation needs internet; cached assets are reused later.');
       setError('');
     }
     setOfflinePrepBusy(false);
