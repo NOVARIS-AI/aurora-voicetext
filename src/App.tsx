@@ -71,15 +71,60 @@ async function postJson(url: string, payload: unknown, readTimeout = 120000): Pr
   });
 }
 
+async function postBinary(url: string, payload: unknown, readTimeout = 120000): Promise<Response> {
+  if (!Capacitor.isNativePlatform()) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: readTimeout < 120000 ? AbortSignal.timeout(readTimeout) : undefined,
+    });
+  }
+  const nativeResponse = await CapacitorHttp.request({
+    url,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'audio/mpeg, application/octet-stream, application/json' },
+    data: payload,
+    responseType: 'arraybuffer',
+    connectTimeout: 20000,
+    readTimeout,
+  });
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(nativeResponse.headers || {})) {
+    if (typeof value === 'string') headers.set(key, value);
+  }
+  let body: BodyInit | null = null;
+  const raw = nativeResponse.data;
+  if (nativeResponse.status >= 200 && nativeResponse.status < 300) {
+    if (typeof raw === 'string') {
+      // Capacitor's Android arraybuffer response is transported to JavaScript as base64.
+      const encoded = raw.replace(/\\s/g, '');
+      const decoded = atob(encoded);
+      const bytes = new Uint8Array(decoded.length);
+      for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+      body = bytes.buffer;
+    } else if (raw instanceof ArrayBuffer) {
+      body = raw;
+    } else if (ArrayBuffer.isView(raw)) {
+      body = raw as Uint8Array;
+    } else if (raw != null) {
+      body = JSON.stringify(raw);
+      if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    }
+  } else if (raw != null) {
+    body = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  }
+  return new Response(body, { status: nativeResponse.status, headers });
+}
+
 async function requestFeature(path: string, payload: unknown, binary = false): Promise<{ response: Response; data?: any }> {
   const primary = API_BASE_URL ? API_BASE_URL + path : path;
   const urls = [primary, ...(BACKUP_API_BASE_URL ? [BACKUP_API_BASE_URL + path] : [])];
   let lastError: unknown;
   for (const url of urls) {
     try {
-      const response = binary
-        ? await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        : await postJson(url, payload);
+      const response = binary ? await postBinary(url, payload) : await postJson(url, payload);
       if (response.ok) return { response, data: binary ? undefined : await response.json() };
       const body = binary ? null : await response.json().catch(() => null);
       lastError = new Error(body?.error || 'The service is temporarily unavailable.');
