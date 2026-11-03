@@ -389,10 +389,17 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
   const model = await getVoskModel();
   const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
   if (!AudioContextClass) throw new Error('AudioContext is unavailable.');
+  // vosk-browser's KaldiRecognizer constructor requires a numeric sample rate.
+  // Omitting it causes the exact "Cannot convert undefined to float" WASM error.
   const context = new AudioContextClass({ sampleRate: 16000 });
-  const recognizer = new model.KaldiRecognizer();
+  const sampleRate = Number(context.sampleRate);
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    await context.close().catch(() => undefined);
+    throw new Error('The device did not provide a valid audio sample rate for Vosk.');
+  }
+  const recognizer = new model.KaldiRecognizer(sampleRate);
   try {
-    const buffer = context.createBuffer(1, audio.length, 16000);
+    const buffer = context.createBuffer(1, audio.length, sampleRate);
     const channelData = new Float32Array(audio.length);
     channelData.set(audio);
     buffer.copyToChannel(channelData, 0);
@@ -825,18 +832,38 @@ function App() {
   async function prepareOfflineEngine() {
     if (offlinePrepBusy) return;
     setOfflinePrepBusy(true); setOfflinePrepStatus('Preparing Whisper Tiny, Vosk backup model and audio decoder…'); setError('');
+    const failures: string[] = [];
+    const describe = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
     try {
+      setOfflinePrepStatus('Preparing Whisper Tiny speech model…');
       await getWhisper(message => setOfflinePrepStatus(message));
+      setOfflinePrepStatus('Whisper Tiny is ready.');
+    } catch (reason) {
+      failures.push('Whisper Tiny: ' + describe(reason));
+      // Keep preparing the independent decoder and Vosk backup even if Whisper fails.
+    }
+    try {
       await cacheVoskModel(message => setOfflinePrepStatus(message));
+    } catch (reason) {
+      failures.push('Vosk backup: ' + describe(reason));
+    }
+    try {
       const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+      setOfflinePrepStatus('Preparing offline audio decoder…');
       const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
       const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
       URL.revokeObjectURL(coreUrl); URL.revokeObjectURL(wasmUrl);
-      setOfflinePrepStatus('Offline engines prepared: Whisper Tiny + Vosk backup + audio decoder. Keep this app data and browser cache; first preparation needs internet.');
     } catch (reason) {
-      setOfflinePrepStatus('Offline preparation failed. Connect to a stable network and retry.');
-      setError(reason instanceof Error ? reason.message : 'Could not prepare the offline engine.');
-    } finally { setOfflinePrepBusy(false); }
+      failures.push('Audio decoder: ' + describe(reason));
+    }
+    if (failures.length) {
+      setOfflinePrepStatus('Offline preparation is partial. See the exact component errors below and retry when connected.');
+      setError(failures.join(' | '));
+    } else {
+      setOfflinePrepStatus('Offline engines prepared: Whisper Tiny + Vosk backup + audio decoder. Keep this app data and browser cache; first preparation needs internet.');
+      setError('');
+    }
+    setOfflinePrepBusy(false);
   }
 
   async function checkOnlineConnection() {
