@@ -597,7 +597,7 @@ async function transcribeOpusOfflineInSegments(
           if (!transcript) throw new Error('Whisper Tiny returned an empty result.');
           const sectionSegments = (result.chunks ?? []).map(chunk => {
             const startTime = chunk.timestamp?.[0];
-            const endTime = chunk.timestamp?.[1];
+            const endTime = chunk.timestamp?.[1] ?? (index === total - 1 ? audio.length / 16000 : null);
             if (typeof startTime !== 'number' || typeof endTime !== 'number' || endTime <= startTime || !chunk.text?.trim()) return null;
             if (index > 0 && startTime < overlapSeconds) return null;
             return { start: start + startTime, end: start + endTime, text: chunk.text.trim() };
