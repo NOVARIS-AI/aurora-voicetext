@@ -58,7 +58,7 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
       });
       const job = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
       if (!submitted.ok || !job.id) throw new Error(job.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
-      const deadline = Date.now() + 22000;
+      const deadline = Date.now() + 90000;
       while (Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(job.id), {
@@ -85,7 +85,7 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
           return { text, language: result.language_code, segments, provider: "assemblyai" };
         }
       }
-      throw new Error("AssemblyAI did not finish this audio section within the Worker request window.");
+      throw new Error("AssemblyAI is still processing this section; the Worker will now hand off to the configured speech-provider fallbacks.");
     } catch (error) {
       failures.push("assemblyai: " + (error instanceof Error ? error.message : "request failed"));
     }
