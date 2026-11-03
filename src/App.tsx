@@ -28,7 +28,7 @@ const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/
 let pipelinePromise: Promise<Engine> | null = null;
 let voskModelPromise: Promise<any> | null = null;
 const VOSK_MODEL_URL = (import.meta.env.VITE_VOSK_MODEL_URL as string | undefined) ||
-  'https://huggingface.co/zzzlll/vosk-model-small-en-us-0.15/resolve/main/vosk-model-small-en-us-0.15.tar.gz';
+  'https://fiddle-app.github.io/voice-models/vosk-model-small-en-us-0.15.tar.gz';
 const VOSK_MODEL_CACHE_NAME = 'aurora-voicetext-vosk-model-v1';
 const VOSK_MODEL_CACHE_KEY = 'https://aurora-voicetext.local/offline-models/vosk-model-small-en-us-0.15.tar.gz';
 
@@ -374,7 +374,7 @@ async function transcribeWithVosk(audio: Float32Array): Promise<string> {
         settled = true;
         window.clearTimeout(maxTimer);
         if (quietTimer !== undefined) window.clearTimeout(quietTimer);
-        const value = results.join(' ').replace(/\\s+/g, ' ').trim();
+        const value = results.join(' ').replace(/\s+/g, ' ').trim();
         error ? reject(error) : resolve(value);
       };
       const maxTimer = window.setTimeout(() => finish(), 20000);
