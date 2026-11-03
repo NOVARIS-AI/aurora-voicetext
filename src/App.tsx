@@ -22,7 +22,12 @@ type TranscriptionCheckpoint = { fileId: string; parts: string[]; nextChunk: num
 
 const STORAGE_KEY = 'aurora-voicetext-library-v2';
 const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
-const BACKUP_API_BASE_URL = ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '');
+const BACKUP_API_PUBLIC_FALLBACK = (import.meta.env.VITE_BACKUP_API_PUBLIC_FALLBACK as string | undefined) === 'true';
+// The Worker is private by default. Only call it directly from the app when public fallback has
+// deliberately been enabled after rate limiting; otherwise Vercel proxies to it server-side.
+const BACKUP_API_BASE_URL = BACKUP_API_PUBLIC_FALLBACK
+  ? ((import.meta.env.VITE_BACKUP_API_BASE_URL as string | undefined) || '').replace(/\/+$/, '')
+  : '';
 const transcriptionApiUrl = `${API_BASE_URL}/api/transcribe`;
 const backupTranscriptionApiUrl = BACKUP_API_BASE_URL ? `${BACKUP_API_BASE_URL}/api/transcribe` : '';
 let pipelinePromise: Promise<Engine> | null = null;
