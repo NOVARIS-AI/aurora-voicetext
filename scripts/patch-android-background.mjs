@@ -251,8 +251,8 @@ await writeFile(manifestPath, manifest);
 const activityPath = join(javaDir, 'MainActivity.java');
 let activity = await readFile(activityPath, 'utf8');
 if (!activity.includes('BackgroundTranscriptionPlugin')) {
-  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\\nimport android.os.Bundle;\\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;\\nimport com.novaris.auroravoicetext.NativeAudioFilesPlugin;');
-  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\\n    @Override\\n    public void onCreate(Bundle savedInstanceState) {\\n        registerPlugin(BackgroundTranscriptionPlugin.class);\\n        registerPlugin(NativeAudioFilesPlugin.class);\\n        super.onCreate(savedInstanceState);\\n    }');
+  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;\nimport com.novaris.auroravoicetext.NativeAudioFilesPlugin;');
+  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        registerPlugin(NativeAudioFilesPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
 }
 await writeFile(activityPath, activity);
 console.log('Patched Android foreground transcription service.');
