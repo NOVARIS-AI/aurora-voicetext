@@ -558,6 +558,8 @@ async function transcribeOpusOfflineInSegments(
   let timedSegments: TimedSegment[] = [];
   const defaultSegmentSeconds = Math.min(60, getAudioSegmentSeconds());
   const overlapSeconds = 2;
+  let offlineCoreUrl = '';
+  let offlineWasmUrl = '';
   const pcmToFloat = (bytes: Uint8Array): Float32Array => {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     let offset = 12, dataStart = -1, dataLength = 0;
@@ -575,10 +577,11 @@ async function transcribeOpusOfflineInSegments(
   };
   try {
     onStatus('Loading on-device audio decoder…');
-    await ffmpeg.load({
-      coreURL: await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript'),
-      wasmURL: await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
-    });
+    offlineCoreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
+    offlineWasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
+    await ffmpeg.load({ coreURL: offlineCoreUrl, wasmURL: offlineWasmUrl });
+    URL.revokeObjectURL(offlineCoreUrl); offlineCoreUrl = '';
+    URL.revokeObjectURL(offlineWasmUrl); offlineWasmUrl = '';
     // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
     await ffmpeg.createDir('/audio-input');
     const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
@@ -669,6 +672,8 @@ async function transcribeOpusOfflineInSegments(
     try { await removeSavedCheckpoint(fileKey + '|offline'); } catch { /* Transcript is already available. */ }
     return parts.filter(Boolean);
   } finally {
+    if (offlineCoreUrl) URL.revokeObjectURL(offlineCoreUrl);
+    if (offlineWasmUrl) URL.revokeObjectURL(offlineWasmUrl);
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
     try { await ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
@@ -687,6 +692,8 @@ async function transcribeOpusInSegments(
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   const inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-online-current.mp3';
+  let onlineCoreUrl = '';
+  let onlineWasmUrl = '';
   const toBase64 = (bytes: Uint8Array) => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -695,10 +702,11 @@ async function transcribeOpusInSegments(
     return btoa(binary);
   };
   try {
-    await ffmpeg.load({
-      coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
-      wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
-    });
+    onlineCoreUrl = await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript');
+    onlineWasmUrl = await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
+    await ffmpeg.load({ coreURL: onlineCoreUrl, wasmURL: onlineWasmUrl });
+    URL.revokeObjectURL(onlineCoreUrl); onlineCoreUrl = '';
+    URL.revokeObjectURL(onlineWasmUrl); onlineWasmUrl = '';
     // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
     await ffmpeg.createDir('/audio-input');
     const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
@@ -812,6 +820,8 @@ async function transcribeOpusInSegments(
     try { await removeSavedCheckpoint(fileKey + '|online'); } catch { /* Completed transcript is already available. */ }
     return parts;
   } finally {
+    if (onlineCoreUrl) URL.revokeObjectURL(onlineCoreUrl);
+    if (onlineWasmUrl) URL.revokeObjectURL(onlineWasmUrl);
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
     try { await ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
