@@ -8,6 +8,8 @@ await mkdir(javaDir, { recursive: true });
 const plugin = `package com.novaris.auroravoicetext;
 
 import android.content.Intent;
+import android.app.Notification;
+import android.app.NotificationManager;
 import android.os.Build;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -56,6 +58,9 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
+import android.media.MediaMetadataRetriever;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -100,7 +105,7 @@ public class NativeAudioFilesPlugin extends Plugin {
             return;
         }
         JSArray files = new JSArray();
-        File directory = new File(getContext().getCacheDir(), "aurora-audio-imports");
+        File directory = new File(getContext().getFilesDir(), "aurora-audio-imports");
         if (!directory.exists() && !directory.mkdirs()) {
             call.reject("Could not prepare private audio storage.");
             return;
@@ -124,6 +129,9 @@ public class NativeAudioFilesPlugin extends Plugin {
                 item.put("name", name);
                 item.put("size", destination.length());
                 item.put("mimeType", getContext().getContentResolver().getType(uri));
+                item.put("durationMs", readDurationMs(destination));
+                JSObject audioInfo = readAudioInfo(destination);
+                item.put("audioInfo", audioInfo);
                 files.put(item);
                 index++;
             }
@@ -133,6 +141,41 @@ public class NativeAudioFilesPlugin extends Plugin {
         } catch (Exception error) {
             call.reject("Could not import the selected audio: " + error.getMessage(), error);
         }
+    }
+
+    private long readDurationMs(File file) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(file.getAbsolutePath());
+            String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+            return value == null ? 0L : Long.parseLong(value);
+        } catch (Exception ignored) {
+            return 0L;
+        } finally {
+            try { retriever.release(); } catch (Exception ignored) { }
+        }
+    }
+
+    private JSObject readAudioInfo(File file) {
+        JSObject info = new JSObject();
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(file.getAbsolutePath());
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.containsKey(MediaFormat.KEY_MIME) ? format.getString(MediaFormat.KEY_MIME) : null;
+                if (mime == null || !mime.startsWith("audio/")) continue;
+                info.put("codec", mime);
+                if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) info.put("sampleRate", format.getInteger(MediaFormat.KEY_SAMPLE_RATE));
+                if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) info.put("channels", format.getInteger(MediaFormat.KEY_CHANNEL_COUNT));
+                break;
+            }
+        } catch (Exception ignored) {
+            info.put("codec", "unknown");
+        } finally {
+            extractor.release();
+        }
+        return info;
     }
 
     private String queryName(Uri uri) {
