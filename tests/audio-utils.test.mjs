@@ -107,3 +107,18 @@ test('cancels only at a safe section boundary with a resumable message', async (
     error => error.name === 'AbortError' && /completed sections are saved/i.test(error.message),
   );
 });
+
+
+test('creates stable native resume keys across Android re-import paths', async () => {
+  const { createNativeAudioResumeKey } = await import('../src/audio-utils.js');
+  const first = createNativeAudioResumeKey({ name: 'meeting.opus', size: 123456, mimeType: 'audio/ogg', contentHash: 'a'.repeat(64) });
+  const second = createNativeAudioResumeKey({ name: 'meeting.opus', size: 123456, mimeType: 'audio/ogg', contentHash: 'a'.repeat(64) });
+  assert.equal(first, second);
+  assert.notEqual(first, createNativeAudioResumeKey({ name: 'meeting.opus', size: 123456, mimeType: 'audio/ogg', contentHash: 'b'.repeat(64) }));
+});
+
+test('rejects incomplete native audio identities rather than creating unsafe resume keys', async () => {
+  const { createNativeAudioResumeKey } = await import('../src/audio-utils.js');
+  assert.throws(() => createNativeAudioResumeKey({ name: 'meeting.opus', size: 0, contentHash: 'a'.repeat(64) }), /identity is incomplete/i);
+  assert.throws(() => createNativeAudioResumeKey({ name: 'meeting.opus', size: 123, contentHash: 'not-a-hash' }), /identity is incomplete/i);
+});
