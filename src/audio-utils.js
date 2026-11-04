@@ -99,7 +99,7 @@ export function normalizeSubtitleText(value, format = 'srt') {
 /** Return a stable FFmpeg virtual-filesystem name for arbitrary user filenames. */
 export function safeAudioInputName(value) {
   const original = String(value || 'audio').split(/[\\/]/).pop() || 'audio';
-  const extension = (original.match(/\\.([a-z0-9]{1,8})$/i)?.[1] || 'audio').toLowerCase();
+  const extension = (original.match(/\.([a-z0-9]{1,8})$/i)?.[1] || 'audio').toLowerCase();
   const safeExtension = /^[a-z0-9]{1,8}$/.test(extension) ? extension : 'audio';
   return 'source-audio.' + safeExtension;
 }
