@@ -1367,6 +1367,30 @@ function App() {
       return;
     }
     if (exportType === 'pdf') {
+      if (Capacitor.isNativePlatform()) {
+        const { jsPDF } = await import('jspdf');
+        const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+        const margin = 16;
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        let y = 20;
+        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10); pdf.setTextColor(22, 125, 145);
+        pdf.text(templateLabel, margin, y); y += 10;
+        pdf.setFontSize(19); pdf.setTextColor(23, 32, 51);
+        const titleLines = pdf.splitTextToSize(documentTitle, pageWidth - margin * 2);
+        pdf.text(titleLines, margin, y); y += titleLines.length * 8 + 3;
+        if (templateSubtitle) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(11); pdf.setTextColor(71, 85, 105); pdf.text(templateSubtitle, margin, y); y += 8; }
+        pdf.setFontSize(9); pdf.setTextColor(100, 116, 139); pdf.text(attribution, margin, y); y += 10;
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(25, 35, 50);
+        const bodyLines = pdf.splitTextToSize(timestamped, pageWidth - margin * 2);
+        for (const line of bodyLines) {
+          if (y > pageHeight - margin) { pdf.addPage(); y = margin; }
+          pdf.text(line, margin, y); y += 5.2;
+        }
+        await downloadFile(fileBase + '.pdf', pdf.output('blob'), 'application/pdf');
+        setStatus('PDF created. Choose where to save or share it.');
+        return;
+      }
       const popup = window.open('', '_blank');
       if (!popup) { setError('Allow pop-ups to print or save as PDF.'); return; }
       popup.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>\"]/g, '') + '</title><style>body{font:16px/1.8 Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 24px;color:#172033}.kicker{font-size:10px;letter-spacing:2px;color:#167d91;font-weight:bold;margin:0 0 12px}h1{font-size:30px;line-height:1.2;margin:0 0 8px}.subtitle{font-size:15px;color:#475569;margin:0 0 8px}.byline{color:#64748b;font-size:11px;margin:0 0 26px;padding-bottom:18px;border-bottom:1px solid #dbe3eb}.transcript{white-space:pre-wrap}@media print{body{margin:18mm auto;padding:0}}</style></head><body><p class="kicker"></p><h1></h1><p class="subtitle"></p><p class="byline"></p><div class="transcript"></div></body></html>');
@@ -1652,7 +1676,7 @@ function App() {
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
           {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div className="subtitle-result-main"><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''}</p><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button></div></article>)}</div>}
-          {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW</small><h2>{subtitleFilename}</h2></div><span className="count">Editable</span></div><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/><div className="studio-actions"><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8')} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8')} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+          {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW</small><h2>{subtitleFilename}</h2></div><span className="count">Editable</span></div><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/><div className="studio-actions"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
         </section>
       </section>}
 
