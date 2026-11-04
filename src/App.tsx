@@ -7,7 +7,7 @@ import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, n
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
-  AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles,
+  AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check,
   ShieldCheck, WandSparkles, LoaderCircle, FileText,
   Settings2, Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform,
 } from 'lucide-react';
@@ -978,6 +978,28 @@ function audioRms(audio: Float32Array): number {
   return Math.sqrt(sum / audio.length);
 }
 
+type AppSelectOption = { value: string; label: string; group?: string };
+function AppSelect({ value, onChange, options, ariaLabel }: { value: string; onChange: (value: string) => void; options: AppSelectOption[]; ariaLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(option => option.value === value);
+  return <div className="app-select">
+    <button type="button" className="app-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} onClick={() => setOpen(current => !current)}>
+      <span>{selected?.label ?? 'Choose an option'}</span><ChevronDown size={16} aria-hidden="true"/>
+    </button>
+    {open && <>
+      <button type="button" className="app-select-dismiss" aria-label="Close options" onClick={() => setOpen(false)}/>
+      <div className="app-select-menu" role="listbox" aria-label={ariaLabel}>
+        {options.map((option, index) => <div key={option.value}>
+          {option.group && (index === 0 || options[index - 1]?.group !== option.group) && <div className="app-select-group">{option.group}</div>}
+          <button type="button" role="option" aria-selected={option.value === value} className={'app-select-option' + (option.value === value ? ' active' : '')} onClick={() => { onChange(option.value); setOpen(false); }}>
+            <span>{option.label}</span>{option.value === value && <Check size={15}/>}
+          </button>
+        </div>)}
+      </div>
+    </>}
+  </div>;
+}
+
 function App() {
   const [page, setPage] = useState<Page>('home');
   const [files, setFiles] = useState<AudioFile[]>([]);
@@ -1593,8 +1615,8 @@ function App() {
               <section className="export-panel"><div className="export-panel-heading"><div><small>YOUR DOCUMENT</small><strong>Choose an export style</strong></div><FileDown size={20}/></div>
                 <label className="field-label" htmlFor="export-filename">Document name<input id="export-filename" value={exportFilename || (active.file.name.replace(/\.[^.]+$/, '') || 'transcript')} onChange={event => setExportFilename(event.target.value)} placeholder="Enter document name"/></label>
                 <div className="export-row">
-                  <label className="field-label" htmlFor="export-template">Template<select id="export-template" value={exportTemplate} onChange={event=>setExportTemplate(event.target.value)}><option value="standard">Professional transcript</option><option value="meeting">Meeting notes</option><option value="study">Study notes</option></select></label>
-                  <label className="field-label" htmlFor="export-type">File format<select id="export-type" value={exportType} onChange={event => setExportType(event.target.value)}><optgroup label="Documents"><option value="docx">Word document (.docx)</option><option value="pdf">PDF document (.pdf)</option><option value="rtf">Rich text (.rtf)</option><option value="html">Web document (.html)</option><option value="md">Markdown (.md)</option><option value="txt">Plain text (.txt)</option></optgroup><optgroup label="Subtitles"><option value="srt">SubRip subtitles (.srt)</option><option value="vtt">Web subtitles (.vtt)</option></optgroup></select></label>
+                  <label className="field-label" htmlFor="export-template">Template<AppSelect ariaLabel="Export template" value={exportTemplate} onChange={setExportTemplate} options={[{value:'standard',label:'Professional transcript'},{value:'meeting',label:'Meeting notes'},{value:'study',label:'Study notes'}]}/></label>
+                  <label className="field-label" htmlFor="export-type">File format<AppSelect ariaLabel="Export file format" value={exportType} onChange={setExportType} options={[{group:'Documents',value:'docx',label:'Word document (.docx)'},{group:'Documents',value:'pdf',label:'PDF document (.pdf)'},{group:'Documents',value:'rtf',label:'Rich text (.rtf)'},{group:'Documents',value:'html',label:'Web document (.html)'},{group:'Documents',value:'md',label:'Markdown (.md)'},{group:'Documents',value:'txt',label:'Plain text (.txt)'},{group:'Subtitles',value:'srt',label:'SubRip subtitles (.srt)'},{group:'Subtitles',value:'vtt',label:'Web subtitles (.vtt)'}]}/></label>
                 </div>
                 <label className="export-option"><input type="checkbox" checked={includeTimestamps} onChange={event=>setIncludeTimestamps(event.target.checked)}/> Include timestamps when available</label>
                 <div className="export-actions"><button className="primary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
@@ -1639,20 +1661,20 @@ function App() {
           <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
           <div className="studio-source-actions">
             {active?.transcript.trim() && <button className="secondary small-button" type="button" onClick={()=>setStudioText(active.transcript)}><FileText size={15}/> Use current transcript</button>}
-            {library.length>0 && <label className="field-label">Saved transcript<select defaultValue="" onChange={event=>{const item=library.find(entry=>entry.id===event.target.value);if(item)setStudioText(item.transcript);}}><option value="">Choose from library…</option>{library.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+            {library.length>0 && <label className="field-label">Saved transcript<AppSelect ariaLabel="Saved transcript" value="" onChange={value=>{const item=library.find(entry=>entry.id===value);if(item)setStudioText(item.transcript);}} options={[{value:'',label:'Choose from library…'},...library.map(item=>({value:item.id,label:item.name}))]}/></label>}
           </div>
           <label className="field-label" htmlFor="studio-text">Your script</label>
           <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="Write or paste the words you want AURORA to speak…"/>
           <div className="studio-grid studio-primary-options">
-            <label className="field-label">Voice<select value={voiceName} onChange={event=>setVoiceName(event.target.value)}><option value="nova">Nova · bright</option><option value="shimmer">Shimmer · clear</option><option value="coral">Coral · warm</option><option value="sage">Sage · measured</option><option value="onyx">Onyx · deep</option><option value="echo">Echo · clear</option><option value="ash">Ash · conversational</option><option value="fable">Fable · narrator</option><option value="alloy">Alloy · neutral</option></select></label>
-            <label className="field-label">Delivery<select value={voiceStyle} onChange={event=>setVoiceStyle(event.target.value)}><option>Natural, conversational delivery</option><option>Professional presenter, polished and confident</option><option>Storytelling, expressive and vivid</option><option>Documentary narrator, steady and authoritative</option><option>Energetic, upbeat and engaging</option><option>Calm, gentle and reassuring</option></select></label>
+            <label className="field-label">Voice<AppSelect ariaLabel="Voice" value={voiceName} onChange={setVoiceName} options={[{value:'nova',label:'Nova · bright'},{value:'shimmer',label:'Shimmer · clear'},{value:'coral',label:'Coral · warm'},{value:'sage',label:'Sage · measured'},{value:'onyx',label:'Onyx · deep'},{value:'echo',label:'Echo · clear'},{value:'ash',label:'Ash · conversational'},{value:'fable',label:'Fable · narrator'},{value:'alloy',label:'Alloy · neutral'}]}/></label>
+            <label className="field-label">Delivery<AppSelect ariaLabel="Voice delivery" value={voiceStyle} onChange={setVoiceStyle} options={['Natural, conversational delivery','Professional presenter, polished and confident','Storytelling, expressive and vivid','Documentary narrator, steady and authoritative','Energetic, upbeat and engaging','Calm, gentle and reassuring'].map(value=>({value,label:value}))}/></label>
           </div>
           <details className="voice-advanced"><summary>More voice controls</summary>
             <div className="studio-grid">
-              <label className="field-label">Emotion<select value={voiceEmotion} onChange={event=>setVoiceEmotion(event.target.value)}><option>Warm and friendly</option><option>Neutral and informative</option><option>Excited and enthusiastic</option><option>Serious and thoughtful</option><option>Hopeful and inspiring</option></select></label>
-              <label className="field-label">Accent<select value={voiceAccent} onChange={event=>setVoiceAccent(event.target.value)}><option>International English</option><option>British English</option><option>American English</option><option>Nigerian English</option><option>West African English</option><option>Australian English</option></select></label>
-              <label className="field-label">Emphasis<select value={voiceEmphasis} onChange={event=>setVoiceEmphasis(event.target.value)}><option>Natural emphasis</option><option>Subtle emphasis</option><option>Expressive emphasis</option><option>Strong key-word emphasis</option></select></label>
-              <label className="field-label">Pauses<select value={voicePauses} onChange={event=>setVoicePauses(event.target.value)}><option>Natural pauses</option><option>Short pauses</option><option>Long storytelling pauses</option><option>Presenter pacing</option></select></label>
+              <label className="field-label">Emotion<AppSelect ariaLabel="Voice emotion" value={voiceEmotion} onChange={setVoiceEmotion} options={['Warm and friendly','Neutral and informative','Excited and enthusiastic','Serious and thoughtful','Hopeful and inspiring'].map(value=>({value,label:value}))}/></label>
+              <label className="field-label">Accent<AppSelect ariaLabel="Voice accent" value={voiceAccent} onChange={setVoiceAccent} options={['International English','British English','American English','Australian English','Indian English','South African English','Irish English','Scottish English','New Zealand English','Canadian English','Singapore English'].map(value=>({value,label:value}))}/></label>
+              <label className="field-label">Emphasis<AppSelect ariaLabel="Voice emphasis" value={voiceEmphasis} onChange={setVoiceEmphasis} options={['Natural emphasis','Subtle emphasis','Expressive emphasis','Strong key-word emphasis'].map(value=>({value,label:value}))}/></label>
+              <label className="field-label">Pauses<AppSelect ariaLabel="Voice pauses" value={voicePauses} onChange={setVoicePauses} options={['Natural pauses','Short pauses','Long storytelling pauses','Presenter pacing'].map(value=>({value,label:value}))}/></label>
             </div>
             <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
           </details>
@@ -1671,7 +1693,7 @@ function App() {
         <section className="card subtitle-card">
           <div className="subtitle-section-heading"><div><small>02 · FIND</small><h2>Find an existing subtitle</h2><p>Search by title, content type and language.</p></div><span className="subtitle-step-icon"><Search size={20}/></span></div>
           <label className="field-label" htmlFor="subtitle-query">Film or series title<input id="subtitle-query" value={subtitleQuery} onChange={event=>setSubtitleQuery(event.target.value)} placeholder="e.g. film or episode title"/></label>
-          <div className="studio-grid"><label className="field-label">Content type<select value={subtitleType || 'all'} onChange={event=>setSubtitleType(event.target.value === 'all' ? undefined : event.target.value as 'movie' | 'episode')}><option value="all">Movies & series</option><option value="movie">Movie</option><option value="episode">TV episode</option></select></label><label className="field-label">Find subtitles in<select value={subtitleLanguage} onChange={event=>setSubtitleLanguage(event.target.value)}><option value="en">English</option><option value="yo">Yoruba</option><option value="ig">Igbo</option><option value="ha">Hausa</option><option value="fr">French</option><option value="es">Spanish</option><option value="pt">Portuguese</option><option value="ar">Arabic</option><option value="de">German</option></select></label><label className="field-label">Translate downloaded subtitle to<select value={subtitleTranslateLanguage} onChange={event=>setSubtitleTranslateLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option></select></label></div>
+          <div className="studio-grid"><label className="field-label">Content type<AppSelect ariaLabel="Subtitle content type" value={subtitleType || 'all'} onChange={value=>setSubtitleType(value === 'all' ? undefined : value as 'movie' | 'episode')} options={[{value:'all',label:'Movies & series'},{value:'movie',label:'Movie'},{value:'episode',label:'TV episode'}]}/></label><label className="field-label">Find subtitles in<select value={subtitleLanguage} onChange={event=>setSubtitleLanguage(event.target.value)}><option value="en">English</option><option value="yo">Yoruba</option><option value="ig">Igbo</option><option value="ha">Hausa</option><option value="fr">French</option><option value="es">Spanish</option><option value="pt">Portuguese</option><option value="ar">Arabic</option><option value="de">German</option></select></label><label className="field-label">Translate downloaded subtitle to<select value={subtitleTranslateLanguage} onChange={event=>setSubtitleTranslateLanguage(event.target.value)}><option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option><option>French</option><option>Spanish</option><option>Portuguese</option><option>Arabic</option></select></label></div>
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
           {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div className="subtitle-result-main"><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''}</p><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button></div></article>)}</div>}
