@@ -4,3 +4,4 @@ export function createTimedSubtitles(segments: Array<{ start: number; end: numbe
 export function normalizeSubtitleText(value: string, format?: 'srt' | 'vtt'): string;
 export function safeAudioInputName(value: string): string;
 export function chooseAudioSegmentSeconds(options?: { native?: boolean; memory?: number; cores?: number; mode?: 'online' | 'offline' }): number;
+export function throwIfTranscriptionAborted(signal?: { aborted: boolean }): void;
