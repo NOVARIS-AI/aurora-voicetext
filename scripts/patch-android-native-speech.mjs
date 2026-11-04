@@ -241,7 +241,7 @@ const gradlePath = join(root, 'android/app/build.gradle');
 let gradle = await readFile(gradlePath, 'utf8');
 if (!gradle.includes('com.alphacephei:vosk-android')) {
   if (!/dependencies\s*\{/.test(gradle)) throw new Error('Could not find Android app dependencies block.');
-  gradle = gradle.replace(/dependencies\s*\{/, match => match + "\n    implementation 'com.alphacephei:vosk-android:0.3.75'");
+  gradle = gradle.replace(/dependencies\s*\{/, match => match + "\n    implementation 'com.alphacephei:vosk-android:0.3.75@aar'\n    implementation 'net.java.dev.jna:jna:5.18.1@aar'");
 }
 await writeFile(gradlePath, gradle);
 
