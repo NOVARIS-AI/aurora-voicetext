@@ -32,7 +32,12 @@ import java.util.zip.ZipInputStream;
 @CapacitorPlugin(name = "NativeSpeech")
 public class NativeSpeechPlugin extends Plugin {
     private static final String MODEL_NAME = "vosk-model-small-en-us-0.15";
-    private static final String MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip";
+    private static final String[] MODEL_URLS = new String[] {
+        "https://huggingface.co/grimso/vosk-models/resolve/main/vosk-model-small-en-us-0.15.zip",
+        "https://huggingface.co/rhasspy/vosk-models/resolve/main/en/vosk-model-small-en-us-0.15.zip",
+        "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+    };
+    private static final String MODEL_SHA256 = "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498";
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
     private static final Object MODEL_LOCK = new Object();
@@ -66,28 +71,8 @@ public class NativeSpeechPlugin extends Plugin {
         File archive = new File(root, MODEL_NAME + ".zip.part");
         File temporary = new File(root, MODEL_NAME + ".extracting");
         deleteRecursively(temporary);
-        HttpURLConnection connection = null;
         try {
-            connection = (HttpURLConnection) new URL(MODEL_URL).openConnection();
-            connection.setConnectTimeout(20000);
-            connection.setReadTimeout(60000);
-            connection.setInstanceFollowRedirects(true);
-            connection.setRequestProperty("User-Agent", "AURORA-VoiceText-Android");
-            int status = connection.getResponseCode();
-            if (status < 200 || status >= 300) throw new IllegalStateException("Model download returned HTTP " + status + ".");
-            if (connection.getContentLengthLong() > 120L * 1024L * 1024L) throw new IllegalStateException("The model archive is larger than expected.");
-            try (InputStream input = new BufferedInputStream(connection.getInputStream());
-                 FileOutputStream output = new FileOutputStream(archive)) {
-                byte[] buffer = new byte[64 * 1024];
-                int count;
-                long received = 0;
-                while ((count = input.read(buffer)) != -1) {
-                    received += count;
-                    if (received > 120L * 1024L * 1024L) throw new IllegalStateException("The model download exceeded its safety limit.");
-                    output.write(buffer, 0, count);
-                }
-                output.getFD().sync();
-            }
+            downloadModelArchive(archive);
             if (!temporary.mkdirs()) throw new IllegalStateException("Could not prepare model extraction folder.");
             try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new java.io.FileInputStream(archive)))) {
                 ZipEntry entry;
@@ -121,10 +106,58 @@ public class NativeSpeechPlugin extends Plugin {
             if (!extractedModel.renameTo(installed)) throw new IllegalStateException("Could not activate the downloaded speech model.");
             return installed;
         } finally {
-            if (connection != null) connection.disconnect();
             if (archive.exists()) archive.delete();
             deleteRecursively(temporary);
         }
+    }
+
+
+    private void downloadModelArchive(File archive) throws Exception {
+        Exception lastFailure = null;
+        for (String modelUrl : MODEL_URLS) {
+            HttpURLConnection connection = null;
+            try {
+                archive.delete();
+                connection = (HttpURLConnection) new URL(modelUrl).openConnection();
+                connection.setConnectTimeout(20000);
+                connection.setReadTimeout(90000);
+                connection.setInstanceFollowRedirects(true);
+                connection.setRequestProperty("User-Agent", "AURORA-VoiceText-Android");
+                connection.setRequestProperty("Accept", "application/zip, application/octet-stream, */*");
+                int status = connection.getResponseCode();
+                if (status < 200 || status >= 300) throw new IllegalStateException("HTTP " + status + " from " + new URL(modelUrl).getHost());
+                if (connection.getContentLengthLong() > 120L * 1024L * 1024L) throw new IllegalStateException("The model archive is larger than expected.");
+                try (InputStream input = new BufferedInputStream(connection.getInputStream());
+                     FileOutputStream output = new FileOutputStream(archive)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    long received = 0;
+                    while ((count = input.read(buffer)) != -1) {
+                        received += count;
+                        if (received > 120L * 1024L * 1024L) throw new IllegalStateException("The model download exceeded its safety limit.");
+                        output.write(buffer, 0, count);
+                    }
+                    output.getFD().sync();
+                }
+                java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+                try (InputStream input = new java.io.FileInputStream(archive)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+                }
+                StringBuilder actual = new StringBuilder();
+                for (byte value : digest.digest()) actual.append(String.format(java.util.Locale.US, "%02x", value & 0xff));
+                if (!MODEL_SHA256.equals(actual.toString())) throw new IllegalStateException("Downloaded model failed SHA-256 verification.");
+                return;
+            } catch (Exception error) {
+                lastFailure = error;
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }
+        if (archive.exists()) archive.delete();
+        throw new IllegalStateException("Could not download the offline English model from any mirror. Check internet/DNS and retry. Last error: " +
+            (lastFailure == null ? "unknown download error" : lastFailure.getMessage()), lastFailure);
     }
 
     private void deleteRecursively(File file) {
