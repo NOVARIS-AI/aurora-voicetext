@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -611,7 +611,7 @@ async function transcribeOpusOfflineInSegments(
     onProgress(checkpoint.nextChunk, total);
     let checkpointStorageWarningShown = false;
     for (let index = checkpoint.nextChunk; index < total; index++) {
-      if (signal?.aborted) throw new Error('Transcription cancelled. Completed sections are saved; select the same recording and retry to resume.');
+      throwIfTranscriptionAborted(signal);
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
