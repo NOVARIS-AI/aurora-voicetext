@@ -550,6 +550,7 @@ async function transcribeOpusOfflineInSegments(
   onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
   durationOverrideSeconds?: number,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -610,6 +611,7 @@ async function transcribeOpusOfflineInSegments(
     onProgress(checkpoint.nextChunk, total);
     let checkpointStorageWarningShown = false;
     for (let index = checkpoint.nextChunk; index < total; index++) {
+      if (signal?.aborted) throw new Error('Transcription cancelled. Completed sections are saved; select the same recording and retry to resume.');
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
@@ -691,6 +693,7 @@ async function transcribeOpusInSegments(
   onStatus: (message: string) => void,
   onLanguage: (language: string) => void,
   durationOverrideSeconds?: number,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -776,6 +779,7 @@ async function transcribeOpusInSegments(
 
     let checkpointStorageWarningShown = false;
     for (let index = checkpoint.nextChunk; index < totalParts; index++) {
+      if (signal?.aborted) throw new Error('Transcription cancelled. Completed sections are saved; select the same recording and retry to resume.');
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       const encodeExitCode = await ffmpeg.exec([
@@ -847,6 +851,7 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [library, setLibrary] = useState<Recording[]>(readLibrary);
   const [busy, setBusy] = useState(false);
+  const transcriptionAbortRef = useRef<AbortController | null>(null);
   const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
@@ -1007,6 +1012,8 @@ function App() {
   async function transcribe() {
     if (!active || busy) return;
     const selected = active;
+    const controller = new AbortController();
+    transcriptionAbortRef.current = controller;
     setBusy(true);
     setError('');
     setStatus('Preparing audio for section-by-section transcription…');
@@ -1031,6 +1038,7 @@ function App() {
       onTimedParts,
       () => setStatus('Preparing offline transcription…'),
       selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
+      controller.signal,
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
@@ -1049,9 +1057,10 @@ function App() {
             setStatus,
             language => setFiles(current => current.map(item => item.id === selected.id ? { ...item, detectedLanguage: language } : item)),
             selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
+            controller.signal,
           );
         } catch (onlineProblem) {
-          if (mode === 'online') throw onlineProblem;
+          if (mode === 'online' || controller.signal.aborted) throw onlineProblem;
           setStatus('The online service is unavailable. Trying another available method…');
           try {
             parts = await runOffline();
@@ -1072,6 +1081,7 @@ function App() {
       setError(message);
       setStatus('Your recording remains selected. You can retry without starting over from completed sections.');
     } finally {
+      if (transcriptionAbortRef.current === controller) transcriptionAbortRef.current = null;
       if (Capacitor.isNativePlatform()) await backgroundTranscription.stop().catch(() => undefined);
       setBusy(false);
     }
@@ -1369,7 +1379,7 @@ function App() {
               <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Setting up…' : 'Prepare for offline use'}</button></div>
               {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
 
-              <button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>
+              <div className="studio-actions"><button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>{busy && <button className="secondary" type="button" onClick={() => transcriptionAbortRef.current?.abort()}>Cancel safely</button>}</div>
               {status && <div className="status-message" role="status">{status}</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
               <label className="field-label" htmlFor="transcript">Original transcript <small>{active.detectedLanguage ? 'Detected: ' + active.detectedLanguage : 'Language detection: automatic'}</small></label>
