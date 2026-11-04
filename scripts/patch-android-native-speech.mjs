@@ -43,9 +43,10 @@ public class NativeSpeechPlugin extends Plugin {
         worker.execute(() -> {
             try {
                 File modelDir = ensureModelInstalled();
-                synchronized (MODEL_LOCK) {
-                    if (sharedModel == null) sharedModel = new Model(modelDir.getAbsolutePath());
-                }
+                // Validate the model, then release it; do not hold roughly 300 MB of
+                // native model memory idle between setup and the user's transcription.
+                Model validation = new Model(modelDir.getAbsolutePath());
+                validation.close();
                 JSObject result = new JSObject();
                 result.put("ready", true);
                 result.put("model", MODEL_NAME);
