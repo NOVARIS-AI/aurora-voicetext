@@ -18,7 +18,7 @@ type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: strin
 const nativeAudioFiles = registerPlugin<NativeAudioFilesBridge>('NativeAudioFiles');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
-type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
+type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
@@ -294,8 +294,11 @@ function isUsableCheckpoint(
     (checkpoint.segments === undefined || Array.isArray(checkpoint.segments));
 }
 
-async function makeAudioFileKey(file: File): Promise<string> {
-  const identity = [file.name, file.size, file.lastModified, file.type].join('|');
+async function makeAudioFileKey(file: File, nativePath?: string, nativeSize?: number): Promise<string> {
+  const identity = [file.name, nativeSize ?? file.size, file.lastModified, file.type, nativePath || ''].join('|');
+  // Android native offline decoding reads directly from app-private storage; do not
+  // materialize or hash the entire recording in the WebView just to create a resume key.
+  if (nativePath) return identity;
   try {
     if (!globalThis.crypto?.subtle) return identity;
     // Sample across the recording, not just its head and tail, to reduce resume-key collisions.
@@ -578,6 +581,7 @@ async function transcribeOpusOfflineInSegments(
   durationOverrideSeconds?: number,
   signal?: AbortSignal,
   nativeAudioPath?: string,
+  nativeAudioSize?: number,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const useNativeDecoder = Capacitor.isNativePlatform() && Boolean(nativeAudioPath);
@@ -624,7 +628,7 @@ async function transcribeOpusOfflineInSegments(
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
       : await getAudioDurationSeconds(file);
-    const fileKey = await makeAudioFileKey(file);
+    const fileKey = await makeAudioFileKey(file, nativeAudioPath, nativeAudioSize);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey + '|offline'); } catch { /* Continue without persistent resume. */ }
     // Reuse the original section size on resume if device capability detection changes.
@@ -979,13 +983,12 @@ function App() {
     try {
       const result = await nativeAudioFiles.pick();
       const imported: File[] = [];
-      const nativeDetails: Array<{ path?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> = [];
+      const nativeDetails: Array<{ path?: string; size?: number; durationMs?: number; audioInfo?: NativeAudioDetails }> = [];
       for (const item of result.files || []) {
-        const response = await fetch(Capacitor.convertFileSrc(item.path));
-        if (!response.ok) throw new Error('Android could not read ' + item.name + ' from private app storage.');
-        const blob = await response.blob();
-        imported.push(new File([blob], item.name, { type: item.mimeType || blob.type || 'application/octet-stream', lastModified: Date.now() }));
-        nativeDetails.push({ path: item.path, durationMs: item.durationMs, audioInfo: item.audioInfo });
+        // Keep Android imports on disk. The native offline decoder reads bounded sections
+        // directly, avoiding a second full-size audio Blob in low-memory WebViews.
+        imported.push(new File([], item.name, { type: item.mimeType || 'application/octet-stream', lastModified: Date.now() }));
+        nativeDetails.push({ path: item.path, size: item.size, durationMs: item.durationMs, audioInfo: item.audioInfo });
       }
       addFiles(imported, nativeDetails);
     } catch (reason) {
@@ -994,12 +997,30 @@ function App() {
     }
   }
 
-  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ path?: string; durationMs?: number; audioInfo?: NativeAudioDetails }>) {
+  async function loadNativeAudioForOnline(item: AudioFile): Promise<File> {
+    if (!item.nativePath) return item.file;
+    setStatus('Loading audio for online section processing…');
+    const response = await fetch(Capacitor.convertFileSrc(item.nativePath));
+    if (!response.ok) throw new Error('Android could not read ' + item.file.name + ' from private storage.');
+    const blob = await response.blob();
+    if (item.nativeSize && blob.size !== item.nativeSize) {
+      throw new Error('The imported audio copy is incomplete. Re-import the recording before transcribing.');
+    }
+    return new File([blob], item.file.name, { type: item.file.type || blob.type || 'application/octet-stream', lastModified: item.file.lastModified });
+  }
+
+  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ path?: string; size?: number; durationMs?: number; audioInfo?: NativeAudioDetails }>) {
     if (!list) return;
     const incoming = Array.from(list);
-    const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file }) => file.size > 0 && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name)));
+    const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file, index }) =>
+      ((file.size > 0) || Boolean(nativeDetails?.[index]?.path && (nativeDetails[index].size || 0) > 0)) &&
+      (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name))
+    );
     if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
-    const next = accepted.map(({ file, index }) => ({ id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: URL.createObjectURL(file), transcript: '', nativePath: nativeDetails?.[index]?.path, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeAudioInfo: nativeDetails?.[index]?.audioInfo }));
+    const next = accepted.map(({ file, index }) => {
+      const nativePath = nativeDetails?.[index]?.path;
+      return { id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), transcript: '', nativePath, nativeSize: nativeDetails?.[index]?.size, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeAudioInfo: nativeDetails?.[index]?.audioInfo };
+    });
     setFiles(current => [...current, ...next]);
     setActiveId(current => current ?? next[0].id);
     setError('');
@@ -1092,6 +1113,7 @@ function App() {
       selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
       controller.signal,
       selected.nativePath,
+      selected.nativeSize,
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
@@ -1102,8 +1124,11 @@ function App() {
       } else {
         try {
           setStatus('Online mode · preparing upload-safe audio sections…');
+          const onlineFile = selected.nativePath && selected.file.size === 0
+            ? await loadNativeAudioForOnline(selected)
+            : selected.file;
           parts = await transcribeOpusInSegments(
-            selected.file,
+            onlineFile,
             (completed, total) => onProgress(completed, total, 'Online transcription'),
             onPart,
             onTimedParts,
