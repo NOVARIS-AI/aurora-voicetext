@@ -200,7 +200,9 @@ public class NativeAudioFilesPlugin extends Plugin {
         double durationSeconds = call.getDouble("durationSeconds", -1.0);
         try {
             File root = new File(getContext().getFilesDir(), "aurora-audio-imports").getCanonicalFile();
-            File source = new File(path).getCanonicalFile();
+            Uri suppliedUri = Uri.parse(path);
+            String sourcePath = "file".equalsIgnoreCase(suppliedUri.getScheme()) ? suppliedUri.getPath() : path;
+            File source = new File(sourcePath).getCanonicalFile();
             if (!source.getPath().startsWith(root.getPath() + File.separator) || !source.isFile()) {
                 call.reject("The selected audio is no longer available in AURORA storage.");
                 return;
