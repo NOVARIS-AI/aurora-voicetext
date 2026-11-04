@@ -1012,10 +1012,11 @@ function App() {
   function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ path?: string; size?: number; durationMs?: number; audioInfo?: NativeAudioDetails }>) {
     if (!list) return;
     const incoming = Array.from(list);
-    const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file, index }) =>
-      ((file.size > 0) || Boolean(nativeDetails?.[index]?.path && (nativeDetails[index].size || 0) > 0)) &&
-      (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name))
-    );
+    const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file, index }) => {
+      const nativeItem = nativeDetails?.[index];
+      const hasAudioBytes = file.size > 0 || Boolean(nativeItem?.path && (nativeItem.size ?? 0) > 0);
+      return hasAudioBytes && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));
+    });
     if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
     const next = accepted.map(({ file, index }) => {
       const nativePath = nativeDetails?.[index]?.path;
