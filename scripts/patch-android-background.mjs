@@ -105,6 +105,11 @@ public class NativeAudioFilesPlugin extends Plugin {
             return;
         }
         JSArray files = new JSArray();
+        ArrayList<File> createdImports = new ArrayList<>();
+        long batchBytes = 0L;
+        final long maxFileBytes = 256L * 1024L * 1024L;
+        final long maxBatchBytes = 512L * 1024L * 1024L;
+        final long reserveBytes = 256L * 1024L * 1024L;
         File directory = new File(getContext().getFilesDir(), "aurora-audio-imports");
         if (!directory.exists() && !directory.mkdirs()) {
             call.reject("Could not prepare private audio storage.");
@@ -118,12 +123,23 @@ public class NativeAudioFilesPlugin extends Plugin {
                 String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
                 if (safe.isEmpty()) safe = "recording-" + index + ".audio";
                 File destination = new File(directory, System.currentTimeMillis() + "-" + index + "-" + safe);
+                createdImports.add(destination);
+                long availableBytes = directory.getUsableSpace();
+                if (availableBytes < reserveBytes) throw new IllegalStateException("Not enough free storage. Keep at least 256 MB free before importing audio.");
                 try (InputStream input = getContext().getContentResolver().openInputStream(uri);
                      FileOutputStream output = new FileOutputStream(destination)) {
                     if (input == null) throw new IllegalStateException("Android could not open " + name);
                     byte[] buffer = new byte[64 * 1024];
                     int count;
-                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                    long fileBytes = 0L;
+                    while ((count = input.read(buffer)) != -1) {
+                        fileBytes += count;
+                        batchBytes += count;
+                        if (fileBytes > maxFileBytes) throw new IllegalStateException("This audio file exceeds the 256 MB import limit. Split it into smaller recordings and try again.");
+                        if (batchBytes > maxBatchBytes) throw new IllegalStateException("This selection exceeds the 512 MB total import limit. Import fewer files at a time.");
+                        if (fileBytes + reserveBytes > directory.getUsableSpace()) throw new IllegalStateException("Android is running low on storage. Free space and try again.");
+                        output.write(buffer, 0, count);
+                    }
                 }
                 JSObject item = new JSObject();
                 item.put("path", "file://" + destination.getAbsolutePath());
@@ -140,6 +156,9 @@ public class NativeAudioFilesPlugin extends Plugin {
             response.put("files", files);
             call.resolve(response);
         } catch (Exception error) {
+            for (File imported : createdImports) {
+                if (imported.exists()) imported.delete();
+            }
             call.reject("Could not import the selected audio: " + error.getMessage(), error);
         }
     }
