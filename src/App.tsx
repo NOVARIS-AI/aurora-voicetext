@@ -14,11 +14,11 @@ type Recording = { id: string; name: string; transcript: string; updatedAt: numb
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
-type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> }> };
+type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> }>; decodeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ wavBase64: string; sampleRate: number; channels: number; durationSeconds: number }> };
 const nativeAudioFiles = registerPlugin<NativeAudioFilesBridge>('NativeAudioFiles');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
-type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
+type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
@@ -577,8 +577,10 @@ async function transcribeOpusOfflineInSegments(
   onStatus: (message: string) => void,
   durationOverrideSeconds?: number,
   signal?: AbortSignal,
+  nativeAudioPath?: string,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
+  const useNativeDecoder = Capacitor.isNativePlatform() && Boolean(nativeAudioPath);
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   const inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-offline-current.wav';
@@ -604,17 +606,21 @@ async function transcribeOpusOfflineInSegments(
     return audio;
   };
   try {
-    onStatus('Loading on-device audio decoder…');
-    offlineCoreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
-    offlineWasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
-    await ffmpeg.load({ coreURL: offlineCoreUrl, wasmURL: offlineWasmUrl });
-    URL.revokeObjectURL(offlineCoreUrl); offlineCoreUrl = '';
-    URL.revokeObjectURL(offlineWasmUrl); offlineWasmUrl = '';
-    // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
-    await ffmpeg.createDir('/audio-input');
-    const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
-    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
-    if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
+    if (useNativeDecoder) {
+      onStatus('Using Android MediaCodec to decode audio sections…');
+    } else {
+      onStatus('Loading on-device audio decoder…');
+      offlineCoreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
+      offlineWasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
+      await ffmpeg.load({ coreURL: offlineCoreUrl, wasmURL: offlineWasmUrl });
+      URL.revokeObjectURL(offlineCoreUrl); offlineCoreUrl = '';
+      URL.revokeObjectURL(offlineWasmUrl); offlineWasmUrl = '';
+      // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
+      await ffmpeg.createDir('/audio-input');
+      const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
+      const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
+      if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
+    }
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
       : await getAudioDurationSeconds(file);
@@ -641,15 +647,24 @@ async function transcribeOpusOfflineInSegments(
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
-      const decodeExitCode = await ffmpeg.exec([
-        '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
-        '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
-        '-f', 'wav', outputName,
-      ]);
-      if (decodeExitCode !== 0) throw new Error('FFmpeg could not decode offline section ' + (index + 1) + ' (exit ' + decodeExitCode + '). Check the audio format or try MP3.');
-      const output = await ffmpeg.readFile(outputName);
-      if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
-      const audio = pcmToFloat(output);
+      let decodedWav: Uint8Array;
+      if (useNativeDecoder && nativeAudioPath) {
+        const decoded = await nativeAudioFiles.decodeSegment({ path: nativeAudioPath, startSeconds: start, durationSeconds: length });
+        const binary = atob(decoded.wavBase64);
+        decodedWav = new Uint8Array(binary.length);
+        for (let byte = 0; byte < binary.length; byte++) decodedWav[byte] = binary.charCodeAt(byte);
+      } else {
+        const decodeExitCode = await ffmpeg.exec([
+          '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
+          '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+          '-f', 'wav', outputName,
+        ]);
+        if (decodeExitCode !== 0) throw new Error('FFmpeg could not decode offline section ' + (index + 1) + ' (exit ' + decodeExitCode + '). Check the audio format or try MP3.');
+        const output = await ffmpeg.readFile(outputName);
+        if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
+        decodedWav = output;
+      }
+      const audio = pcmToFloat(decodedWav);
       if (audioRms(audio) < 0.0015) {
         parts.push('');
       } else {
@@ -696,7 +711,9 @@ async function transcribeOpusOfflineInSegments(
       onProgress(index + 1, total);
       onPart(parts.filter(Boolean));
       onTimedParts(timedSegments);
-      try { await ffmpeg.deleteFile(outputName); } catch { /* The next write replaces this temporary file. */ }
+      if (!useNativeDecoder) {
+        try { await ffmpeg.deleteFile(outputName); } catch { /* The next write replaces this temporary file. */ }
+      }
       await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!parts.some(Boolean)) throw new Error('No clear speech was detected in this recording.');
@@ -962,13 +979,13 @@ function App() {
     try {
       const result = await nativeAudioFiles.pick();
       const imported: File[] = [];
-      const nativeDetails: Array<{ durationMs?: number; audioInfo?: NativeAudioDetails }> = [];
+      const nativeDetails: Array<{ path?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> = [];
       for (const item of result.files || []) {
         const response = await fetch(Capacitor.convertFileSrc(item.path));
         if (!response.ok) throw new Error('Android could not read ' + item.name + ' from private app storage.');
         const blob = await response.blob();
         imported.push(new File([blob], item.name, { type: item.mimeType || blob.type || 'application/octet-stream', lastModified: Date.now() }));
-        nativeDetails.push({ durationMs: item.durationMs, audioInfo: item.audioInfo });
+        nativeDetails.push({ path: item.path, durationMs: item.durationMs, audioInfo: item.audioInfo });
       }
       addFiles(imported, nativeDetails);
     } catch (reason) {
@@ -977,12 +994,12 @@ function App() {
     }
   }
 
-  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ durationMs?: number; audioInfo?: NativeAudioDetails }>) {
+  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ path?: string; durationMs?: number; audioInfo?: NativeAudioDetails }>) {
     if (!list) return;
     const incoming = Array.from(list);
     const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file }) => file.size > 0 && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name)));
     if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
-    const next = accepted.map(({ file, index }) => ({ id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: URL.createObjectURL(file), transcript: '', nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeAudioInfo: nativeDetails?.[index]?.audioInfo }));
+    const next = accepted.map(({ file, index }) => ({ id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: URL.createObjectURL(file), transcript: '', nativePath: nativeDetails?.[index]?.path, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeAudioInfo: nativeDetails?.[index]?.audioInfo }));
     setFiles(current => [...current, ...next]);
     setActiveId(current => current ?? next[0].id);
     setError('');
@@ -1074,6 +1091,7 @@ function App() {
       () => setStatus('Preparing offline transcription…'),
       selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
       controller.signal,
+      selected.nativePath,
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
