@@ -211,6 +211,19 @@ public class NativeSpeechPlugin extends Plugin {
         cancelRequested.set(true);
         call.resolve();
     }
+
+    @PluginMethod
+    public void releaseModel(PluginCall call) {
+        worker.execute(() -> {
+            synchronized (MODEL_LOCK) {
+                if (sharedModel != null) {
+                    try { sharedModel.close(); } catch (Exception ignored) { }
+                    sharedModel = null;
+                }
+            }
+            call.resolve();
+        });
+    }
 }`;
 
 const speechPath = join(javaDir, 'NativeSpeechPlugin.java');
