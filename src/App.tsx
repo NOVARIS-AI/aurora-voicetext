@@ -1581,6 +1581,7 @@ function App() {
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Use online processing</small></button>
               </div>
               <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Setting up…' : 'Prepare for offline use'}</button></div>
+              <p className="helper-text">First-time setup needs internet. Tap once to download and install the speech model and offline audio tools; after setup succeeds, Offline mode can transcribe without data. Keep at least 200 MB free.</p>
               {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
 
               <div className="studio-actions"><button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>{busy && <button className="secondary" type="button" onClick={() => transcriptionAbortRef.current?.abort()}>Cancel safely</button>}</div>
