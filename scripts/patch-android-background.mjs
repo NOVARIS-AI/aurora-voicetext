@@ -47,6 +47,105 @@ public class BackgroundTranscriptionPlugin extends Plugin {
     }
 }`;
 
+
+const nativeAudioPlugin = `package com.novaris.auroravoicetext;
+
+import android.app.Activity;
+import android.content.ClipData;
+import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
+import androidx.activity.result.ActivityResult;
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
+import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+
+@CapacitorPlugin(name = "NativeAudioFiles")
+public class NativeAudioFilesPlugin extends Plugin {
+    @PluginMethod
+    public void pick(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("audio/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(call, intent, "audioPicked");
+    }
+
+    @ActivityCallback
+    private void audioPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+            call.reject("Audio selection was cancelled.");
+            return;
+        }
+        Intent data = result.getData();
+        ArrayList<Uri> selected = new ArrayList<>();
+        ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) selected.add(clip.getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            selected.add(data.getData());
+        }
+        if (selected.isEmpty()) {
+            call.reject("No audio file was selected.");
+            return;
+        }
+        JSArray files = new JSArray();
+        File directory = new File(getContext().getCacheDir(), "aurora-audio-imports");
+        if (!directory.exists() && !directory.mkdirs()) {
+            call.reject("Could not prepare private audio storage.");
+            return;
+        }
+        try {
+            int index = 0;
+            for (Uri uri : selected) {
+                String name = queryName(uri);
+                String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
+                if (safe.isEmpty()) safe = "recording-" + index + ".audio";
+                File destination = new File(directory, System.currentTimeMillis() + "-" + index + "-" + safe);
+                try (InputStream input = getContext().getContentResolver().openInputStream(uri);
+                     FileOutputStream output = new FileOutputStream(destination)) {
+                    if (input == null) throw new IllegalStateException("Android could not open " + name);
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                JSObject item = new JSObject();
+                item.put("path", "file://" + destination.getAbsolutePath());
+                item.put("name", name);
+                item.put("size", destination.length());
+                item.put("mimeType", getContext().getContentResolver().getType(uri));
+                files.put(item);
+                index++;
+            }
+            JSObject response = new JSObject();
+            response.put("files", files);
+            call.resolve(response);
+        } catch (Exception error) {
+            call.reject("Could not import the selected audio: " + error.getMessage(), error);
+        }
+    }
+
+    private String queryName(Uri uri) {
+        try (Cursor cursor = getContext().getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) return cursor.getString(index);
+            }
+        } catch (Exception ignored) { }
+        return "recording.audio";
+    }
+}
+
 const service = `package com.novaris.auroravoicetext;
 
 import android.app.Notification;
@@ -129,6 +228,7 @@ public class TranscriptionForegroundService extends Service {
 }`;
 
 await writeFile(join(javaDir, 'BackgroundTranscriptionPlugin.java'), plugin);
+await writeFile(join(javaDir, 'NativeAudioFilesPlugin.java'), nativeAudioPlugin);
 await writeFile(join(javaDir, 'TranscriptionForegroundService.java'), service);
 
 const manifestPath = join(root, 'android/app/src/main/AndroidManifest.xml');
@@ -151,8 +251,10 @@ await writeFile(manifestPath, manifest);
 const activityPath = join(javaDir, 'MainActivity.java');
 let activity = await readFile(activityPath, 'utf8');
 if (!activity.includes('BackgroundTranscriptionPlugin')) {
-  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;');
-  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
+  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;
+import com.novaris.auroravoicetext.NativeAudioFilesPlugin;');
+  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);
+        registerPlugin(NativeAudioFilesPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
 }
 await writeFile(activityPath, activity);
 console.log('Patched Android foreground transcription service.');
