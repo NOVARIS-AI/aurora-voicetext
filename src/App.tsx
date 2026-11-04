@@ -13,11 +13,12 @@ import {
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
-type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string }> }> };
+type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
+type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> }> };
 const nativeAudioFiles = registerPlugin<NativeAudioFilesBridge>('NativeAudioFiles');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
-type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[] };
+type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
@@ -915,24 +916,27 @@ function App() {
     try {
       const result = await nativeAudioFiles.pick();
       const imported: File[] = [];
+      const nativeDetails: Array<{ durationMs?: number; audioInfo?: NativeAudioDetails }> = [];
       for (const item of result.files || []) {
         const response = await fetch(Capacitor.convertFileSrc(item.path));
         if (!response.ok) throw new Error('Android could not read ' + item.name + ' from private app storage.');
         const blob = await response.blob();
         imported.push(new File([blob], item.name, { type: item.mimeType || blob.type || 'application/octet-stream', lastModified: Date.now() }));
+        nativeDetails.push({ durationMs: item.durationMs, audioInfo: item.audioInfo });
       }
-      addFiles(imported);
+      addFiles(imported, nativeDetails);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (!/cancel|cancelled|canceled/i.test(message)) setError(message || 'Android audio import failed.');
     }
   }
 
-  function addFiles(list: FileList | File[] | null) {
+  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ durationMs?: number; audioInfo?: NativeAudioDetails }>) {
     if (!list) return;
-    const accepted = Array.from(list).filter(file => file.size > 0 && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name)));
+    const incoming = Array.from(list);
+    const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file }) => file.size > 0 && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name)));
     if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
-    const next = accepted.map(file => ({ id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: URL.createObjectURL(file), transcript: '' }));
+    const next = accepted.map(({ file, index }) => ({ id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: URL.createObjectURL(file), transcript: '', nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeAudioInfo: nativeDetails?.[index]?.audioInfo }));
     setFiles(current => [...current, ...next]);
     setActiveId(current => current ?? next[0].id);
     setError('');
@@ -1339,7 +1343,7 @@ function App() {
             <div className="card-title"><div><small>STEP 01</small><h2>Your recordings</h2></div><span className="count">{files.length}</span></div>
             <button className="upload-box" type="button" onClick={() => void pickNativeAudioFiles()}><span className="upload-symbol"><Upload/></span><strong>Choose audio files</strong><span>Browse your phone storage</span><small>OPUS · OGG · MP3 · M4A · WAV · AAC</small></button>
             <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-            <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round(item.file.size / 1024))} KB · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
+            <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round(item.file.size / 1024))} KB{item.nativeDurationMs ? ' · ' + Math.floor(item.nativeDurationMs / 60000) + ':' + String(Math.floor((item.nativeDurationMs % 60000) / 1000)).padStart(2, '0') : ''}{item.nativeAudioInfo?.sampleRate ? ' · ' + Math.round(item.nativeAudioInfo.sampleRate / 1000) + ' kHz' : ''} · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => void pickNativeAudioFiles()}><Plus size={16}/> Add more audio</button>}
 
           </section>
