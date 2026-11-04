@@ -549,6 +549,7 @@ async function transcribeOpusOfflineInSegments(
   onPart: (parts: string[]) => void,
   onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
+  durationOverrideSeconds?: number,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -587,7 +588,9 @@ async function transcribeOpusOfflineInSegments(
     const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
-    const duration = await getAudioDurationSeconds(file);
+    const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
+      ? durationOverrideSeconds as number
+      : await getAudioDurationSeconds(file);
     const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey + '|offline'); } catch { /* Continue without persistent resume. */ }
@@ -687,6 +690,7 @@ async function transcribeOpusInSegments(
   onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
   onLanguage: (language: string) => void,
+  durationOverrideSeconds?: number,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
@@ -712,7 +716,9 @@ async function transcribeOpusInSegments(
     const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
-    const duration = await getAudioDurationSeconds(file);
+    const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
+      ? durationOverrideSeconds as number
+      : await getAudioDurationSeconds(file);
     const defaultSegmentSeconds = Math.min(90, getAudioSegmentSeconds('online')); // Keep Android Go working sets modest.
     const overlapSeconds = 2;
     const fileKey = await makeAudioFileKey(file);
@@ -1024,6 +1030,7 @@ function App() {
       onPart,
       onTimedParts,
       () => setStatus('Preparing offline transcription…'),
+      selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
@@ -1041,6 +1048,7 @@ function App() {
             onTimedParts,
             setStatus,
             language => setFiles(current => current.map(item => item.id === selected.id ? { ...item, detectedLanguage: language } : item)),
+            selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
           );
         } catch (onlineProblem) {
           if (mode === 'online') throw onlineProblem;
