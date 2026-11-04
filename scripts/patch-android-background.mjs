@@ -517,7 +517,7 @@ public class TranscriptionForegroundService extends Service {
 }`;
 
 await writeFile(join(javaDir, 'BackgroundTranscriptionPlugin.java'), plugin);
-await writeFile(join(javaDir, 'NativeAudioFilesPlugin.java'), nativeAudioPlugin);\nawait writeFile(join(javaDir, 'NativeSpeechPlugin.java'), nativeSpeechPlugin);
+await writeFile(join(javaDir, 'NativeAudioFilesPlugin.java'), nativeAudioPlugin);
 await writeFile(join(javaDir, 'TranscriptionForegroundService.java'), service);
 
 const manifestPath = join(root, 'android/app/src/main/AndroidManifest.xml');
@@ -540,8 +540,8 @@ await writeFile(manifestPath, manifest);
 const activityPath = join(javaDir, 'MainActivity.java');
 let activity = await readFile(activityPath, 'utf8');
 if (!activity.includes('BackgroundTranscriptionPlugin')) {
-  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;\nimport com.novaris.auroravoicetext.NativeAudioFilesPlugin;\\nimport com.novaris.auroravoicetext.NativeSpeechPlugin;');
-  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        registerPlugin(NativeAudioFilesPlugin.class);\\n        registerPlugin(NativeSpeechPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
+  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;\nimport com.novaris.auroravoicetext.NativeAudioFilesPlugin;\nimport com.novaris.auroravoicetext.NativeSpeechPlugin;');
+  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        registerPlugin(NativeAudioFilesPlugin.class);\n        registerPlugin(NativeSpeechPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
 }
 await writeFile(activityPath, activity);
 console.log('Patched Android foreground transcription and native Vosk speech recognition.');
