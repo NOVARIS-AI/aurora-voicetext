@@ -368,11 +368,30 @@ public class NativeAudioFilesPlugin extends Plugin {
         try {
             retriever.setDataSource(file.getAbsolutePath());
             String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-            return value == null ? 0L : Long.parseLong(value);
+            if (value != null) {
+                long duration = Long.parseLong(value);
+                if (duration > 0) return duration;
+            }
+        } catch (Exception ignored) {
+            // Try MediaExtractor metadata below for formats the retriever cannot inspect.
+        } finally {
+            try { retriever.release(); } catch (Exception ignored) { }
+        }
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(file.getAbsolutePath());
+            long longestDurationUs = 0L;
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                    longestDurationUs = Math.max(longestDurationUs, format.getLong(MediaFormat.KEY_DURATION));
+                }
+            }
+            return longestDurationUs > 0 ? longestDurationUs / 1000L : 0L;
         } catch (Exception ignored) {
             return 0L;
         } finally {
-            try { retriever.release(); } catch (Exception ignored) { }
+            extractor.release();
         }
     }
 
