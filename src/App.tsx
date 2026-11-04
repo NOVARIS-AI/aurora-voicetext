@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -552,7 +552,7 @@ async function transcribeOpusOfflineInSegments(
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-  const inputPath = '/audio-input/' + file.name;
+  const inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
   let timedSegments: TimedSegment[] = [];
@@ -581,7 +581,8 @@ async function transcribeOpusOfflineInSegments(
     });
     // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
     await ffmpeg.createDir('/audio-input');
-    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
+    const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
+    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
     const fileKey = await makeAudioFileKey(file);
@@ -684,7 +685,7 @@ async function transcribeOpusInSegments(
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-  const inputPath = '/audio-input/' + file.name;
+  const inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-online-current.mp3';
   const toBase64 = (bytes: Uint8Array) => {
     let binary = '';
@@ -700,7 +701,8 @@ async function transcribeOpusInSegments(
     });
     // Create the mount point before attaching the selected File to FFmpeg's virtual filesystem.
     await ffmpeg.createDir('/audio-input');
-    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [file] }, '/audio-input');
+    const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
+    const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
     const defaultSegmentSeconds = Math.min(90, getAudioSegmentSeconds()); // Keep Android Go working sets modest.
