@@ -396,7 +396,6 @@ async function downloadFile(name: string, content: string | Blob, type: string):
       data: btoa(binary),
       directory: Directory.Cache,
       recursive: true,
-      mimeType: type,
     });
     await Share.share({
       title: name,
@@ -881,7 +880,6 @@ async function transcribeOpusInSegments(
         totalChunks: totalParts,
         detectLanguage: true,
         speakerLabels: true,
-        languageHint: 'Nigerian English and Nigerian Pidgin (Naija Pidgin). Preserve exact words, names, local expressions and code-switching as spoken. Do not translate Pidgin into Standard English, do not paraphrase, and do not invent words when speech is unclear.',
       });
       // Transcription POSTs are not safe to retry blindly: a timed-out
       // request may still be processing and could create duplicate provider jobs.
