@@ -226,7 +226,7 @@ public class NativeAudioFilesPlugin extends Plugin {
 
     // Decode only the requested section with Android MediaCodec, downmix to mono,
     // resample to 16 kHz, and return a small WAV payload for the speech engine.
-    private byte[] decodePcmWavSection(File file, double startSeconds, double durationSeconds) throws Exception {
+    static byte[] decodePcmWavSection(File file, double startSeconds, double durationSeconds) throws Exception {
         final long startUs = (long) (startSeconds * 1000000.0);
         final long endUs = (long) ((startSeconds + durationSeconds) * 1000000.0);
         MediaExtractor extractor = new MediaExtractor();
@@ -351,14 +351,14 @@ public class NativeAudioFilesPlugin extends Plugin {
         }
     }
 
-    private void writeIntLE(ByteArrayOutputStream output, int value) {
+    private static void writeIntLE(ByteArrayOutputStream output, int value) {
         output.write(value & 0xff);
         output.write((value >> 8) & 0xff);
         output.write((value >> 16) & 0xff);
         output.write((value >> 24) & 0xff);
     }
 
-    private void writeShortLE(ByteArrayOutputStream output, int value) {
+    private static void writeShortLE(ByteArrayOutputStream output, int value) {
         output.write(value & 0xff);
         output.write((value >> 8) & 0xff);
     }
@@ -512,8 +512,15 @@ public class TranscriptionForegroundService extends Service {
 }`;
 
 await writeFile(join(javaDir, 'BackgroundTranscriptionPlugin.java'), plugin);
-await writeFile(join(javaDir, 'NativeAudioFilesPlugin.java'), nativeAudioPlugin);
+await writeFile(join(javaDir, 'NativeAudioFilesPlugin.java'), nativeAudioPlugin);\nawait writeFile(join(javaDir, 'NativeSpeechPlugin.java'), nativeSpeechPlugin);
 await writeFile(join(javaDir, 'TranscriptionForegroundService.java'), service);
+
+const appGradlePath = join(root, 'android/app/build.gradle');
+let appGradle = await readFile(appGradlePath, 'utf8');
+if (!appGradle.includes('com.alphacephei:vosk-android')) {
+  appGradle = appGradle.replace(/dependencies\\s*\\{/, match => match + "\\n    implementation 'com.alphacephei:vosk-android:0.3.75'");
+}
+await writeFile(appGradlePath, appGradle);
 
 const manifestPath = join(root, 'android/app/src/main/AndroidManifest.xml');
 let manifest = await readFile(manifestPath, 'utf8');
@@ -535,8 +542,8 @@ await writeFile(manifestPath, manifest);
 const activityPath = join(javaDir, 'MainActivity.java');
 let activity = await readFile(activityPath, 'utf8');
 if (!activity.includes('BackgroundTranscriptionPlugin')) {
-  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;\nimport com.novaris.auroravoicetext.NativeAudioFilesPlugin;');
-  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        registerPlugin(NativeAudioFilesPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
+  activity = activity.replace('import com.getcapacitor.BridgeActivity;', 'import com.getcapacitor.BridgeActivity;\nimport android.os.Bundle;\nimport com.novaris.auroravoicetext.BackgroundTranscriptionPlugin;\nimport com.novaris.auroravoicetext.NativeAudioFilesPlugin;\\nimport com.novaris.auroravoicetext.NativeSpeechPlugin;');
+  activity = activity.replace('public class MainActivity extends BridgeActivity {', 'public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        registerPlugin(BackgroundTranscriptionPlugin.class);\n        registerPlugin(NativeAudioFilesPlugin.class);\\n        registerPlugin(NativeSpeechPlugin.class);\n        super.onCreate(savedInstanceState);\n    }');
 }
 await writeFile(activityPath, activity);
-console.log('Patched Android foreground transcription service.');
+console.log('Patched Android foreground transcription and native Vosk speech recognition.');
