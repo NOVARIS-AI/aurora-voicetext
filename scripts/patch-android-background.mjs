@@ -515,13 +515,6 @@ await writeFile(join(javaDir, 'BackgroundTranscriptionPlugin.java'), plugin);
 await writeFile(join(javaDir, 'NativeAudioFilesPlugin.java'), nativeAudioPlugin);\nawait writeFile(join(javaDir, 'NativeSpeechPlugin.java'), nativeSpeechPlugin);
 await writeFile(join(javaDir, 'TranscriptionForegroundService.java'), service);
 
-const appGradlePath = join(root, 'android/app/build.gradle');
-let appGradle = await readFile(appGradlePath, 'utf8');
-if (!appGradle.includes('com.alphacephei:vosk-android')) {
-  appGradle = appGradle.replace(/dependencies\\s*\\{/, match => match + "\\n    implementation 'com.alphacephei:vosk-android:0.3.75'");
-}
-await writeFile(appGradlePath, appGradle);
-
 const manifestPath = join(root, 'android/app/src/main/AndroidManifest.xml');
 let manifest = await readFile(manifestPath, 'utf8');
 const permissions = [
