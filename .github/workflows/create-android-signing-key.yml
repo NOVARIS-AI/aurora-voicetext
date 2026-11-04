@@ -1,0 +1,41 @@
+name: Create AURORA VoiceText signing key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create-signing-key:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate a dedicated persistent debug signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p signing-output
+          keytool -genkeypair -v \
+            -keystore signing-output/aurora-voicetext-debug.keystore \
+            -storetype JKS \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=AURORA VoiceText, OU=Android, O=NOVARIS AI, L=Benin City, ST=Edo, C=NG"
+          keytool -list -v \
+            -keystore signing-output/aurora-voicetext-debug.keystore \
+            -storepass android \
+            -alias androiddebugkey | awk '/SHA256:/{print "SIGNING_CERT_SHA256=" $2; exit}'
+          base64 -w 0 signing-output/aurora-voicetext-debug.keystore > signing-output/AURORA_VOICETEXT_KEYSTORE_BASE64.txt
+          echo
+          echo "Signing key generated. The private keystore is provided only in the short-lived private-repository artifact."
+      - name: Upload signing key for owner to save as a repository secret
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-voicetext-signing-key
+          path: signing-output/AURORA_VOICETEXT_KEYSTORE_BASE64.txt
+          if-no-files-found: error
+          retention-days: 1
