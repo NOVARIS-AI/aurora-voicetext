@@ -239,6 +239,28 @@ async function removeSavedCheckpoint(fileKey: string): Promise<void> {
   } finally { db.close(); }
 }
 
+async function pruneSavedCheckpoints(maxAgeMs = 30 * 24 * 60 * 60 * 1000): Promise<void> {
+  const db = await openCheckpointDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('checkpoints', 'readwrite');
+      const store = transaction.objectStore('checkpoints');
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const savedAt = Number((cursor.value as { savedAt?: number }).savedAt || 0);
+        if (!savedAt || Date.now() - savedAt > maxAgeMs) cursor.delete();
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error || new Error('Could not inspect saved transcription checkpoints.'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Checkpoint retention cleanup failed.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Checkpoint retention cleanup was interrupted.'));
+    });
+  } finally { db.close(); }
+}
+
 /**
  * Keep decoder working sets smaller on constrained phones.
  * This reduces per-section memory use; it does not yet make whole-file
@@ -899,6 +921,12 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
+
+  useEffect(() => {
+    void pruneSavedCheckpoints().catch(() => {
+      // Checkpoint cleanup is best-effort; saved transcripts remain untouched.
+    });
+  }, []);
 
   // Keep Android's display awake during an active foreground transcription.
   // This does not keep JavaScript running after Android backgrounds or force-stops the app.
