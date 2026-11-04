@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
@@ -379,15 +381,40 @@ function safeFileBaseName(value: string, fallback = 'aurora-transcript'): string
   return cleaned || fallback;
 }
 
-function downloadFile(name: string, content: string | Blob, type: string) {
-  const url = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type }));
+async function downloadFile(name: string, content: string | Blob, type: string): Promise<void> {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  if (Capacitor.isNativePlatform()) {
+    // Android WebView does not reliably honour <a download>. Save into app cache
+    // and open the native share sheet so users can save to Downloads/Drive/etc.
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 0x8000)));
+    }
+    const saved = await Filesystem.writeFile({
+      path: name,
+      data: btoa(binary),
+      directory: Directory.Cache,
+      recursive: true,
+      mimeType: type,
+    });
+    await Share.share({
+      title: name,
+      text: 'Exported from AURORA VoiceText',
+      files: [saved.uri],
+      dialogTitle: 'Save or share your AURORA export',
+    });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = name;
+  anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 function normalizeTranscriptForCompare(value: string): string {
@@ -854,6 +881,7 @@ async function transcribeOpusInSegments(
         totalChunks: totalParts,
         detectLanguage: true,
         speakerLabels: true,
+        languageHint: 'Nigerian English and Nigerian Pidgin (Naija Pidgin). Preserve exact words, names, local expressions and code-switching as spoken. Do not translate Pidgin into Standard English, do not paraphrase, and do not invent words when speech is unclear.',
       });
       // Transcription POSTs are not safe to retry blindly: a timed-out
       // request may still be processing and could create duplicate provider jobs.
@@ -1330,7 +1358,7 @@ function App() {
           ...paragraphs
         ] }] });
         const blob = await Packer.toBlob(doc);
-        downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        await downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
         setStatus(includeTimestamps && timedSegments?.length && !timestampsCoverTranscript
           ? 'DOCX exported with the complete transcript. Timestamps were omitted because the timed segments did not cover all edited text.'
@@ -1359,7 +1387,7 @@ function App() {
       vtt: { ext: 'vtt', mime: 'text/vtt;charset=utf-8', text: timestampsCoverTranscript ? createTimedSubtitles(timedSegments!, 'vtt') : createEstimatedSubtitles(text, 'vtt') },
     };
     const selected = extensions[exportType] ?? extensions.txt;
-    downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
+    await downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
     if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'The timing data did not cover all transcript text; exported estimated timings so no words are omitted.');
     else if (includeTimestamps && timedSegments?.length && !timestampsCoverTranscript) setStatus('Exported the complete transcript without timestamps because the timing data did not cover all edited text.');
     else if (includeTimestamps && timestampsCoverTranscript) setStatus('Exported the complete transcript with timestamps.');
@@ -1436,7 +1464,7 @@ function App() {
     finally { setSubtitleBusy(false); }
   }
 
-  function createSubtitlesFromTranscript(format: 'srt' | 'vtt') {
+  async function createSubtitlesFromTranscript(format: 'srt' | 'vtt') {
     if (!active?.transcript.trim()) { setSubtitleStatus('Choose a recording with a transcript first.'); return; }
     const segments = active.timedSegments || [];
     const segmentText = segments.map(segment => segment.text).join(' ');
@@ -1446,7 +1474,7 @@ function App() {
       : hasFullTiming ? createTimedSubtitles(segments, 'vtt') : createEstimatedSubtitles(active.transcript, 'vtt');
     const name = safeFileBaseName(active.file.name.replace(/\.[^.]+$/, ''), 'aurora-subtitles');
     setSubtitleText(output); setSubtitleFilename(name);
-    downloadFile(name + '.' + format, output, format === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8');
+    await downloadFile(name + '.' + format, output, format === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8');
     setSubtitleStatus(hasFullTiming ? 'Your speech-aligned subtitles are ready.' : 'Your subtitles are ready with estimated timing. Review them before use.');
   }
 
