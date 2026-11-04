@@ -116,3 +116,11 @@ export function chooseAudioSegmentSeconds({ native = false, memory, cores = 2, m
   if (cores <= 4) return 45;
   return ceiling;
 }
+
+/** Stop between audio sections without discarding completed checkpoints. */
+export function throwIfTranscriptionAborted(signal) {
+  if (!signal?.aborted) return;
+  const error = new Error('Transcription cancelled. Completed sections are saved; select the same recording and retry to resume.');
+  error.name = 'AbortError';
+  throw error;
+}
