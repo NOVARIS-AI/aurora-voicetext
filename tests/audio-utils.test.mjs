@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText } from '../src/audio-utils.js';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName } from '../src/audio-utils.js';
 
 test('merges duplicate words at section boundaries', () => {
   assert.equal(
@@ -80,4 +80,11 @@ test('normalizes SRT timestamps and adds the WebVTT header', () => {
 test('handles empty subtitle input and strips a Unicode BOM', () => {
   assert.equal(normalizeSubtitleText('', 'srt'), '');
   assert.equal(normalizeSubtitleText('\uFEFFWEBVTT\n', 'vtt'), 'WEBVTT\n');
+});
+
+
+test('creates safe FFmpeg input names from user-selected filenames', () => {
+  assert.equal(safeAudioInputName('meeting recording.opus'), 'source-audio.opus');
+  assert.equal(safeAudioInputName('../../folder\\\\voice note.M4A'), 'source-audio.m4a');
+  assert.equal(safeAudioInputName('no-extension'), 'source-audio.audio');
 });
