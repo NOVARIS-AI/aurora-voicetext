@@ -124,3 +124,15 @@ export function throwIfTranscriptionAborted(signal) {
   error.name = 'AbortError';
   throw error;
 }
+
+
+/** Build a stable Android checkpoint identity from the imported audio content. */
+export function createNativeAudioResumeKey({ name, size, mimeType, contentHash } = {}) {
+  const safeName = String(name || '').trim();
+  const byteSize = Number(size);
+  const hash = String(contentHash || '').toLowerCase();
+  if (!safeName || !Number.isSafeInteger(byteSize) || byteSize <= 0 || !/^[a-f0-9]{64}$/.test(hash)) {
+    throw new Error('Android audio identity is incomplete; re-import the recording before resuming.');
+  }
+  return ['native-audio-v1', safeName, byteSize, String(mimeType || 'application/octet-stream'), hash].join('|');
+}
