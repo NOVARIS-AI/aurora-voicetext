@@ -682,6 +682,7 @@ async function transcribeOpusOfflineInSegments(
         }
       }
       if (!transcript) {
+        if (useNativeSpeech) await nativeSpeech.releaseModel().catch(() => undefined);
         let decodedWav: Uint8Array;
         if (useNativeDecoder && nativeAudioPath) {
           const decoded = await nativeAudioFiles.decodeSegment({ path: nativeAudioPath, startSeconds: start, durationSeconds: length });
