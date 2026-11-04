@@ -25,6 +25,16 @@ public class BackgroundTranscriptionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void update(PluginCall call) {
+        String message = call.getString("message", "Transcription is processing.");
+        Intent intent = new Intent(getContext(), TranscriptionForegroundService.class);
+        intent.putExtra("status_message", message);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(intent);
+        else getContext().startService(intent);
+        call.resolve();
+    }
+
+    @PluginMethod
     public void stop(PluginCall call) {
         getContext().stopService(new Intent(getContext(), TranscriptionForegroundService.class));
         call.resolve();
@@ -84,7 +94,26 @@ public class TranscriptionForegroundService extends Service {
     // This service holds a foreground notification and CPU wake lock only. It does not
     // execute the WebView transcription engine independently if Android kills the app.
     // Do not resurrect a stale notification after the app process has gone away.
-    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_NOT_STICKY; }
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        String message = intent == null ? null : intent.getStringExtra("status_message");
+        if (message != null && !message.trim().isEmpty()) {
+            Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+            Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            PendingIntent pending = launch == null ? null : PendingIntent.getActivity(this, 0, launch,
+                Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT);
+            builder.setContentTitle("AURORA VoiceText")
+                .setContentText(message.length() > 120 ? message.substring(0, 117) + "..." : message)
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_PROGRESS);
+            if (pending != null) builder.setContentIntent(pending);
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (manager != null) manager.notify(NOTIFICATION_ID, builder.build());
+        }
+        return START_NOT_STICKY;
+    }
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public void onDestroy() {
