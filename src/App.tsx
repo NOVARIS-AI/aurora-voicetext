@@ -47,7 +47,8 @@ const VOSK_MODEL_CACHE_KEY = 'https://aurora-voicetext.local/offline-models/vosk
 // Send JSON API requests through Android's native HTTP stack in Capacitor builds.
  // This avoids WebView CORS restrictions without routing large model/audio downloads
  // through the native bridge. Browser builds continue to use standard fetch.
-async function postJson(url: string, payload: unknown, readTimeout = 120000): Promise<Response> {
+async function postJson(url: string, payload: unknown, readTimeout = 120000, signal?: AbortSignal): Promise<Response> {
+  throwIfTranscriptionAborted(signal);
   if (Capacitor.isNativePlatform()) {
     const nativeResponse = await CapacitorHttp.request({
       url,
@@ -58,6 +59,9 @@ async function postJson(url: string, payload: unknown, readTimeout = 120000): Pr
       connectTimeout: 20000,
       readTimeout,
     });
+    // CapacitorHttp does not expose AbortSignal cancellation; discard its result
+    // immediately if the user cancelled while the native request was in flight.
+    throwIfTranscriptionAborted(signal);
     const headers = new Headers({ 'Content-Type': 'application/json' });
     for (const [key, value] of Object.entries(nativeResponse.headers || {})) {
       if (typeof value === 'string') headers.set(key, value);
@@ -71,7 +75,7 @@ async function postJson(url: string, payload: unknown, readTimeout = 120000): Pr
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: readTimeout < 120000 ? AbortSignal.timeout(readTimeout) : undefined,
+    signal: signal || (readTimeout < 120000 ? AbortSignal.timeout(readTimeout) : undefined),
   });
 }
 
@@ -776,15 +780,17 @@ async function transcribeOpusInSegments(
       // Transcription POSTs are not safe to retry blindly: a timed-out
       // request may still be processing and could create duplicate provider jobs.
       // Try the primary once, then hand off to the independent Worker once.
-      const request = (url: string) => postJson(url, JSON.parse(payload), 120000);
+      const request = (url: string) => postJson(url, JSON.parse(payload), 120000, signal);
       let response: Response;
       try {
         response = await request(transcriptionApiUrl);
       } catch (primaryNetworkError) {
+        throwIfTranscriptionAborted(signal);
         if (!backupTranscriptionApiUrl) throw primaryNetworkError;
         response = await request(backupTranscriptionApiUrl);
       }
       let primaryFailure = '';
+      throwIfTranscriptionAborted(signal);
       if (!response.ok && backupTranscriptionApiUrl &&
           ([408, 425, 429].includes(response.status) || response.status >= 500)) {
         const primaryPayload = await response.clone().json().catch(() => ({})) as { error?: string };
@@ -793,6 +799,7 @@ async function transcribeOpusInSegments(
         // Do not retry a request after a successful response or a permanent 4xx.
         response = await request(backupTranscriptionApiUrl);
       }
+      throwIfTranscriptionAborted(signal);
       let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
       if (!response.ok) throw new Error((result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.') + (primaryFailure ? ' Primary service: ' + primaryFailure : ''));
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
@@ -801,7 +808,7 @@ async function transcribeOpusInSegments(
 
     let checkpointStorageWarningShown = false;
     for (let index = checkpoint.nextChunk; index < totalParts; index++) {
-      if (signal?.aborted) throw new Error('Transcription cancelled. Completed sections are saved; select the same recording and retry to resume.');
+      throwIfTranscriptionAborted(signal);
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       const encodeExitCode = await ffmpeg.exec([
