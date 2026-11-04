@@ -270,8 +270,13 @@ public class NativeAudioFilesPlugin extends Plugin {
                             inputDone = true;
                         } else {
                             long presentationTime = extractor.getSampleTime();
-                            decoder.queueInputBuffer(inputIndex, 0, size, presentationTime, 0);
-                            extractor.advance();
+                            if (presentationTime >= endUs) {
+                                decoder.queueInputBuffer(inputIndex, 0, 0, presentationTime, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                                inputDone = true;
+                            } else {
+                                decoder.queueInputBuffer(inputIndex, 0, size, presentationTime, 0);
+                                extractor.advance();
+                            }
                         }
                     }
                 }
