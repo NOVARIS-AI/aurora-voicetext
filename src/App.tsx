@@ -14,7 +14,7 @@ type Recording = { id: string; name: string; transcript: string; updatedAt: numb
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
-type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> }>; decodeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ wavBase64: string; sampleRate: number; channels: number; durationSeconds: number }> };
+type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; contentHash?: string; audioInfo?: NativeAudioDetails }> }>; decodeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ wavBase64: string; sampleRate: number; channels: number; durationSeconds: number }> };
 const nativeAudioFiles = registerPlugin<NativeAudioFilesBridge>('NativeAudioFiles');
 type NativeSpeechWord = { word: string; start: number; end: number; conf?: number };
 type NativeSpeechBridge = {
@@ -26,7 +26,7 @@ type NativeSpeechBridge = {
 const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
-type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
+type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
@@ -302,8 +302,13 @@ function isUsableCheckpoint(
     (checkpoint.segments === undefined || Array.isArray(checkpoint.segments));
 }
 
-async function makeAudioFileKey(file: File, nativePath?: string, nativeSize?: number): Promise<string> {
-  const identity = [file.name, nativeSize ?? file.size, file.lastModified, file.type, nativePath || ''].join('|');
+async function makeAudioFileKey(file: File, nativePath?: string, nativeSize?: number, nativeFingerprint?: string): Promise<string> {
+  // Android imports are copied to a new private path each time the user reopens a recording.
+  // Use a content hash rather than that temporary path/current import timestamp so checkpoints
+  // survive closing the app and selecting the same source recording again.
+  const identity = nativePath
+    ? [file.name, nativeSize ?? file.size, file.type, nativeFingerprint || ''].join('|')
+    : [file.name, file.size, file.lastModified, file.type].join('|');
   // Android native offline decoding reads directly from app-private storage; do not
   // materialize or hash the entire recording in the WebView just to create a resume key.
   if (nativePath) return identity;
@@ -590,6 +595,7 @@ async function transcribeOpusOfflineInSegments(
   signal?: AbortSignal,
   nativeAudioPath?: string,
   nativeAudioSize?: number,
+  nativeFingerprint?: string,
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const useNativeDecoder = Capacitor.isNativePlatform() && Boolean(nativeAudioPath);
@@ -639,7 +645,7 @@ async function transcribeOpusOfflineInSegments(
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
       : await getAudioDurationSeconds(file);
-    const fileKey = await makeAudioFileKey(file, nativeAudioPath, nativeAudioSize);
+    const fileKey = await makeAudioFileKey(file, nativeAudioPath, nativeAudioSize, nativeFingerprint);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey + '|offline'); } catch { /* Continue without persistent resume. */ }
     // Reuse the original section size on resume if device capability detection changes.
@@ -1019,12 +1025,12 @@ function App() {
     try {
       const result = await nativeAudioFiles.pick();
       const imported: File[] = [];
-      const nativeDetails: Array<{ path?: string; size?: number; durationMs?: number; audioInfo?: NativeAudioDetails }> = [];
+      const nativeDetails: Array<{ path?: string; size?: number; durationMs?: number; contentHash?: string; audioInfo?: NativeAudioDetails }> = [];
       for (const item of result.files || []) {
         // Keep Android imports on disk. The native offline decoder reads bounded sections
         // directly, avoiding a second full-size audio Blob in low-memory WebViews.
         imported.push(new File([], item.name, { type: item.mimeType || 'application/octet-stream', lastModified: Date.now() }));
-        nativeDetails.push({ path: item.path, size: item.size, durationMs: item.durationMs, audioInfo: item.audioInfo });
+        nativeDetails.push({ path: item.path, size: item.size, durationMs: item.durationMs, contentHash: item.contentHash, audioInfo: item.audioInfo });
       }
       addFiles(imported, nativeDetails);
     } catch (reason) {
@@ -1045,7 +1051,7 @@ function App() {
     return new File([blob], item.file.name, { type: item.file.type || blob.type || 'application/octet-stream', lastModified: item.file.lastModified });
   }
 
-  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ path?: string; size?: number; durationMs?: number; audioInfo?: NativeAudioDetails }>) {
+  function addFiles(list: FileList | File[] | null, nativeDetails?: Array<{ path?: string; size?: number; durationMs?: number; contentHash?: string; audioInfo?: NativeAudioDetails }>) {
     if (!list) return;
     const incoming = Array.from(list);
     const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file, index }) => {
@@ -1056,7 +1062,7 @@ function App() {
     if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
     const next = accepted.map(({ file, index }) => {
       const nativePath = nativeDetails?.[index]?.path;
-      return { id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), transcript: '', nativePath, nativeSize: nativeDetails?.[index]?.size, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeAudioInfo: nativeDetails?.[index]?.audioInfo };
+      return { id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), transcript: '', nativePath, nativeSize: nativeDetails?.[index]?.size, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeFingerprint: nativeDetails?.[index]?.contentHash, nativeAudioInfo: nativeDetails?.[index]?.audioInfo };
     });
     setFiles(current => [...current, ...next]);
     setActiveId(current => current ?? next[0].id);
@@ -1166,6 +1172,7 @@ function App() {
       controller.signal,
       selected.nativePath,
       selected.nativeSize,
+      selected.nativeFingerprint,
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
