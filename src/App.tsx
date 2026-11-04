@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -241,13 +241,10 @@ async function removeSavedCheckpoint(fileKey: string): Promise<void> {
  * This reduces per-section memory use; it does not yet make whole-file
  * FFmpeg input loading streaming/disk-backed.
  */
-function getAudioSegmentSeconds(): number {
+function getAudioSegmentSeconds(mode: 'online' | 'offline' = 'online'): number {
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   const cores = navigator.hardwareConcurrency || 2;
-  if (typeof memory === 'number' && memory <= 2) return 45;
-  if (typeof memory === 'number' && memory <= 4) return 75;
-  if (cores <= 4) return 75;
-  return 120;
+  return chooseAudioSegmentSeconds({ native: Capacitor.isNativePlatform(), memory, cores, mode });
 }
 
 function isUsableCheckpoint(
@@ -556,7 +553,7 @@ async function transcribeOpusOfflineInSegments(
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
   let timedSegments: TimedSegment[] = [];
-  const defaultSegmentSeconds = Math.min(60, getAudioSegmentSeconds());
+  const defaultSegmentSeconds = Math.min(60, getAudioSegmentSeconds('offline'));
   const overlapSeconds = 2;
   let offlineCoreUrl = '';
   let offlineWasmUrl = '';
@@ -713,7 +710,7 @@ async function transcribeOpusInSegments(
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = await getAudioDurationSeconds(file);
-    const defaultSegmentSeconds = Math.min(90, getAudioSegmentSeconds()); // Keep Android Go working sets modest.
+    const defaultSegmentSeconds = Math.min(90, getAudioSegmentSeconds('online')); // Keep Android Go working sets modest.
     const overlapSeconds = 2;
     const fileKey = await makeAudioFileKey(file);
     let saved: TranscriptionCheckpoint | null = null;
