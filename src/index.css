@@ -318,3 +318,19 @@ button:disabled{opacity:.52;cursor:not-allowed}
   .subtitle-create-actions{grid-template-columns:1fr}
   .subtitle-create-actions .text-button{grid-column:auto}
 }
+
+/* Branded in-app picker: never open the Android WebView's native select popup. */
+.app-select{position:relative;width:100%;min-width:0}
+.app-select-trigger{width:100%;min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid rgba(151,177,220,.2);border-radius:12px;background:rgba(13,21,37,.96);color:#eaf0ff;text-align:left;font:inherit;transition:border-color .16s,background .16s}
+.app-select-trigger:active,.app-select-trigger[aria-expanded="true"]{border-color:rgba(45,212,230,.72);background:#111d31}
+.app-select-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.app-select-trigger svg{flex:0 0 auto;color:#78dce7;transition:transform .16s}
+.app-select-trigger[aria-expanded="true"] svg{transform:rotate(180deg)}
+.app-select-dismiss{position:fixed;inset:0;z-index:79;border:0;background:transparent;padding:0;cursor:default}
+.app-select-menu{position:absolute;z-index:80;top:calc(100% + 7px);left:0;right:0;max-height:min(340px,55vh);overflow-y:auto;overscroll-behavior:contain;padding:6px;border:1px solid rgba(115,153,205,.24);border-radius:14px;background:#0c1423;box-shadow:0 18px 48px rgba(0,0,0,.52);scrollbar-width:thin}
+.app-select-group{padding:9px 10px 5px;color:#70d8e2;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.app-select-option{width:100%;min-height:40px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:#dbe6fa;text-align:left;font:inherit;font-size:13px}
+.app-select-option:active,.app-select-option:hover{background:rgba(87,128,184,.16)}
+.app-select-option.active{background:rgba(45,212,230,.12);color:#8ceaf0}
+.app-select-option svg{flex:0 0 auto;color:#51d7df}
+@media(max-width:600px){.app-select-menu{max-height:48vh}.app-select-option{min-height:44px}}
