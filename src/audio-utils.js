@@ -103,3 +103,16 @@ export function safeAudioInputName(value) {
   const safeExtension = /^[a-z0-9]{1,8}$/.test(extension) ? extension : 'audio';
   return 'source-audio.' + safeExtension;
 }
+
+/**
+ * Pick a conservative per-section duration. Android WebView deviceMemory is
+ * often missing, so native builds deliberately use smaller sections.
+ */
+export function chooseAudioSegmentSeconds({ native = false, memory, cores = 2, mode = 'online' } = {}) {
+  const ceiling = mode === 'offline' ? 60 : 90;
+  if (native) return 35;
+  if (typeof memory === 'number' && memory <= 2) return 30;
+  if (typeof memory === 'number' && memory <= 4) return 45;
+  if (cores <= 4) return 45;
+  return ceiling;
+}
