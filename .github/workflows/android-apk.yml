@@ -71,6 +71,9 @@ jobs:
       - name: Install Android foreground transcription service
         run: node scripts/patch-android-background.mjs
 
+      - name: Install native Android Vosk speech recognition
+        run: node scripts/patch-android-native-speech.mjs
+
       - name: Sync web assets into Android
         run: npx cap sync android
 
