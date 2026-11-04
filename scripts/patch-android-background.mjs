@@ -110,6 +110,7 @@ public class NativeAudioFilesPlugin extends Plugin {
             call.reject("Could not prepare private audio storage.");
             return;
         }
+        prunePrivateAudioImports(directory);
         try {
             int index = 0;
             for (Uri uri : selected) {
@@ -140,6 +141,30 @@ public class NativeAudioFilesPlugin extends Plugin {
             call.resolve(response);
         } catch (Exception error) {
             call.reject("Could not import the selected audio: " + error.getMessage(), error);
+        }
+    }
+
+    // Private imports are temporary working copies, not permanent archival storage.
+    // Remove copies older than seven days and cap this cache at 1 GiB, oldest first.
+    private void prunePrivateAudioImports(File directory) {
+        File[] entries = directory.listFiles();
+        if (entries == null) return;
+        final long now = System.currentTimeMillis();
+        final long maxAge = 7L * 24L * 60L * 60L * 1000L;
+        final long maxBytes = 1024L * 1024L * 1024L;
+        java.util.Arrays.sort(entries, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        long total = 0L;
+        for (File entry : entries) {
+            if (!entry.isFile()) continue;
+            if (now - entry.lastModified() > maxAge) entry.delete();
+            else total += entry.length();
+        }
+        entries = directory.listFiles();
+        if (entries == null || total <= maxBytes) return;
+        java.util.Arrays.sort(entries, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        for (File entry : entries) {
+            if (total <= maxBytes) break;
+            if (entry.isFile()) { long size = entry.length(); if (entry.delete()) total -= size; }
         }
     }
 
