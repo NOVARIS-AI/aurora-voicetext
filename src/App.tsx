@@ -16,6 +16,13 @@ type TimedSegment = { start: number; end: number; text: string; speaker?: string
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
 type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; audioInfo?: NativeAudioDetails }> }>; decodeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ wavBase64: string; sampleRate: number; channels: number; durationSeconds: number }> };
 const nativeAudioFiles = registerPlugin<NativeAudioFilesBridge>('NativeAudioFiles');
+type NativeSpeechWord = { word: string; start: number; end: number; conf?: number };
+type NativeSpeechBridge = {
+  prepareModel: () => Promise<{ ready: boolean; model: string }>;
+  transcribeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ text: string; words?: NativeSpeechWord[]; engine: string }>;
+  cancel: () => Promise<void>;
+};
+const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeAudioInfo?: NativeAudioDetails };
@@ -585,6 +592,9 @@ async function transcribeOpusOfflineInSegments(
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const useNativeDecoder = Capacitor.isNativePlatform() && Boolean(nativeAudioPath);
+  const useNativeSpeech = Capacitor.isNativePlatform() && Boolean(nativeAudioPath);
+  const cancelNativeSpeech = () => { if (useNativeSpeech) void nativeSpeech.cancel().catch(() => undefined); };
+  signal?.addEventListener('abort', cancelNativeSpeech, { once: true });
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   const inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-offline-current.wav';
@@ -651,54 +661,76 @@ async function transcribeOpusOfflineInSegments(
       const start = index * stepSeconds;
       const length = Math.min(segmentSeconds, duration - start);
       onStatus('Preparing offline section ' + (index + 1) + ' of ' + total + '…');
-      let decodedWav: Uint8Array;
-      if (useNativeDecoder && nativeAudioPath) {
-        const decoded = await nativeAudioFiles.decodeSegment({ path: nativeAudioPath, startSeconds: start, durationSeconds: length });
-        const binary = atob(decoded.wavBase64);
-        decodedWav = new Uint8Array(binary.length);
-        for (let byte = 0; byte < binary.length; byte++) decodedWav[byte] = binary.charCodeAt(byte);
-      } else {
-        const decodeExitCode = await ffmpeg.exec([
-          '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
-          '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
-          '-f', 'wav', outputName,
-        ]);
-        if (decodeExitCode !== 0) throw new Error('FFmpeg could not decode offline section ' + (index + 1) + ' (exit ' + decodeExitCode + '). Check the audio format or try MP3.');
-        const output = await ffmpeg.readFile(outputName);
-        if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
-        decodedWav = output;
-      }
-      const audio = pcmToFloat(decodedWav);
-      if (audioRms(audio) < 0.0015) {
-        parts.push('');
-      } else {
-        let transcript = '';
-        let whisperProblem = '';
+      let transcript = '';
+      let whisperProblem = '';
+      if (useNativeSpeech && nativeAudioPath) {
         try {
-          onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
-          const whisper = await getWhisper(onStatus);
-          const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5, return_timestamps: true });
-          transcript = result.text?.trim() || '';
-          if (!transcript) throw new Error('Whisper Tiny returned an empty result.');
-          const sectionSegments = (result.chunks ?? []).map(chunk => {
-            const startTime = chunk.timestamp?.[0];
-            const endTime = chunk.timestamp?.[1] ?? (index === total - 1 ? audio.length / 16000 : null);
-            if (typeof startTime !== 'number' || typeof endTime !== 'number' || endTime <= startTime || !chunk.text?.trim()) return null;
-            if (index > 0 && startTime < overlapSeconds) return null;
-            return { start: start + startTime, end: start + endTime, text: chunk.text.trim() };
+          onStatus('Native Android speech recognition · section ' + (index + 1) + ' of ' + total + '…');
+          const nativeResult = await nativeSpeech.transcribeSegment({ path: nativeAudioPath, startSeconds: start, durationSeconds: length });
+          transcript = nativeResult.text?.trim() || '';
+          const nativeSegments = (nativeResult.words ?? []).map(word => {
+            if (!word.word?.trim() || !Number.isFinite(word.start) || !Number.isFinite(word.end) || word.end <= word.start) return null;
+            if (index > 0 && word.start < overlapSeconds) return null;
+            return { start: start + word.start, end: start + word.end, text: word.word.trim() };
           }).filter((segment): segment is TimedSegment => segment !== null);
-          timedSegments.push(...sectionSegments);
+          timedSegments.push(...nativeSegments);
+          if (!transcript) whisperProblem = 'Native Vosk returned no speech text.';
         } catch (reason) {
-          whisperProblem = reason instanceof Error ? reason.message : String(reason);
+          throwIfTranscriptionAborted(signal);
+          whisperProblem = 'Native Vosk: ' + (reason instanceof Error ? reason.message : String(reason));
         }
-        if (!transcript) {
+      }
+      if (!transcript) {
+        let decodedWav: Uint8Array;
+        if (useNativeDecoder && nativeAudioPath) {
+          const decoded = await nativeAudioFiles.decodeSegment({ path: nativeAudioPath, startSeconds: start, durationSeconds: length });
+          const binary = atob(decoded.wavBase64);
+          decodedWav = new Uint8Array(binary.length);
+          for (let byte = 0; byte < binary.length; byte++) decodedWav[byte] = binary.charCodeAt(byte);
+        } else {
+          const decodeExitCode = await ffmpeg.exec([
+            '-y', '-ss', String(start), '-t', String(length), '-i', inputPath,
+            '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+            '-f', 'wav', outputName,
+          ]);
+          if (decodeExitCode !== 0) throw new Error('FFmpeg could not decode offline section ' + (index + 1) + ' (exit ' + decodeExitCode + '). Check the audio format or try MP3.');
+          const output = await ffmpeg.readFile(outputName);
+          if (typeof output === 'string') throw new Error('The offline decoder returned invalid audio data.');
+          decodedWav = output;
+        }
+        const audio = pcmToFloat(decodedWav);
+        if (audioRms(audio) < 0.0015) {
+          parts.push('');
+        } else {
           try {
-            onStatus('Whisper Tiny unavailable. Trying Vosk offline · section ' + (index + 1) + ' of ' + total + '…');
-            transcript = await transcribeWithVosk(audio);
-          } catch (voskProblem) {
-            throw new Error('Offline engines could not transcribe section ' + (index + 1) + '. Whisper: ' + whisperProblem + ' Vosk: ' + (voskProblem instanceof Error ? voskProblem.message : String(voskProblem)));
+            onStatus('On-device Whisper · section ' + (index + 1) + ' of ' + total + '…');
+            const whisper = await getWhisper(onStatus);
+            const result = await whisper(audio, { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5, return_timestamps: true });
+            transcript = result.text?.trim() || '';
+            if (!transcript) throw new Error('Whisper Tiny returned an empty result.');
+            const sectionSegments = (result.chunks ?? []).map(chunk => {
+              const startTime = chunk.timestamp?.[0];
+              const endTime = chunk.timestamp?.[1] ?? (index === total - 1 ? audio.length / 16000 : null);
+              if (typeof startTime !== 'number' || typeof endTime !== 'number' || endTime <= startTime || !chunk.text?.trim()) return null;
+              if (index > 0 && startTime < overlapSeconds) return null;
+              return { start: start + startTime, end: start + endTime, text: chunk.text.trim() };
+            }).filter((segment): segment is TimedSegment => segment !== null);
+            timedSegments.push(...sectionSegments);
+          } catch (reason) {
+            const detail = reason instanceof Error ? reason.message : String(reason);
+            whisperProblem = [whisperProblem, 'Whisper: ' + detail].filter(Boolean).join(' ');
           }
+          if (!transcript) {
+            try {
+              onStatus('Browser Vosk fallback · section ' + (index + 1) + ' of ' + total + '…');
+              transcript = await transcribeWithVosk(audio);
+            } catch (voskProblem) {
+              throw new Error('Offline engines could not transcribe section ' + (index + 1) + '. ' + whisperProblem + ' Browser Vosk: ' + (voskProblem instanceof Error ? voskProblem.message : String(voskProblem)));
+            }
+          }
+          parts.push(transcript);
         }
+      } else {
         parts.push(transcript);
       }
       checkpoint.parts = parts;
@@ -726,6 +758,7 @@ async function transcribeOpusOfflineInSegments(
   } finally {
     if (offlineCoreUrl) URL.revokeObjectURL(offlineCoreUrl);
     if (offlineWasmUrl) URL.revokeObjectURL(offlineWasmUrl);
+    signal?.removeEventListener('abort', cancelNativeSpeech);
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
     try { await ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
@@ -1034,14 +1067,24 @@ function App() {
     const failures: string[] = [];
     const describe = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
-    // Verify Vosk before loading Whisper so two large speech models are not resident together.
-    try {
-      await cacheVoskModel(() => setOfflinePrepStatus('Preparing offline transcription…'));
-      setOfflinePrepStatus('Preparing offline transcription…');
-      await verifyVoskEngine();
-      setOfflinePrepStatus('Vosk model and recognizer passed initialization.');
-    } catch (reason) {
-      failures.push('Vosk backup: ' + describe(reason));
+    // Android uses the real native Vosk runtime and keeps the PWA's browser Vosk engine separate.
+    if (Capacitor.isNativePlatform()) {
+      try {
+        setOfflinePrepStatus('Downloading the native English speech model (about 40 MB)…');
+        await nativeSpeech.prepareModel();
+        setOfflinePrepStatus('Native Android Vosk speech model is installed and initialized.');
+      } catch (reason) {
+        failures.push('Native Android Vosk: ' + describe(reason));
+      }
+    } else {
+      try {
+        await cacheVoskModel(() => setOfflinePrepStatus('Preparing offline transcription…'));
+        setOfflinePrepStatus('Preparing offline transcription…');
+        await verifyVoskEngine();
+        setOfflinePrepStatus('Browser Vosk model and recognizer passed initialization.');
+      } catch (reason) {
+        failures.push('Browser Vosk backup: ' + describe(reason));
+      }
     }
 
     // Load the actual FFmpeg WASM core, not merely download its two files.
