@@ -296,7 +296,8 @@ public class NativeAudioFilesPlugin extends Plugin {
                             long frameTimeUs = info.presentationTimeUs + ((long) frame * 1000000L / rate);
                             if (frameTimeUs < startUs || frameTimeUs >= endUs) continue;
                             int sum = 0;
-                            for (int channel = 0; channel < channels; channel++) sum += output.getShort();
+                            int frameOffset = info.offset + frame * bytesPerFrame;
+                            for (int channel = 0; channel < channels; channel++) sum += output.getShort(frameOffset + channel * 2);
                             short mono = (short) (sum / channels);
                             monoPcm.write(mono & 0xff);
                             monoPcm.write((mono >> 8) & 0xff);
