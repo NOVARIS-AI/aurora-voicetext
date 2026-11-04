@@ -97,3 +97,13 @@ test('chooses conservative audio sections for low-memory and Android devices', (
   assert.equal(chooseAudioSegmentSeconds({ memory: 8, cores: 8, mode: 'offline' }), 60);
   assert.equal(chooseAudioSegmentSeconds({ memory: 8, cores: 8, mode: 'online' }), 90);
 });
+
+
+test('cancels only at a safe section boundary with a resumable message', async () => {
+  const { throwIfTranscriptionAborted } = await import('../src/audio-utils.js');
+  assert.doesNotThrow(() => throwIfTranscriptionAborted({ aborted: false }));
+  assert.throws(
+    () => throwIfTranscriptionAborted({ aborted: true }),
+    error => error.name === 'AbortError' && /completed sections are saved/i.test(error.message),
+  );
+});
