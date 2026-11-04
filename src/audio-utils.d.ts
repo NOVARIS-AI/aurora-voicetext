@@ -5,4 +5,4 @@ export function normalizeSubtitleText(value: string, format?: 'srt' | 'vtt'): st
 export function safeAudioInputName(value: string): string;
 export function chooseAudioSegmentSeconds(options?: { native?: boolean; memory?: number; cores?: number; mode?: 'online' | 'offline' }): number;
 export function throwIfTranscriptionAborted(signal?: { aborted: boolean }): void;
-export function createNativeAudioResumeKey(input: { name: string; size: number; mimeType?: string; contentHash: string }): string;
+export function createNativeAudioResumeKey(input: { name: string; size: number; mimeType?: string; contentHash?: string }): string;
