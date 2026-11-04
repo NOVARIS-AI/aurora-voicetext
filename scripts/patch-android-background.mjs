@@ -79,6 +79,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.security.MessageDigest;
 
 @CapacitorPlugin(name = "NativeAudioFiles")
 public class NativeAudioFilesPlugin extends Plugin {
@@ -132,6 +133,7 @@ public class NativeAudioFilesPlugin extends Plugin {
                 createdImports.add(destination);
                 long availableBytes = directory.getUsableSpace();
                 if (availableBytes < reserveBytes) throw new IllegalStateException("Not enough free storage. Keep at least 256 MB free before importing audio.");
+                MessageDigest contentDigest = MessageDigest.getInstance("SHA-256");
                 try (InputStream input = getContext().getContentResolver().openInputStream(uri);
                      FileOutputStream output = new FileOutputStream(destination)) {
                     if (input == null) throw new IllegalStateException("Android could not open " + name);
@@ -145,10 +147,13 @@ public class NativeAudioFilesPlugin extends Plugin {
                         if (batchBytes > maxBatchBytes) throw new IllegalStateException("This selection exceeds the 512 MB total import limit. Import fewer files at a time.");
                         if (fileBytes + reserveBytes > directory.getUsableSpace()) throw new IllegalStateException("Android is running low on storage. Free space and try again.");
                         output.write(buffer, 0, count);
+                        contentDigest.update(buffer, 0, count);
                     }
                 }
+                String contentHash = toHex(contentDigest.digest());
                 JSObject item = new JSObject();
                 item.put("path", "file://" + destination.getAbsolutePath());
+                item.put("contentHash", contentHash);
                 item.put("name", name);
                 item.put("size", destination.length());
                 item.put("mimeType", getContext().getContentResolver().getType(uri));
@@ -167,6 +172,12 @@ public class NativeAudioFilesPlugin extends Plugin {
             }
             call.reject("Could not import the selected audio: " + error.getMessage(), error);
         }
+    }
+
+    private String toHex(byte[] bytes) {
+        StringBuilder value = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes) value.append(String.format(java.util.Locale.ROOT, "%02x", item & 0xff));
+        return value.toString();
     }
 
     // Private imports are temporary working copies, not permanent archival storage.
