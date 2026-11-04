@@ -43,6 +43,25 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Restore persistent AURORA Android signing identity
+        env:
+          KEYSTORE_B64: ${{ secrets.AURORA_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Missing AURORA_DEBUG_KEYSTORE_BASE64. Add the same persistent keystore secret used by the AURORA Voice Assistant repository."
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          ACTUAL_SHA=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
+          EXPECTED_SHA="20B1446E73429B7B7304EBA80B2D8D320D2E42F7E35C72153FC67B0A1BF83C7D"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::The restored Android signing certificate does not match the established AURORA signing identity."
+            exit 1
+          fi
+          echo "Persistent AURORA signing identity restored and verified."
+
       - name: Install dependencies
         run: npm install
 
@@ -65,6 +84,11 @@ jobs:
       - name: Generate Android project
         run: npx cap add android
 
+      - name: Set monotonic Android app version
+        run: node scripts/patch-android-version.mjs
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
       - name: Generate AURORA VoiceText launcher icons
         run: python3 scripts/generate-android-icons.py
 
@@ -77,16 +101,24 @@ jobs:
       - name: Sync web assets into Android
         run: npx cap sync android
 
-      - name: Build debug APK
+      - name: Build debug APK with persistent signing identity
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Verify and prepare direct APK download
+      - name: Verify APK signature and prepare direct download
         run: |
-          test -s android/app/build/outputs/apk/debug/app-debug.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk AURORA-VoiceText.apk
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          apksigner verify --verbose --print-certs "$APK"
+          ACTUAL_SHA=$(apksigner verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')
+          EXPECTED_SHA="20B1446E73429B7B7304EBA80B2D8D320D2E42F7E35C72153FC67B0A1BF83C7D"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::APK signing certificate mismatch."
+            exit 1
+          fi
+          cp "$APK" AURORA-VoiceText.apk
           sha256sum AURORA-VoiceText.apk
 
       - name: Upload APK artifact
@@ -104,7 +136,8 @@ jobs:
           name: AURORA VoiceText Android build ${{ github.run_number }}
           body: |
             Automatically generated debug APK from the main branch.
+            This APK uses the persistent AURORA signing identity and an increasing Android version code.
             Install AURORA-VoiceText.apk directly on a compatible Android device.
-            This is a test build, not a signed Google Play release.
+            This is a test build, not a Google Play release.
           files: AURORA-VoiceText.apk
           prerelease: true
