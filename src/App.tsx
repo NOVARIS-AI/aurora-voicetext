@@ -1090,23 +1090,26 @@ function App() {
       }
     }
 
-    // Load the actual FFmpeg WASM core, not merely download its two files.
-    try {
-      const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-      setOfflinePrepStatus('Preparing offline transcription…');
-      const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
-      const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
-      const ffmpeg = new FFmpeg();
+    // The Android APK decodes audio with MediaCodec and must not depend on a
+    // browser/WASM decoder CDN to prepare its native offline speech engine.
+    if (!Capacitor.isNativePlatform()) {
       try {
-        await ffmpeg.load({ coreURL: coreUrl, wasmURL: wasmUrl });
-        setOfflinePrepStatus('FFmpeg WASM decoder passed initialization.');
-      } finally {
-        ffmpeg.terminate();
-        URL.revokeObjectURL(coreUrl);
-        URL.revokeObjectURL(wasmUrl);
+        const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+        setOfflinePrepStatus('Preparing offline audio decoder…');
+        const coreUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.js', 'text/javascript');
+        const wasmUrl = await getCachedOfflineAssetUrl(coreBase + '/ffmpeg-core.wasm', 'application/wasm');
+        const ffmpeg = new FFmpeg();
+        try {
+          await ffmpeg.load({ coreURL: coreUrl, wasmURL: wasmUrl });
+          setOfflinePrepStatus('Browser FFmpeg WASM decoder passed initialization.');
+        } finally {
+          ffmpeg.terminate();
+          URL.revokeObjectURL(coreUrl);
+          URL.revokeObjectURL(wasmUrl);
+        }
+      } catch (reason) {
+        failures.push('Browser audio decoder: ' + describe(reason));
       }
-    } catch (reason) {
-      failures.push('Audio decoder: ' + describe(reason));
     }
 
     // Keep the native Vosk model separate from the browser Whisper model on Android.
