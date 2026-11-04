@@ -58,7 +58,7 @@ public class TranscriptionForegroundService extends Service {
         PendingIntent pending = launch == null ? null : PendingIntent.getActivity(this, 0, launch,
             Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT);
         builder.setContentTitle("AURORA VoiceText is working")
-            .setContentText("Your transcription is processing. Return to the app to see progress.")
+            .setContentText("Keep AURORA open while transcription runs. Return to the app to see progress.")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_PROGRESS);
@@ -81,7 +81,10 @@ public class TranscriptionForegroundService extends Service {
         }
     }
 
-    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_STICKY; }
+    // This service holds a foreground notification and CPU wake lock only. It does not
+    // execute the WebView transcription engine independently if Android kills the app.
+    // Do not resurrect a stale notification after the app process has gone away.
+    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_NOT_STICKY; }
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public void onDestroy() {
