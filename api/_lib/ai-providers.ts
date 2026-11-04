@@ -1,4 +1,4 @@
-export type VoiceRequest = { text: string; voice?: string; style?: string; rate?: number; pitch?: number; emotion?: string };
+export type VoiceRequest = { text: string; voice?: string; style?: string; rate?: number; pitch?: number; emotion?: string; language?: string };
 export type TranslationRequest = { text: string; targetLanguage: string; sourceLanguage?: string };
 export type SubtitleSearchRequest = { query: string; languages?: string; type?: "movie" | "episode" };
 
@@ -20,7 +20,7 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
           input: input.text,
           response_format: "mp3",
           speed: safeRate(input.rate),
-          instructions: [input.style, input.emotion, input.pitch ? "Pitch preference: " + input.pitch : ""].filter(Boolean).join(". ").slice(0, 800) || "Speak naturally and clearly.",
+          instructions: [input.language && input.language !== "Auto-detect" ? "Speak in " + input.language + ". Keep the language and original wording; do not translate." : "Detect the language from the supplied script and speak it naturally.", input.style, input.emotion, input.pitch ? "Pitch preference: " + input.pitch : ""].filter(Boolean).join(". ").slice(0, 800) || "Speak naturally and clearly.",
         }),
         signal: AbortSignal.timeout(110000),
       });
