@@ -27,10 +27,16 @@ public class BackgroundTranscriptionPlugin extends Plugin {
     @PluginMethod
     public void update(PluginCall call) {
         String message = call.getString("message", "Transcription is processing.");
-        Intent intent = new Intent(getContext(), TranscriptionForegroundService.class);
-        intent.putExtra("status_message", message);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(intent);
-        else getContext().startService(intent);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(getContext(), "aurora_transcription")
+            : new Notification.Builder(getContext());
+        builder.setContentTitle("AURORA VoiceText")
+            .setContentText(message.length() > 120 ? message.substring(0, 117) + "..." : message)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .setCategory(Notification.CATEGORY_PROGRESS);
+        NotificationManager manager = (NotificationManager) getContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify(4201, builder.build());
         call.resolve();
     }
 
