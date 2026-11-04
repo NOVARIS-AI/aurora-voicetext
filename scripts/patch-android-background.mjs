@@ -61,6 +61,12 @@ import android.provider.OpenableColumns;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.io.ByteArrayOutputStream;
+import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -185,6 +191,173 @@ public class NativeAudioFilesPlugin extends Plugin {
             if (total <= maxBytes) break;
             if (entry.isFile()) { long size = entry.length(); if (entry.delete()) total -= size; }
         }
+    }
+
+    @PluginMethod
+    public void decodeSegment(PluginCall call) {
+        String path = call.getString("path", "");
+        double startSeconds = call.getDouble("startSeconds", -1.0);
+        double durationSeconds = call.getDouble("durationSeconds", -1.0);
+        try {
+            File root = new File(getContext().getFilesDir(), "aurora-audio-imports").getCanonicalFile();
+            File source = new File(path).getCanonicalFile();
+            if (!source.getPath().startsWith(root.getPath() + File.separator) || !source.isFile()) {
+                call.reject("The selected audio is no longer available in AURORA storage.");
+                return;
+            }
+            if (!Double.isFinite(startSeconds) || !Double.isFinite(durationSeconds) ||
+                startSeconds < 0 || durationSeconds <= 0 || durationSeconds > 90) {
+                call.reject("Invalid audio section requested.");
+                return;
+            }
+            byte[] wav = decodePcmWavSection(source, startSeconds, durationSeconds);
+            JSObject result = new JSObject();
+            result.put("wavBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
+            result.put("sampleRate", 16000);
+            result.put("channels", 1);
+            result.put("durationSeconds", durationSeconds);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("Android could not decode this audio section: " + error.getMessage(), error);
+        }
+    }
+
+    // Decode only the requested section with Android MediaCodec, downmix to mono,
+    // resample to 16 kHz, and return a small WAV payload for the speech engine.
+    private byte[] decodePcmWavSection(File file, double startSeconds, double durationSeconds) throws Exception {
+        final long startUs = (long) (startSeconds * 1000000.0);
+        final long endUs = (long) ((startSeconds + durationSeconds) * 1000000.0);
+        MediaExtractor extractor = new MediaExtractor();
+        MediaCodec decoder = null;
+        ByteArrayOutputStream monoPcm = new ByteArrayOutputStream();
+        int sourceRate = 0;
+        int sourceChannels = 0;
+        boolean inputDone = false;
+        boolean outputDone = false;
+        try {
+            extractor.setDataSource(file.getAbsolutePath());
+            int audioTrack = -1;
+            MediaFormat inputFormat = null;
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat candidate = extractor.getTrackFormat(i);
+                String mime = candidate.containsKey(MediaFormat.KEY_MIME) ? candidate.getString(MediaFormat.KEY_MIME) : null;
+                if (mime != null && mime.startsWith("audio/")) {
+                    audioTrack = i;
+                    inputFormat = candidate;
+                    break;
+                }
+            }
+            if (audioTrack < 0 || inputFormat == null) throw new IllegalArgumentException("No supported audio track was found.");
+            String mime = inputFormat.getString(MediaFormat.KEY_MIME);
+            extractor.selectTrack(audioTrack);
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            decoder = MediaCodec.createDecoderByType(mime);
+            decoder.configure(inputFormat, null, null, 0);
+            decoder.start();
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            while (!outputDone) {
+                if (!inputDone) {
+                    int inputIndex = decoder.dequeueInputBuffer(10000);
+                    if (inputIndex >= 0) {
+                        ByteBuffer input = decoder.getInputBuffer(inputIndex);
+                        if (input == null) throw new IllegalStateException("Audio decoder input buffer is unavailable.");
+                        input.clear();
+                        int size = extractor.readSampleData(input, 0);
+                        if (size < 0) {
+                            decoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            inputDone = true;
+                        } else {
+                            long presentationTime = extractor.getSampleTime();
+                            decoder.queueInputBuffer(inputIndex, 0, size, presentationTime, 0);
+                            extractor.advance();
+                        }
+                    }
+                }
+                int outputIndex = decoder.dequeueOutputBuffer(info, 10000);
+                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    MediaFormat outputFormat = decoder.getOutputFormat();
+                    sourceRate = outputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 0;
+                    sourceChannels = outputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT) ? outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 0;
+                } else if (outputIndex >= 0) {
+                    ByteBuffer output = decoder.getOutputBuffer(outputIndex);
+                    if (output != null && info.size > 0) {
+                        MediaFormat format = decoder.getOutputFormat();
+                        int rate = format.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE) : sourceRate;
+                        int channels = format.containsKey(MediaFormat.KEY_CHANNEL_COUNT) ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : sourceChannels;
+                        if (rate <= 0 || channels <= 0) throw new IllegalStateException("Audio decoder returned invalid PCM metadata.");
+                        sourceRate = rate;
+                        sourceChannels = channels;
+                        output.order(ByteOrder.LITTLE_ENDIAN);
+                        output.position(info.offset);
+                        output.limit(info.offset + info.size);
+                        int bytesPerFrame = channels * 2;
+                        int frames = info.size / bytesPerFrame;
+                        for (int frame = 0; frame < frames; frame++) {
+                            long frameTimeUs = info.presentationTimeUs + ((long) frame * 1000000L / rate);
+                            if (frameTimeUs < startUs || frameTimeUs >= endUs) continue;
+                            int sum = 0;
+                            for (int channel = 0; channel < channels; channel++) sum += output.getShort();
+                            short mono = (short) (sum / channels);
+                            monoPcm.write(mono & 0xff);
+                            monoPcm.write((mono >> 8) & 0xff);
+                        }
+                    }
+                    boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                    decoder.releaseOutputBuffer(outputIndex, false);
+                    if (eos) outputDone = true;
+                }
+            }
+            if (sourceRate <= 0 || monoPcm.size() < 2) throw new IllegalArgumentException("No decodable audio samples were found in this section.");
+            byte[] source = monoPcm.toByteArray();
+            int sourceSamples = source.length / 2;
+            int targetSamples = Math.max(1, (int) ((long) sourceSamples * 16000L / sourceRate));
+            ByteArrayOutputStream pcm16k = new ByteArrayOutputStream(targetSamples * 2);
+            for (int i = 0; i < targetSamples; i++) {
+                double position = (double) i * sourceRate / 16000.0;
+                int left = Math.min(sourceSamples - 1, (int) position);
+                int right = Math.min(sourceSamples - 1, left + 1);
+                double fraction = position - left;
+                int a = (short) ((source[left * 2] & 0xff) | (source[left * 2 + 1] << 8));
+                int b = (short) ((source[right * 2] & 0xff) | (source[right * 2 + 1] << 8));
+                short sample = (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, Math.round(a + (b - a) * fraction)));
+                pcm16k.write(sample & 0xff);
+                pcm16k.write((sample >> 8) & 0xff);
+            }
+            byte[] pcm = pcm16k.toByteArray();
+            ByteArrayOutputStream wav = new ByteArrayOutputStream(pcm.length + 44);
+            wav.write(new byte[] { 'R','I','F','F' });
+            writeIntLE(wav, 36 + pcm.length);
+            wav.write(new byte[] { 'W','A','V','E','f','m','t',' ' });
+            writeIntLE(wav, 16);
+            writeShortLE(wav, 1);
+            writeShortLE(wav, 1);
+            writeIntLE(wav, 16000);
+            writeIntLE(wav, 32000);
+            writeShortLE(wav, 2);
+            writeShortLE(wav, 16);
+            wav.write(new byte[] { 'd','a','t','a' });
+            writeIntLE(wav, pcm.length);
+            wav.write(pcm);
+            return wav.toByteArray();
+        } finally {
+            if (decoder != null) {
+                try { decoder.stop(); } catch (Exception ignored) { }
+                try { decoder.release(); } catch (Exception ignored) { }
+            }
+            extractor.release();
+        }
+    }
+
+    private void writeIntLE(ByteArrayOutputStream output, int value) {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
+        output.write((value >> 16) & 0xff);
+        output.write((value >> 24) & 0xff);
+    }
+
+    private void writeShortLE(ByteArrayOutputStream output, int value) {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
     }
 
     private long readDurationMs(File file) {
