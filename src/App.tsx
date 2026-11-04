@@ -13,7 +13,7 @@ import {
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
-type BackgroundTranscriptionBridge = { start: () => Promise<void>; stop: () => Promise<void> };
+type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[] };
 type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
@@ -989,7 +989,9 @@ function App() {
     };
     const onProgress = (completed: number, total: number, _engine: string) => {
       setProgress({ completed, total });
-      setStatus('Transcribing your recording…');
+      const message = 'Transcribing section ' + completed + ' of ' + total;
+      setStatus(message);
+      if (Capacitor.isNativePlatform()) void backgroundTranscription.update({ message }).catch(() => undefined);
     };
     const runOffline = () => transcribeOpusOfflineInSegments(
       selected.file,
