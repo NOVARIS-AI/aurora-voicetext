@@ -21,6 +21,7 @@ type NativeSpeechBridge = {
   prepareModel: () => Promise<{ ready: boolean; model: string }>;
   transcribeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ text: string; words?: NativeSpeechWord[]; engine: string }>;
   cancel: () => Promise<void>;
+  releaseModel: () => Promise<void>;
 };
 const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
@@ -759,6 +760,7 @@ async function transcribeOpusOfflineInSegments(
     if (offlineCoreUrl) URL.revokeObjectURL(offlineCoreUrl);
     if (offlineWasmUrl) URL.revokeObjectURL(offlineWasmUrl);
     signal?.removeEventListener('abort', cancelNativeSpeech);
+    if (useNativeSpeech) await nativeSpeech.releaseModel().catch(() => undefined);
     try { await ffmpeg.deleteFile(outputName); } catch { /* Ignore absent temporary output. */ }
     try { await ffmpeg.unmount('/audio-input'); } catch { /* Decoder termination releases the mount. */ }
     ffmpeg.terminate();
@@ -1106,13 +1108,15 @@ function App() {
       failures.push('Audio decoder: ' + describe(reason));
     }
 
-    // Whisper is loaded last to avoid holding its memory alongside the Vosk verification worker.
-    try {
-      setOfflinePrepStatus('Preparing offline transcription…');
-      await getWhisper(() => setOfflinePrepStatus('Preparing offline transcription…'));
-      setOfflinePrepStatus('Preparing offline transcription…');
-    } catch (reason) {
-      failures.push('Whisper Tiny: ' + describe(reason));
+    // Keep the native Vosk model separate from the browser Whisper model on Android.
+    if (!Capacitor.isNativePlatform()) {
+      try {
+        setOfflinePrepStatus('Preparing offline transcription…');
+        await getWhisper(() => setOfflinePrepStatus('Preparing offline transcription…'));
+        setOfflinePrepStatus('Preparing offline transcription…');
+      } catch (reason) {
+        failures.push('Whisper Tiny: ' + describe(reason));
+      }
     }
 
     if (failures.length) {
