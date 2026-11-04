@@ -214,6 +214,8 @@ public class NativeAudioFilesPlugin extends Plugin {
     }
 }
 
+`;
+
 const service = `package com.novaris.auroravoicetext;
 
 import android.app.Notification;
