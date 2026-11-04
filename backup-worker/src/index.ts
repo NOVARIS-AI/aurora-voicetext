@@ -27,7 +27,7 @@ export interface Env {
   GROQ_TRANSLATION_MODEL?: string;
 }
 type AudioBody = { audioBase64?: string; mimeType?: string; languageHint?: string; chunkNumber?: number; totalChunks?: number };
-type VoiceBody = { text?: string; voice?: string; style?: string; rate?: number; pitch?: number; emotion?: string };
+type VoiceBody = { text?: string; voice?: string; style?: string; rate?: number; pitch?: number; emotion?: string; language?: string };
 type TranslateBody = { text?: string; targetLanguage?: string; sourceLanguage?: string };
 type SubtitleBody = { query?: string; languages?: string; type?: "movie" | "episode" };
 const allowedOrigins = new Set(["https://aurora-voicetext-qk8s.vercel.app","https://aurora-voicetext.vercel.app","capacitor://localhost","https://localhost","http://localhost"]);
@@ -127,7 +127,7 @@ async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuf
     try {
       const response = await fetch("https://api.openai.com/v1/audio/speech", {
         method: "POST", headers: { Authorization: "Bearer " + env.OPENAI_API_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts", voice: input.voice || "alloy", input: text, response_format: "mp3", speed: safeRate(input.rate), instructions: [input.style, input.emotion, input.pitch ? "Pitch preference: " + input.pitch : ""].filter(Boolean).join(". ").slice(0, 800) || "Speak naturally and clearly." }),
+        body: JSON.stringify({ model: env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts", voice: input.voice || "alloy", input: text, response_format: "mp3", speed: safeRate(input.rate), instructions: [input.language && input.language !== "Auto-detect" ? "Speak in " + input.language + ". Keep the language and original wording; do not translate." : "Detect the language from the supplied script and speak it naturally.", input.style, input.emotion, input.pitch ? "Pitch preference: " + input.pitch : ""].filter(Boolean).join(". ").slice(0, 800) || "Speak naturally and clearly." }),
         signal: AbortSignal.timeout(110000),
       });
       if (!response.ok) throw new Error("OpenAI TTS HTTP " + response.status);
