@@ -323,9 +323,24 @@ async function makeAudioFileKey(file: File, nativePath?: string, nativeSize?: nu
   // Android imports are copied to a new private path each time the user reopens a recording.
   // Use a content hash rather than that temporary path/current import timestamp so checkpoints
   // survive closing the app and selecting the same source recording again.
-  const identity = nativePath
-    ? createNativeAudioResumeKey({ name: file.name, size: nativeSize ?? file.size, mimeType: file.type, contentHash: nativeFingerprint })
-    : [file.name, file.size, file.lastModified, file.type].join('|');
+  let identity: string;
+  if (nativePath) {
+    try {
+      identity = createNativeAudioResumeKey({
+        name: file.name,
+        size: nativeSize ?? file.size,
+        mimeType: file.type,
+        contentHash: nativeFingerprint,
+      });
+    } catch {
+      // A missing native fingerprint must not block transcription. This fallback
+      // can resume while the same imported private path remains available, but
+      // deliberately does not claim cross-import identity stability.
+      identity = ['native-audio-session', file.name, nativeSize ?? file.size, file.type, nativePath].join('|');
+    }
+  } else {
+    identity = [file.name, file.size, file.lastModified, file.type].join('|');
+  }
   // Android native offline decoding reads directly from app-private storage; do not
   // materialize or hash the entire recording in the WebView just to create a resume key.
   if (nativePath) return identity;
