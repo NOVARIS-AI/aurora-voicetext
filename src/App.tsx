@@ -1108,6 +1108,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    return () => { if (editorUrl) URL.revokeObjectURL(editorUrl); };
+  }, [editorUrl]);
+
+  useEffect(() => {
     // If the browser is closing or navigating away, stop the in-flight section.
     // Previously completed sections have already been committed to IndexedDB.
     const handlePageHide = () => transcriptionAbortRef.current?.abort();
@@ -1503,7 +1507,6 @@ function App() {
       setError('Choose a supported audio recording first.');
       return;
     }
-    if (editorUrl) URL.revokeObjectURL(editorUrl);
     const url = URL.createObjectURL(file);
     setEditorFile(file);
     setEditorUrl(url);
@@ -1532,6 +1535,7 @@ function App() {
 
   async function exportEditedAudio() {
     if (!editorFile || !editorDuration) { setError('Choose an audio file and wait for it to finish loading.'); return; }
+    if (!editorFile.size) { setError('This Android recording is held in private native storage. Import a copy using the Audio Editor file picker to edit it.'); return; }
     const plan = clampAudioEditPlan({
       duration: editorDuration, start: editorStart, end: editorEnd,
       speed: editorSpeed, volume: editorVolume, fadeIn: editorFadeIn, fadeOut: editorFadeOut,
@@ -1842,11 +1846,11 @@ function App() {
             <button className="secondary small-button" type="button" onClick={()=>editorInputRef.current?.click()}><Upload size={15}/> Import audio</button>
             <input ref={editorInputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" onChange={event=>{const file=event.currentTarget.files?.[0];if(file)openAudioEditor(file);event.currentTarget.value='';}}/>
           </div>
-          {active && <button className="text-button" type="button" onClick={()=>openAudioEditor(active.file)}><FileAudio size={15}/> Load current transcription recording</button>}
+          {active?.file.size ? <button className="text-button" type="button" onClick={()=>openAudioEditor(active.file)}><FileAudio size={15}/> Load current transcription recording</button> : active?.nativePath ? <p className="helper-text">The selected Android recording is held in private native storage. Use Import audio to choose an editable copy from device storage.</p> : null}
           {voiceAudioUrl && <button className="text-button" type="button" onClick={async()=>{const response=await fetch(voiceAudioUrl);const blob=await response.blob();openAudioEditor(new File([blob],safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3',{type:'audio/mpeg'}));}}><Mic2 size={15}/> Load latest generated voice</button>}
           {editorUrl ? <>
             <audio ref={editorAudioRef} className="audio-player audio-editor-player" controls preload="metadata" src={editorUrl}
-              onLoadedMetadata={event=>{const duration=Number.isFinite(event.currentTarget.duration)?event.currentTarget.duration:0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);setEditorStatus(duration?'Audio ready to edit.':'Could not read this audio duration.');}}
+              onLoadedMetadata={event=>{const duration=Number.isFinite(event.currentTarget.duration)?event.currentTarget.duration:0;event.currentTarget.playbackRate=editorSpeed;event.currentTarget.volume=Math.min(1,editorVolume);setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);setEditorStatus(duration?'Audio ready to edit.':'Could not read this audio duration.');}}
               onTimeUpdate={event=>{if(event.currentTarget.currentTime>=editorEnd&&editorEnd>editorStart){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>
             <div className="audio-editor-selection">
               <div className="audio-editor-section-head"><strong>02 · TRIM SELECTION</strong><span>{formatAudioTime(editorStart)} — {formatAudioTime(editorEnd)}</span></div>
@@ -1857,7 +1861,7 @@ function App() {
             </div>
             <div className="audio-editor-controls">
               <div className="audio-editor-section-head"><strong>03 · SOUND & DELIVERY</strong><span>Applied on export</span></div>
-              <label className="field-label">Volume <strong>{Math.round(editorVolume*100)}%</strong><input type="range" min="0" max="2" step="0.05" value={editorVolume} onChange={event=>setEditorVolume(Number(event.target.value))}/></label>
+              <label className="field-label">Volume <strong>{Math.round(editorVolume*100)}%</strong><input type="range" min="0" max="2" step="0.05" value={editorVolume} onChange={event=>{const value=Number(event.target.value);setEditorVolume(value);if(editorAudioRef.current)editorAudioRef.current.volume=Math.min(1,value);}}/></label>
               <label className="field-label">Playback speed <strong>{editorSpeed.toFixed(2)}×</strong><input type="range" min="0.5" max="2" step="0.05" value={editorSpeed} onChange={event=>{const value=Number(event.target.value);setEditorSpeed(value);if(editorAudioRef.current)editorAudioRef.current.playbackRate=value;}}/></label>
               <div className="studio-grid">
                 <label className="field-label">Fade in · seconds<input type="number" min="0" max="30" step="0.1" value={editorFadeIn} onChange={event=>setEditorFadeIn(Math.max(0,Math.min(30,Number(event.target.value)||0)))}/></label>
