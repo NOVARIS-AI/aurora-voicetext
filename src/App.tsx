@@ -904,10 +904,10 @@ async function transcribeOpusInSegments(
         response = await request(backupTranscriptionApiUrl);
       }
       throwIfTranscriptionAborted(signal);
-      let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
+      let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; provider?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
       if (!response.ok) throw new Error((result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.') + (primaryFailure ? ' Primary service: ' + primaryFailure : ''));
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
-      return { index: prepared.index, start: prepared.start, text: result.text.trim(), language: result.language_name || result.language || '', segments: result.segments ?? [] };
+      return { index: prepared.index, start: prepared.start, text: result.text.trim(), language: result.language_name || result.language || '', provider: result.provider || '', segments: result.segments ?? [] };
     };
 
     let checkpointStorageWarningShown = false;
@@ -932,7 +932,8 @@ async function transcribeOpusInSegments(
       // makes every completed section independently resumable after interruption.
       const result = await uploadPrepared(prepared);
       parts[index] = result.text;
-      if (result.language) { onLanguage(result.language); onStatus('Detected language: ' + result.language + ' · section ' + (index + 1) + ' of ' + totalParts); }
+      if (result.language) onLanguage(result.language);
+      onStatus((result.provider ? 'Online engine: ' + result.provider + ' · ' : '') + (result.language ? 'Detected language: ' + result.language + ' · ' : '') + 'section ' + (index + 1) + ' of ' + totalParts);
       const sectionSegments = result.segments.filter(segment =>
         typeof segment.start === 'number' && typeof segment.end === 'number' &&
         typeof segment.text === 'string' && (result.index === 0 || segment.start >= overlapSeconds)
