@@ -1583,7 +1583,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = safeFileBaseName(editorFile.name.replace(/\\.[^.]+$/, ''), 'aurora-edited-audio') + '.wav';
+      link.download = safeFileBaseName(editorFile.name.replace(/\.[^.]+$/, ''), 'aurora-edited-audio') + '.wav';
       document.body.appendChild(link);
       link.click();
       link.remove();
