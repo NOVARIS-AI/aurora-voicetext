@@ -1830,7 +1830,47 @@ function App() {
           </details>
           <div className="studio-actions"><button className="primary" type="button" disabled={voiceBusy} onClick={generateVoice}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating AI audio…':'Generate AI voice'}</button><button className="secondary" type="button" onClick={()=>{setStudioText('');if(voiceAudioUrl)URL.revokeObjectURL(voiceAudioUrl);setVoiceAudioUrl('');}}>Clear</button></div>
           {status && <div className="status-message" role="status">{status}</div>}
-          {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
+          {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.mp3'}><Download size={16}/> Download MP3 audio</a><button className="secondary full-button" type="button" onClick={async()=>{try{const response=await fetch(voiceAudioUrl);const blob=await response.blob();openAudioEditor(new File([blob],safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3',{type:'audio/mpeg'}));}catch{setError('Could not prepare the generated voice for editing. Download it and import it into Audio Editor.');}}}><AudioLines size={16}/> Edit this voice in Audio Editor</button></div>}
+        </section>
+      </section>}
+
+      {page === 'audio-editor' && <section className="page-content">
+        <div className="page-heading"><div className="eyebrow">AURORA AUDIO WORKSPACE</div><h1>Audio Editor</h1><p>Trim a recording, adjust its sound and export a new WAV copy. Your original audio is never overwritten.</p></div>
+        <section className="card audio-editor-card">
+          <div className="audio-editor-toolbar">
+            <div><div className="eyebrow">01 · SOURCE AUDIO</div><strong>{editorFile?.name || 'No audio selected'}</strong><small>{editorDuration ? formatAudioTime(editorDuration)+' total duration' : 'Import a recording or send one from Voice Studio.'}</small></div>
+            <button className="secondary small-button" type="button" onClick={()=>editorInputRef.current?.click()}><Upload size={15}/> Import audio</button>
+            <input ref={editorInputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" onChange={event=>{const file=event.currentTarget.files?.[0];if(file)openAudioEditor(file);event.currentTarget.value='';}}/>
+          </div>
+          {active && <button className="text-button" type="button" onClick={()=>openAudioEditor(active.file)}><FileAudio size={15}/> Load current transcription recording</button>}
+          {voiceAudioUrl && <button className="text-button" type="button" onClick={async()=>{const response=await fetch(voiceAudioUrl);const blob=await response.blob();openAudioEditor(new File([blob],safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3',{type:'audio/mpeg'}));}}><Mic2 size={15}/> Load latest generated voice</button>}
+          {editorUrl ? <>
+            <audio ref={editorAudioRef} className="audio-player audio-editor-player" controls preload="metadata" src={editorUrl}
+              onLoadedMetadata={event=>{const duration=Number.isFinite(event.currentTarget.duration)?event.currentTarget.duration:0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);setEditorStatus(duration?'Audio ready to edit.':'Could not read this audio duration.');}}
+              onTimeUpdate={event=>{if(event.currentTarget.currentTime>=editorEnd&&editorEnd>editorStart){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>
+            <div className="audio-editor-selection">
+              <div className="audio-editor-section-head"><strong>02 · TRIM SELECTION</strong><span>{formatAudioTime(editorStart)} — {formatAudioTime(editorEnd)}</span></div>
+              <div className="audio-editor-track"><span style={{left:(editorDuration?editorStart/editorDuration*100:0)+'%',right:(editorDuration?(1-editorEnd/editorDuration)*100:0)+'%'}}/></div>
+              <label className="field-label">Start point · {formatAudioTime(editorStart)}<input type="range" min="0" max={Math.max(0,editorDuration)} step="0.05" value={Math.min(editorStart,editorDuration)} onChange={event=>updateEditorTrimStart(Number(event.target.value))}/></label>
+              <label className="field-label">End point · {formatAudioTime(editorEnd)}<input type="range" min="0" max={Math.max(0,editorDuration)} step="0.05" value={Math.min(editorEnd,editorDuration)} onChange={event=>updateEditorTrimEnd(Number(event.target.value))}/></label>
+              <div className="audio-editor-quick-actions"><button className="secondary small-button" type="button" onClick={()=>{setEditorStart(0);setEditorEnd(editorDuration);if(editorAudioRef.current)editorAudioRef.current.currentTime=0;}}>Select full audio</button><button className="secondary small-button" type="button" onClick={()=>{if(editorAudioRef.current){editorAudioRef.current.currentTime=editorStart;void editorAudioRef.current.play();}}}>Preview selection</button></div>
+            </div>
+            <div className="audio-editor-controls">
+              <div className="audio-editor-section-head"><strong>03 · SOUND & DELIVERY</strong><span>Applied on export</span></div>
+              <label className="field-label">Volume <strong>{Math.round(editorVolume*100)}%</strong><input type="range" min="0" max="2" step="0.05" value={editorVolume} onChange={event=>setEditorVolume(Number(event.target.value))}/></label>
+              <label className="field-label">Playback speed <strong>{editorSpeed.toFixed(2)}×</strong><input type="range" min="0.5" max="2" step="0.05" value={editorSpeed} onChange={event=>{const value=Number(event.target.value);setEditorSpeed(value);if(editorAudioRef.current)editorAudioRef.current.playbackRate=value;}}/></label>
+              <div className="studio-grid">
+                <label className="field-label">Fade in · seconds<input type="number" min="0" max="30" step="0.1" value={editorFadeIn} onChange={event=>setEditorFadeIn(Math.max(0,Math.min(30,Number(event.target.value)||0)))}/></label>
+                <label className="field-label">Fade out · seconds<input type="number" min="0" max="30" step="0.1" value={editorFadeOut} onChange={event=>setEditorFadeOut(Math.max(0,Math.min(30,Number(event.target.value)||0)))}/></label>
+              </div>
+            </div>
+            <div className="audio-editor-export">
+              <div><strong>04 · EXPORT EDITED AUDIO</strong><small>{formatAudioTime(Math.max(0,editorEnd-editorStart)/(editorSpeed||1))} output · WAV / PCM 16-bit</small></div>
+              <button className="primary full-button" type="button" disabled={editorBusy||!editorDuration} onClick={exportEditedAudio}>{editorBusy?<LoaderCircle className="spin" size={17}/>:<Download size={17}/>} {editorBusy?'Rendering audio…':'Export edited WAV'}</button>
+              <p className="helper-text">Editing is processed on this device. Large recordings need more memory; for smoother editing on phones, work with shorter selections. Export creates a new file and keeps your original unchanged.</p>
+            </div>
+            {editorStatus && <div className="status-message" role="status">{editorStatus}</div>}
+          </> : <div className="empty-state"><AudioWaveform size={32}/><strong>Bring an audio file into the editor</strong><span>Import MP3, M4A, WAV, OGG or another supported browser audio format.</span><button className="primary" type="button" onClick={()=>editorInputRef.current?.click()}><Upload size={16}/> Choose audio</button></div>}
         </section>
       </section>}
 
