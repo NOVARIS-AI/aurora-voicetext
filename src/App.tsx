@@ -4,6 +4,7 @@ import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey, getTranscriptionRetryDelay, waitForTranscriptionRetry } from './audio-utils';
+import { clampAudioEditPlan, encodeAudioBufferWav, formatAudioTime } from './audio-editor';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -29,7 +30,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'audio-editor' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -1060,6 +1061,19 @@ function App() {
   const [voicePauses, setVoicePauses] = useState('Natural pauses');
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
+  const [editorFile, setEditorFile] = useState<File | null>(null);
+  const [editorUrl, setEditorUrl] = useState('');
+  const [editorDuration, setEditorDuration] = useState(0);
+  const [editorStart, setEditorStart] = useState(0);
+  const [editorEnd, setEditorEnd] = useState(0);
+  const [editorVolume, setEditorVolume] = useState(1);
+  const [editorSpeed, setEditorSpeed] = useState(1);
+  const [editorFadeIn, setEditorFadeIn] = useState(0);
+  const [editorFadeOut, setEditorFadeOut] = useState(0);
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [editorStatus, setEditorStatus] = useState('');
+  const editorAudioRef = useRef<HTMLAudioElement | null>(null);
+  const editorInputRef = useRef<HTMLInputElement | null>(null);
   const [audioPlayhead, setAudioPlayhead] = useState(0);
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
   const [subtitleQuery, setSubtitleQuery] = useState('');
@@ -1484,6 +1498,101 @@ function App() {
   }
 
 
+  function openAudioEditor(file: File) {
+    if (!file.type.startsWith('audio/') && !/\\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name)) {
+      setError('Choose a supported audio recording first.');
+      return;
+    }
+    if (editorUrl) URL.revokeObjectURL(editorUrl);
+    const url = URL.createObjectURL(file);
+    setEditorFile(file);
+    setEditorUrl(url);
+    setEditorDuration(0);
+    setEditorStart(0);
+    setEditorEnd(0);
+    setEditorVolume(1);
+    setEditorSpeed(1);
+    setEditorFadeIn(0);
+    setEditorFadeOut(0);
+    setEditorStatus('Loading audio metadata…');
+    setError('');
+    setPage('audio-editor');
+  }
+
+  function updateEditorTrimStart(value: number) {
+    const next = Math.max(0, Math.min(value, Math.max(0, editorEnd - 0.1)));
+    setEditorStart(next);
+    if (editorAudioRef.current) editorAudioRef.current.currentTime = next;
+  }
+
+  function updateEditorTrimEnd(value: number) {
+    const next = Math.min(editorDuration, Math.max(value, editorStart + 0.1));
+    setEditorEnd(next);
+  }
+
+  async function exportEditedAudio() {
+    if (!editorFile || !editorDuration) { setError('Choose an audio file and wait for it to finish loading.'); return; }
+    const plan = clampAudioEditPlan({
+      duration: editorDuration, start: editorStart, end: editorEnd,
+      speed: editorSpeed, volume: editorVolume, fadeIn: editorFadeIn, fadeOut: editorFadeOut,
+    });
+    if (!plan.valid) { setError('Select an audio section at least 0.1 seconds long.'); return; }
+    setEditorBusy(true);
+    setEditorStatus('Preparing audio for editing…');
+    setError('');
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const OfflineContextClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+      if (!AudioContextClass || !OfflineContextClass) throw new Error('This browser does not support offline audio editing.');
+      const decoder = new AudioContextClass();
+      let decoded: AudioBuffer;
+      try {
+        decoded = await decoder.decodeAudioData(await editorFile.arrayBuffer());
+      } finally {
+        await decoder.close().catch(() => undefined);
+      }
+      const sampleRate = decoded.sampleRate;
+      const channels = Math.max(1, Math.min(2, decoded.numberOfChannels));
+      const outputFrames = Math.max(1, Math.ceil(plan.outputDuration * sampleRate));
+      const output = new OfflineContextClass(channels, outputFrames, sampleRate);
+      const source = output.createBufferSource();
+      source.buffer = decoded;
+      source.playbackRate.setValueAtTime(plan.speed, 0);
+      const gain = output.createGain();
+      const fadeIn = Math.min(plan.fadeIn, plan.outputDuration / 2);
+      const fadeOut = Math.min(plan.fadeOut, plan.outputDuration / 2);
+      gain.gain.setValueAtTime(fadeIn > 0 ? 0 : plan.volume, 0);
+      if (fadeIn > 0) {
+        gain.gain.linearRampToValueAtTime(plan.volume, fadeIn);
+      }
+      if (fadeOut > 0) {
+        gain.gain.setValueAtTime(plan.volume, Math.max(fadeIn, plan.outputDuration - fadeOut));
+        gain.gain.linearRampToValueAtTime(0, plan.outputDuration);
+      }
+      source.connect(gain);
+      gain.connect(output.destination);
+      source.start(0, plan.start, plan.selectedDuration);
+      setEditorStatus('Rendering edited audio…');
+      const rendered = await output.startRendering();
+      const wav = encodeAudioBufferWav(rendered);
+      const blob = new Blob([wav], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = safeFileBaseName(editorFile.name.replace(/\\.[^.]+$/, ''), 'aurora-edited-audio') + '.wav';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setEditorStatus('Edited WAV exported successfully. Your original recording remains unchanged.');
+    } catch (reason) {
+      setError(reason instanceof Error ? 'Audio export failed: ' + reason.message : 'Audio export failed. Try a shorter selection or a supported audio format.');
+      setEditorStatus('');
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
   async function generateVoice() {
     if (!studioText.trim()) { setError('Add a script or choose a saved transcript first.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
@@ -1596,7 +1705,7 @@ function App() {
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
-        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Studio',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
+        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Studio',Mic2],['audio-editor','Audio Editor',AudioLines],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
           <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
