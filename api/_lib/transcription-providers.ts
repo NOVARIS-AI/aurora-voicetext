@@ -2,6 +2,13 @@ export type TranscriptSegment = { start: number; end: number; text: string; spea
 export type TranscriptionResult = { text: string; segments: TranscriptSegment[]; provider: string; language?: string };
 type AudioInput = { audioBase64: string; mimeType: string; languageHint?: string };
 
+function shouldTryNextProvider(status?: number): boolean {
+  // A payload that is too large or an unsupported media type will fail identically
+  // at every provider. Authentication, model, quota and transient errors are
+  // provider-specific, so continue to the next configured service.
+  return status !== 413 && status !== 415;
+}
+
 function extensionFor(mime: string) {
   const value = mime.toLowerCase();
   if (value.includes("mpeg") || value.includes("mp3")) return "mp3";
@@ -22,7 +29,11 @@ async function requestTranscription(endpoint: string, key: string, model: string
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "segment");
   form.append("temperature", "0");
-  if (input.languageHint) form.append("prompt", "Transcribe accurately. Preserve the words and language actually spoken. Do not translate, summarize, or invent unclear words. Language context: " + input.languageHint.slice(0, 120));
+  if (input.languageHint) {
+    const language = input.languageHint.trim();
+    if (/^[a-z]{2}$/i.test(language)) form.append("language", language.toLowerCase());
+    form.append("prompt", "Transcribe accurately. Preserve the words and language actually spoken. Do not translate, summarize, or invent unclear words. Language context: " + language.slice(0, 120));
+  }
   const response = await fetch(endpoint, { method: "POST", headers: { Authorization: "Bearer " + key }, body: form, signal: AbortSignal.timeout(12000) });
   const payload = await response.json().catch(() => ({})) as { text?: string; language?: string; segments?: Array<{ start?: number; end?: number; text?: string }>; error?: { message?: string } | string };
   if (!response.ok) {
@@ -117,7 +128,7 @@ export async function transcribeWithFallback(input: AudioInput): Promise<Transcr
     catch (error) {
       const status = (error as { status?: number }).status;
       failures.push(provider.name + ": " + (error instanceof Error ? error.message : "request failed"));
-      if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) break;
+      if (!shouldTryNextProvider(status)) break;
     }
   }
   throw Object.assign(new Error("Primary transcription window ended or all primary providers failed. " + failures.join(" | ").slice(0, 500)), { status: 503, code: "PRIMARY_WINDOW_EXHAUSTED" });
