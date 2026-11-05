@@ -42,3 +42,38 @@ The AppDeploy snapshot source files discovered during migration were copied into
 Auto mode tries Whisper Tiny in-browser, then Vosk Browser offline, then Groq Whisper online. Offline mode never sends audio to the server. Online mode uses the existing Vercel transcription endpoint.
 
 Vosk requires a compatible gzipped Vosk model archive hosted with browser CORS and worker access. Configure `VITE_VOSK_MODEL_URL` in the deployment environment before rebuilding. The model is not bundled in this repository. Vosk model compatibility and Nigerian English/Pidgin accuracy still require real-device testing.
+
+
+## Android APK workflow
+
+The repository now includes a repeatable Capacitor Android packaging command. It creates the Android platform project if it is not present, builds the web app, syncs the web assets and native plugins, and assembles a debug APK.
+
+Prerequisites:
+- Node.js and npm dependencies installed with `npm install`
+- JDK 21
+- Android Studio with an Android SDK and platform build tools installed
+- Android SDK environment configured for the local machine
+
+Build the debug APK:
+
+```bash
+npm run android:apk
+```
+
+The resulting file is:
+
+```
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+For an existing Android project, `npm run android:sync` rebuilds the web assets and syncs them into the native project without assembling an APK. To create the native project separately, run `npm run android:setup`.
+
+The debug APK is for installation and internal evaluation; it is not a Play Store release. A distributable release requires a privately managed signing keystore and release signing configuration. Never commit keystore files, passwords or signing secrets.
+
+## App identity and search metadata
+
+The web app now includes an AURORA VoiceText SVG favicon, installable PWA icon variants, a refined web manifest, canonical/share metadata, structured SoftwareApplication metadata, crawler rules and an XML sitemap. Search Console ownership verification and sitemap submission still require the site owner to complete the steps in Google's account; no verification token is stored in this repository.
+
+## Implementation status
+
+The current development branch contains the reliability, provider fallback, long-audio recovery, Voice Studio and Audio Editor foundations, plus branding and Android packaging preparation. Automated tests, production builds, real-device checks and release signing have deliberately not been run as part of this implementation pass.
