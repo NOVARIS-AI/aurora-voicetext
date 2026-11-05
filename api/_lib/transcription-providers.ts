@@ -68,7 +68,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
       language_detection: true,
       speaker_labels: input.speakerLabels !== false,
     }),
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(7000),
   });
   const submittedPayload = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
   if (!submitted.ok || !submittedPayload.id) throw new Error(submittedPayload.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
