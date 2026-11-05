@@ -72,7 +72,7 @@ The debug APK is for installation and internal evaluation; it is not a Play Stor
 
 ## App identity and search metadata
 
-The web app now includes an AURORA VoiceText SVG favicon, installable PWA icon variants, a refined web manifest, canonical/share metadata, structured SoftwareApplication metadata, crawler rules and an XML sitemap. Search Console ownership verification and sitemap submission still require the site owner to complete the steps in Google's account; no verification token is stored in this repository.
+The canonical public website for this project is `https://aurora-voicetext-qk8s.vercel.app/`. The HTML canonical link, Open Graph URL, SoftwareApplication structured-data URL, XML sitemap entry and `robots.txt` sitemap directive all use this same host. The web app also includes an AURORA VoiceText SVG favicon, installable PWA icon variants, a refined web manifest and crawler directives. Search Console ownership verification and sitemap submission still require the site owner to complete the steps in Google's account; no verification token is stored in this repository.
 
 ## Implementation status
 
