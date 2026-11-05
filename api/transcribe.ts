@@ -18,15 +18,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const input = (req.body || {}) as Body;
   if (typeof input.audioBase64 !== "string" || !input.audioBase64.length) return res.status(400).json({ error: "Audio chunk is missing." });
   if (input.audioBase64.length > 1800000) return res.status(413).json({ error: "This audio chunk is too large. Please try again with a shorter audio segment." });
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.audioBase64) || input.audioBase64.length % 4 !== 0) return res.status(400).json({ error: "The audio upload is not valid base64 data. Please retry this section." });
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.audioBase64)) return res.status(400).json({ error: "The audio upload is not valid base64 data. Please retry this section." });
+  const decodedAudioBytes = Buffer.from(input.audioBase64, "base64");
+  if (!decodedAudioBytes.byteLength) return res.status(400).json({ error: "The audio upload is empty. Please select the recording again." });
+  if (decodedAudioBytes.byteLength > 1_350_000) return res.status(413).json({ error: "This audio section is too large after decoding. Please retry with shorter sections." });
   const mimeType = input.mimeType || "audio/wav";
   const supported = new Set(["audio/wav","audio/x-wav","audio/mpeg","audio/mp3","audio/ogg","audio/mp4","audio/aac","audio/webm"]);
   if (!supported.has(mimeType.toLowerCase())) return res.status(400).json({ error: "Unsupported audio format: " + mimeType });
   if (input.chunkNumber !== undefined && (!Number.isInteger(input.chunkNumber) || input.chunkNumber < 1)) return res.status(400).json({ error: "Invalid audio section number." });
   if (input.totalChunks !== undefined && (!Number.isInteger(input.totalChunks) || input.totalChunks < 1 || input.totalChunks > 2000)) return res.status(400).json({ error: "Invalid total audio section count." });
 
+  const languageHint = typeof input.languageHint === "string" ? input.languageHint.trim().slice(0, 120) : undefined;
   try {
-    const result = await transcribeWithFallback({ audioBase64: input.audioBase64, mimeType, languageHint: input.languageHint });
+    const result = await transcribeWithFallback({
+      audioBase64: input.audioBase64,
+      mimeType,
+      languageHint,
+      speakerLabels: input.speakerLabels !== false,
+    });
     return res.status(200).json({ text: result.text, language: result.language, segments: result.segments, provider: result.provider, chunkNumber: input.chunkNumber ?? 1, totalChunks: input.totalChunks ?? 1 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Primary transcription providers unavailable.";
