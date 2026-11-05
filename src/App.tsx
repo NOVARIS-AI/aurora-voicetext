@@ -3,7 +3,7 @@ import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey, getTranscriptionRetryDelay, waitForTranscriptionRetry } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -901,12 +901,16 @@ async function transcribeOpusInSegments(
       // Try the primary once, then hand off to the independent Worker once.
       const request = (url: string) => postJson(url, JSON.parse(payload), 120000, signal);
       let response: Response;
+      let activeUrl = transcriptionApiUrl;
       try {
-        response = await request(transcriptionApiUrl);
+        response = await request(activeUrl);
       } catch (primaryNetworkError) {
+        // A network timeout has an unknown outcome. Do not replay the POST
+        // against the same provider; hand off once to the independent Worker.
         throwIfTranscriptionAborted(signal);
         if (!backupTranscriptionApiUrl) throw primaryNetworkError;
-        response = await request(backupTranscriptionApiUrl);
+        activeUrl = backupTranscriptionApiUrl;
+        response = await request(activeUrl);
       }
       let primaryFailure = '';
       throwIfTranscriptionAborted(signal);
@@ -916,7 +920,18 @@ async function transcribeOpusInSegments(
         primaryFailure = primaryPayload.error || 'Primary transcription service returned HTTP ' + response.status + '.';
         // The independent Worker is a separate host and is called only once.
         // Do not retry a request after a successful response or a permanent 4xx.
-        response = await request(backupTranscriptionApiUrl);
+        activeUrl = backupTranscriptionApiUrl;
+        response = await request(activeUrl);
+      }
+      // Retry only after an explicit transient HTTP response. A lost connection
+      // is deliberately not replayed because the remote job may still be running.
+      const retryDelay = response.ok ? 0 : getTranscriptionRetryDelay(
+        response.status, 1, response.headers.get('Retry-After') || '',
+      );
+      if (retryDelay > 0) {
+        onStatus('Temporary service response for section ' + (prepared.index + 1) + '. Retrying safely…');
+        await waitForTranscriptionRetry(retryDelay, signal);
+        response = await request(activeUrl);
       }
       throwIfTranscriptionAborted(signal);
       let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; provider?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
