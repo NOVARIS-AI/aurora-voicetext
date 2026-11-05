@@ -935,7 +935,7 @@ async function transcribeOpusInSegments(
       }
       throwIfTranscriptionAborted(signal);
       let result = await response.json().catch(() => ({})) as { text?: string; error?: string; language?: string; language_name?: string; provider?: string; segments?: Array<{ start?: number; end?: number; text?: string; speaker_id?: string; speaker?: string }> };
-      if (!response.ok) throw new Error((result.error || 'Transcription failed on audio section ' + (prepared.index + 1) + '.') + (primaryFailure ? ' Primary service: ' + primaryFailure : ''));
+      if (!response.ok) throw new Error('Audio section ' + (prepared.index + 1) + ' of ' + totalParts + ' failed: ' + (result.error || 'transcription service unavailable.') + (primaryFailure ? ' Primary service: ' + primaryFailure : '') + ' Completed sections are saved; retry this same recording to resume.');
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('The transcription service returned an empty result for audio section ' + (prepared.index + 1) + '.');
       return { index: prepared.index, start: prepared.start, text: result.text.trim(), language: result.language_name || result.language || '', provider: result.provider || '', segments: result.segments ?? [] };
     };
