@@ -1,9 +1,31 @@
 {
   "name": "AURORA VoiceText",
   "short_name": "VoiceText",
-  "description": "Convert audio recordings into editable text and subtitles.",
+  "description": "Transcribe recordings, edit audio and transcripts, and export subtitles and documents.",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#080c16",
-  "theme_color": "#080c16"
+  "theme_color": "#080c16",
+  "categories": [
+    "productivity",
+    "utilities",
+    "education"
+  ],
+  "icons": [
+    {
+      "src": "/icons/aurora-voice-text.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/aurora-voice-text-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
 }
