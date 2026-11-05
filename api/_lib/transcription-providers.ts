@@ -1,13 +1,7 @@
 export type TranscriptSegment = { start: number; end: number; text: string; speaker?: string };
 export type TranscriptionResult = { text: string; segments: TranscriptSegment[]; provider: string; language?: string };
-type AudioInput = { audioBase64: string; mimeType: string; languageHint?: string };
-
-function shouldTryNextProvider(status?: number): boolean {
-  // A payload that is too large or an unsupported media type will fail identically
-  // at every provider. Authentication, model, quota and transient errors are
-  // provider-specific, so continue to the next configured service.
-  return status !== 413 && status !== 415;
-}
+import { shouldTryNextTranscriptionProvider } from "./transcription-provider-policy.mjs";
+type AudioInput = { audioBase64: string; mimeType: string; languageHint?: string; speakerLabels?: boolean };
 
 function extensionFor(mime: string) {
   const value = mime.toLowerCase();
@@ -72,7 +66,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
       audio_url: uploadPayload.upload_url,
       speech_models: ["universal-3-5-pro", "universal-2"],
       language_detection: true,
-      speaker_labels: true,
+      speaker_labels: input.speakerLabels !== false,
     }),
     signal: AbortSignal.timeout(8000),
   });
@@ -128,7 +122,7 @@ export async function transcribeWithFallback(input: AudioInput): Promise<Transcr
     catch (error) {
       const status = (error as { status?: number }).status;
       failures.push(provider.name + ": " + (error instanceof Error ? error.message : "request failed"));
-      if (!shouldTryNextProvider(status)) break;
+      if (!shouldTryNextTranscriptionProvider(status)) break;
     }
   }
   throw Object.assign(new Error("Primary transcription window ended or all primary providers failed. " + failures.join(" | ").slice(0, 500)), { status: 503, code: "PRIMARY_WINDOW_EXHAUSTED" });
