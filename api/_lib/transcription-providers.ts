@@ -54,7 +54,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
     method: "POST",
     headers: { authorization: key, "content-type": "application/octet-stream" },
     body: bytes,
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(7000),
   });
   const uploadPayload = await upload.json().catch(() => ({})) as { upload_url?: string; error?: string };
   if (!upload.ok || !uploadPayload.upload_url) throw new Error(uploadPayload.error || "AssemblyAI audio upload failed (HTTP " + upload.status + ").");
@@ -73,12 +73,12 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
   const submittedPayload = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
   if (!submitted.ok || !submittedPayload.id) throw new Error(submittedPayload.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
 
-  const deadline = Date.now() + 22000;
+  const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(submittedPayload.id), {
       headers: { authorization: key },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(4000),
     });
     const result = await polled.json().catch(() => ({})) as {
       status?: string; text?: string; language_code?: string; error?: string;
