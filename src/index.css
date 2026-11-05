@@ -334,3 +334,32 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .app-select-option.active{background:rgba(45,212,230,.12);color:#8ceaf0}
 .app-select-option svg{flex:0 0 auto;color:#51d7df}
 @media(max-width:600px){.app-select-menu{max-height:48vh}.app-select-option{min-height:44px}}
+
+
+/* Build 4 — dedicated, touch-friendly audio editor */
+.audio-editor-card{display:grid;gap:18px;background:#121d2d}
+.audio-editor-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid rgba(150,180,220,.14)}
+.audio-editor-toolbar>div{display:grid;gap:5px;min-width:0}
+.audio-editor-toolbar strong{color:#edf4ff;font-size:14px;overflow-wrap:anywhere}
+.audio-editor-toolbar small{color:#8fa7c2;font-size:11px}
+.audio-editor-player{width:100%;margin:0}
+.audio-editor-selection,.audio-editor-controls,.audio-editor-export{display:grid;gap:14px;padding:16px;border:1px solid #30445e;border-radius:15px;background:#0e1928}
+.audio-editor-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.audio-editor-section-head strong,.audio-editor-export>div>strong{font-size:11px;letter-spacing:.09em;color:#8ce3e9}
+.audio-editor-section-head span,.audio-editor-export small{font-size:11px;color:#91a7c0}
+.audio-editor-track{position:relative;height:14px;overflow:hidden;border-radius:99px;background:linear-gradient(90deg,#1b2d42,#233b53);border:1px solid rgba(135,169,207,.2)}
+.audio-editor-track span{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,#237c89,#35c8d2);border-left:2px solid #a6f4f5;border-right:2px solid #a6f4f5;border-radius:3px}
+.audio-editor-selection .field-label,.audio-editor-controls .field-label{display:grid;gap:7px}
+.audio-editor-selection input[type=range],.audio-editor-controls input[type=range]{width:100%}
+.audio-editor-quick-actions{display:flex;gap:9px;flex-wrap:wrap}
+.audio-editor-export>div{display:grid;gap:5px}
+.audio-editor-export .helper-text{margin:0}
+.audio-editor-card .empty-state{padding:35px 15px}
+@media(max-width:600px){
+  .audio-editor-card{gap:14px}
+  .audio-editor-selection,.audio-editor-controls,.audio-editor-export{padding:13px}
+  .audio-editor-toolbar{align-items:flex-start}
+  .audio-editor-toolbar>.secondary{width:100%;justify-content:center}
+  .audio-editor-quick-actions{display:grid;grid-template-columns:1fr}
+  .audio-editor-section-head{align-items:flex-start}
+}
