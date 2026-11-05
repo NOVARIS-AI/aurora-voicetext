@@ -136,3 +136,39 @@ export function createNativeAudioResumeKey({ name, size, mimeType, contentHash }
   }
   return ['native-audio-v1', safeName, byteSize, String(mimeType || 'application/octet-stream'), hash].join('|');
 }
+
+
+/** Retry only after an explicit transient HTTP response; never blindly replay a timed-out POST. */
+export function getTranscriptionRetryDelay(status, attempt = 1, retryAfter = '') {
+  if (![408, 425, 429, 502, 503, 504].includes(Number(status))) return 0;
+  const retryAfterValue = Number(retryAfter);
+  if (retryAfter && Number.isFinite(retryAfterValue) && retryAfterValue >= 0) {
+    return Math.min(10000, Math.max(250, retryAfterValue * 1000));
+  }
+  const safeAttempt = Math.max(1, Math.min(3, Math.floor(Number(attempt) || 1)));
+  return Math.min(8000, 1000 * (2 ** (safeAttempt - 1)));
+}
+
+/** Wait between safe retry attempts while allowing the user to cancel immediately. */
+export function waitForTranscriptionRetry(delayMs, signal) {
+  throwIfTranscriptionAborted(signal);
+  const delay = Math.max(0, Math.min(10000, Number(delayMs) || 0));
+  if (!delay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      error ? reject(error) : resolve();
+    };
+    const onAbort = () => {
+      const error = new Error('Transcription cancelled. Completed sections are saved; select the same recording and retry to resume.');
+      error.name = 'AbortError';
+      finish(error);
+    };
+    const timer = setTimeout(() => finish(), delay);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
