@@ -1599,8 +1599,8 @@ function App() {
 
   async function generateVoice() {
     if (!studioText.trim()) { setError('Add a script or choose a saved transcript first.'); return; }
-    if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
-    setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Preparing your voice…');
+    const previousVoiceUrl = voiceAudioUrl;
+    setVoiceBusy(true); setError(''); setStatus('Preparing your voice…');
     try {
       const chunks = splitLongText(studioText, 3500);
       const audioParts: Blob[] = [];
@@ -1616,7 +1616,9 @@ function App() {
         audioParts.push(audioPart);
       }
       const finalAudio = combineMp3Chunks(audioParts);
-      setVoiceAudioUrl(URL.createObjectURL(finalAudio));
+      const nextVoiceUrl = URL.createObjectURL(finalAudio);
+      setVoiceAudioUrl(nextVoiceUrl);
+      if (previousVoiceUrl) URL.revokeObjectURL(previousVoiceUrl);
       setStatus('Your voice audio is ready. Preview it or download the MP3.');
     } catch (reason) {
       setError(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
