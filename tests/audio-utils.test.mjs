@@ -122,3 +122,24 @@ test('rejects incomplete native audio identities rather than creating unsafe res
   assert.throws(() => createNativeAudioResumeKey({ name: 'meeting.opus', size: 0, contentHash: 'a'.repeat(64) }), /identity is incomplete/i);
   assert.throws(() => createNativeAudioResumeKey({ name: 'meeting.opus', size: 123, contentHash: 'not-a-hash' }), /identity is incomplete/i);
 });
+
+
+test('retries only explicit transient HTTP responses with bounded backoff', async () => {
+  const { getTranscriptionRetryDelay } = await import('../src/audio-utils.js');
+  assert.equal(getTranscriptionRetryDelay(503, 1), 1000);
+  assert.equal(getTranscriptionRetryDelay(503, 2), 2000);
+  assert.equal(getTranscriptionRetryDelay(429, 1, '3'), 3000);
+  assert.equal(getTranscriptionRetryDelay(429, 1, '120'), 10000);
+  for (const status of [400, 401, 413, 415, 501]) {
+    assert.equal(getTranscriptionRetryDelay(status, 1), 0);
+  }
+});
+
+test('retry waits finish and can be cancelled immediately', async () => {
+  const { waitForTranscriptionRetry } = await import('../src/audio-utils.js');
+  await waitForTranscriptionRetry(0);
+  const controller = new AbortController();
+  const pending = waitForTranscriptionRetry(10000, controller.signal);
+  controller.abort();
+  await assert.rejects(pending, error => error.name === 'AbortError');
+});
