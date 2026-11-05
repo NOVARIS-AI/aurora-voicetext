@@ -1093,6 +1093,14 @@ function App() {
     });
   }, []);
 
+  useEffect(() => {
+    // If the browser is closing or navigating away, stop the in-flight section.
+    // Previously completed sections have already been committed to IndexedDB.
+    const handlePageHide = () => transcriptionAbortRef.current?.abort();
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, []);
+
   // Keep Android's display awake during an active foreground transcription.
   // This does not keep JavaScript running after Android backgrounds or force-stops the app.
   useEffect(() => {
