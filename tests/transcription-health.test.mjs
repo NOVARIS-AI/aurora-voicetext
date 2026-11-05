@@ -28,5 +28,5 @@ test("reports online transcription ready when any provider is configured", () =>
   assert.equal(health.status, "ready");
   assert.equal(health.onlineTranscriptionAvailable, true);
   assert.equal(health.providers.groq, true);
-  assert.match(health.checkedAt, /^\\d{4}-\\d{2}-\\d{2}T/);
+  assert.match(health.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
