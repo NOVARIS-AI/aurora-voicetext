@@ -141,7 +141,7 @@ jobs:
             exit 1
           fi
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          KEY_SHA=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
+          KEY_SHA=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" | awk '/certificate SHA-256 digest:/{print $NF; exit}' | tr -d ':')
           echo "Persistent keystore SHA-256: $KEY_SHA"
           echo "APK signer SHA-256: $APK_SHA"
