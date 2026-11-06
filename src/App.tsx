@@ -1008,6 +1008,7 @@ function App() {
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [error, setError] = useState('');
+  const [transcriptionFailed, setTranscriptionFailed] = useState(false);
   const [exportType, setExportType] = useState('docx');
   const [exportTemplate, setExportTemplate] = useState('standard');
   const [exportFilename, setExportFilename] = useState('');
@@ -1205,6 +1206,7 @@ function App() {
     const controller = new AbortController();
     transcriptionAbortRef.current = controller;
     setBusy(true);
+    setTranscriptionFailed(false);
     setError('');
     setStatus('Preparing audio for section-by-section transcription…');
     setProgress({ completed: 0, total: 0 });
@@ -1272,8 +1274,10 @@ function App() {
       setFiles(current => current.map(item => item.id === selected.id ? { ...item, transcript: completedText, translatedTranscript: '' } : item));
       setStatus('Transcription complete. Your transcript is ready to review.');
       setError('');
+      setTranscriptionFailed(false);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Transcription failed.';
+      setTranscriptionFailed(true);
       setError(message);
       setStatus('Your recording remains selected. You can retry without starting over from completed sections.');
     } finally {
@@ -1700,7 +1704,7 @@ function App() {
 
       {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Export important work to keep a separate copy.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
 
-      {error && <div className="error-message" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error" type="button"><X size={16}/></button></div>}
+      {error && <div className="error-message" role="alert"><span>{error}</span>{page === 'transcribe' && active && transcriptionFailed && <button className="secondary small-button" onClick={transcribe} disabled={busy} type="button"><WandSparkles size={15}/> Retry from saved section</button>}<button onClick={() => { setError(''); if (transcriptionFailed) setTranscriptionFailed(false); }} aria-label="Dismiss error" type="button"><X size={16}/></button></div>}
       <footer className="footer"><span><AudioLines size={15}/> AURORA VoiceText</span><span><ShieldCheck size={14}/> Your voice notes, made readable</span></footer>
     </main>
   );
