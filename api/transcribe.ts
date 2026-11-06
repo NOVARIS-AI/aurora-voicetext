@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { transcribeWithFallback } from "./_lib/transcription-providers";
-import { callBackup } from "./_lib/backup";
+import { transcribeWithFallback } from "./_lib/transcription-providers.js";
+import { callBackup } from "./_lib/backup.js";
 
 type Body = { audioBase64?: string; mimeType?: string; chunkNumber?: number; totalChunks?: number; languageHint?: string; detectLanguage?: boolean; speakerLabels?: boolean };
 
