@@ -115,9 +115,10 @@ export async function transcribeWithFallback(input: AudioInput): Promise<Transcr
     { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/audio/transcriptions", model: process.env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3-turbo" },
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/audio/transcriptions", model: process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1" },
   ].filter(provider => Boolean(provider.key));
-  if (!providers.length) {
-    const detail = failures.length ? " " + failures.join(" | ") : "";
-    throw Object.assign(new Error("No transcription provider is configured. Add ASSEMBLYAI_API_KEY, GROQ_API_KEY or OPENAI_API_KEY to the backend environment." + detail), { status: 503, code: "NO_PROVIDER" });
+  // AssemblyAI is a valid primary provider on its own. Do not reject the request
+  // just because the faster OpenAI-compatible providers are not configured.
+  if (!providers.length && !process.env.ASSEMBLYAI_API_KEY) {
+    throw Object.assign(new Error("No transcription provider is configured. Add ASSEMBLYAI_API_KEY, GROQ_API_KEY or OPENAI_API_KEY to the backend environment."), { status: 503, code: "NO_PROVIDER" });
   }
   for (const provider of providers) {
     try { return await requestTranscription(provider.url, provider.key!, provider.model, input, provider.name); }
