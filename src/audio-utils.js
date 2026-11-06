@@ -166,3 +166,10 @@ export function isValidTranscriptionCheckpoint(value, expected = {}) {
   }
   return true;
 }
+
+/** Identify video containers that can be passed to FFmpeg for audio-track extraction. */
+export function isVideoMediaFile(file) {
+  const type = String(file?.type || '').toLowerCase();
+  const name = String(file?.name || '');
+  return type.startsWith('video/') || /\\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(name);
+}
