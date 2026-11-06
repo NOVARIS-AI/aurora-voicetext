@@ -1,7 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { transcribeWithFallback } from "./_lib/transcription-providers";
+import { callBackup } from "./_lib/backup";
 
 type Body = { audioBase64?: string; mimeType?: string; chunkNumber?: number; totalChunks?: number; languageHint?: string; detectLanguage?: boolean; speakerLabels?: boolean };
+
+// Long recordings are split into short, resumable sections by the client.
+// Allow enough time for the primary providers and the authenticated Worker handoff.
+export const config = { maxDuration: 60 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
@@ -31,9 +36,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Primary transcription providers unavailable.";
     const status = (error as {status?:number}).status || 503;
-    // The Android/web client sees this 5xx and immediately hands the same
-    // section to the separately hosted Cloudflare Worker. Do not proxy that
-    // long-running request through a 60-second Vercel function.
+
+    // Do not retry malformed or oversized chunks: the backup service would reject
+    // the same payload. For provider/quota/network failures, hand this exact chunk
+    // to the separately hosted Worker using a server-only bearer token.
+    if (status !== 413 && status !== 415) {
+      try {
+        const backup = await callBackup("/api/transcribe", {
+          audioBase64: input.audioBase64,
+          mimeType,
+          languageHint: input.languageHint,
+          chunkNumber: input.chunkNumber ?? 1,
+          totalChunks: input.totalChunks ?? 1,
+        });
+        if (backup) {
+          const payload = await backup.json().catch(() => ({})) as {
+            text?: string; language?: string; language_name?: string;
+            segments?: unknown[]; provider?: string; error?: string;
+          };
+          if (backup.ok && typeof payload.text === "string" && payload.text.trim()) {
+            return res.status(200).json({
+              ...payload,
+              text: payload.text.trim(),
+              chunkNumber: input.chunkNumber ?? 1,
+              totalChunks: input.totalChunks ?? 1,
+              provider: payload.provider || "backup-worker",
+              backupUsed: true,
+            });
+          }
+          const backupMessage = typeof payload.error === "string" ? payload.error : "Backup transcription did not return a transcript.";
+          return res.status(503).json({
+            error: "Primary transcription failed. Backup service: " + backupMessage.slice(0, 300),
+            fallbackAvailable: true,
+            retryOnBackup: true,
+          });
+        }
+      } catch (backupError) {
+        const backupMessage = backupError instanceof Error ? backupError.message : "Backup request failed.";
+        return res.status(503).json({
+          error: "Primary transcription failed and the backup service could not be reached. " + backupMessage.slice(0, 240),
+          fallbackAvailable: true,
+          retryOnBackup: true,
+        });
+      }
+    }
+
+    // A missing server-side backup configuration can still use the explicitly
+    // enabled, rate-limited client fallback. Never expose provider keys.
     return res.status(status >= 400 && status < 500 ? status : 503).json({
       error: message.slice(0, 420),
       fallbackAvailable: true,
