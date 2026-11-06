@@ -1016,6 +1016,11 @@ function App() {
   const [exportFilename, setExportFilename] = useState('');
   const [voiceFilename, setVoiceFilename] = useState('aurora-voice');
   const [studioText, setStudioText] = useState('');
+  const [voiceChatInput, setVoiceChatInput] = useState('');
+  const [voiceChatMessages, setVoiceChatMessages] = useState<Array<{id:string;role:'user'|'assistant';text:string}>>([]);
+  const [voiceMentionOpen, setVoiceMentionOpen] = useState(false);
+  const [voiceMentionQuery, setVoiceMentionQuery] = useState('');
+  const voiceAttachmentRef = useRef<HTMLInputElement>(null);
   const [voiceRate, setVoiceRate] = useState(1);
   const [voicePitch, setVoicePitch] = useState(1);
   const [voiceName, setVoiceName] = useState('nova');
@@ -1486,6 +1491,39 @@ function App() {
   }
 
 
+
+  function sendVoiceChatMessage() {
+    const message = voiceChatInput.trim();
+    if (!message) return;
+    const mention = message.match(/@([^\\s]+)/)?.[1]?.replace(/[.,!?;:]+$/, '');
+    const allTranscripts = [...library, ...files.filter(item => item.transcript.trim()).map(item => ({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))];
+    const found = mention ? allTranscripts.find(item => item.name.toLowerCase().includes(mention.toLowerCase()) || safeFileBaseName(item.name, '').toLowerCase().includes(mention.toLowerCase())) : undefined;
+    if (found) {
+      setStudioText(found.transcript);
+      setVoiceFilename(safeFileBaseName(found.name, 'aurora-voice'));
+      setVoiceChatMessages(items => [...items,{id:crypto.randomUUID(),role:'user',text:message},{id:crypto.randomUUID(),role:'assistant',text:'Loaded @'+found.name+' into your voice script. You can generate it now.'}]);
+    } else {
+      setStudioText(message.replace(/@[^\\s]+/g, '').trim() || message);
+      setVoiceChatMessages(items => [...items,{id:crypto.randomUUID(),role:'user',text:message},{id:crypto.randomUUID(),role:'assistant',text:'Your message is now the voice script. Choose your voice settings and generate the audio below.'}]);
+    }
+    setVoiceChatInput('');
+    setVoiceMentionOpen(false);
+  }
+
+  function startVoiceDictation() {
+    const w = window as Window & { SpeechRecognition?: any; webkitSpeechRecognition?: any };
+    const Recognition = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!Recognition) { setError('Voice input is not supported here. You can still type or attach an audio recording.'); return; }
+    const recognition = new Recognition();
+    recognition.lang = 'en-NG';
+    recognition.onresult = (event: any) => {
+      const spoken = event.results?.[0]?.[0]?.transcript || '';
+      if (spoken) setVoiceChatInput(value => value ? value + ' ' + spoken : spoken);
+    };
+    recognition.onerror = () => setError('Could not capture voice input. Please try again.');
+    recognition.start();
+  }
+
   async function generateVoice() {
     if (!studioText.trim()) { setError('Add a script or choose a saved transcript first.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
@@ -1707,8 +1745,21 @@ function App() {
             {active?.transcript.trim() && <button className="secondary small-button" type="button" onClick={()=>setStudioText(active.transcript)}><FileText size={15}/> Use current transcript</button>}
             {library.length>0 && <label className="field-label">Saved transcript<AppSelect ariaLabel="Saved transcript" value="" onChange={value=>{const item=library.find(entry=>entry.id===value);if(item)setStudioText(item.transcript);}} options={[{value:'',label:'Choose from library…'},...library.map(item=>({value:item.id,label:item.name}))]}/></label>}
           </div>
-          <label className="field-label" htmlFor="studio-text">Your script</label>
-          <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="Write or paste the words you want AURORA to speak…"/>
+          <div className="voice-chat-shell">
+            <div className="voice-chat-heading"><div><strong><Sparkles size={16}/> AURORA Voice Chat</strong><span>Type, speak, attach audio, or find an old transcript with @</span></div></div>
+            <div className="voice-chat-thread" aria-live="polite">
+              {voiceChatMessages.length===0 && <div className="voice-chat-welcome"><Sparkles size={20}/><strong>What should I turn into a voice?</strong><span>Send a message or type @ to search your saved transcripts.</span></div>}
+              {voiceChatMessages.map(message=><div key={message.id} className={'voice-chat-message '+message.role}><span>{message.role==='user'?'YOU':'AURORA'}</span><p>{message.text}</p></div>)}
+            </div>
+            <div className="voice-chat-composer">
+              {voiceMentionOpen && <div className="voice-mention-menu"><strong>Matching saved transcripts</strong>{[...library,...files.filter(item=>item.transcript.trim()).map(item=>({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))].filter((item,index,all)=>all.findIndex(other=>other.id===item.id)===index).filter(item=>item.name.toLowerCase().includes(voiceMentionQuery.toLowerCase())).slice(0,8).map(item=><button key={item.id} type="button" onClick={()=>{setStudioText(item.transcript);setVoiceFilename(safeFileBaseName(item.name,'aurora-voice'));setVoiceChatMessages(items=>[...items,{id:crypto.randomUUID(),role:'assistant',text:'Loaded @'+item.name+' into your voice script.'}]);setVoiceChatInput('');setVoiceMentionOpen(false);}}><FileText size={15}/><span>@{item.name}<small>{item.transcript.slice(0,80)}</small></span></button>)}{library.length===0&&!files.some(item=>item.transcript.trim())&&<small>No saved transcripts yet. Save a transcript to find it here.</small>}</div>}
+              <textarea className="voice-chat-input" aria-label="Message AURORA" value={voiceChatInput} onChange={event=>{setVoiceChatInput(event.target.value);const match=event.target.value.match(/@([^\\s]*)$/);setVoiceMentionOpen(Boolean(match));setVoiceMentionQuery(match?.[1]||'');}} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendVoiceChatMessage();}}} placeholder="Message AURORA… use @ to find a transcript"/>
+              <div className="voice-chat-actions"><button className="secondary small-button" type="button" onClick={startVoiceDictation}><Mic2 size={15}/> Speak</button><button className="secondary small-button" type="button" onClick={()=>voiceAttachmentRef.current?.click()}><Upload size={15}/> Attach audio/video</button><button className="primary small-button" type="button" disabled={!voiceChatInput.trim()} onClick={sendVoiceChatMessage}>Send <AudioLines size={15}/></button></div>
+              <input ref={voiceAttachmentRef} className="hidden-input" type="file" accept="audio/*,video/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm,.mp4,.mov,.mkv" multiple onChange={event=>{const chosen=Array.from(event.currentTarget.files||[]);const audio=chosen.filter(file=>file.type.startsWith('audio/')||/\\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));const video=chosen.filter(file=>file.type.startsWith('video/')||/\\.(mp4|mov|mkv)$/i.test(file.name));if(audio.length)addFiles(audio);if(video.length)setError('Video attachment received, but video-to-audio extraction is not yet enabled. Extract its audio track or attach an audio file to transcribe it.');setVoiceChatMessages(items=>[...items,...chosen.map(file=>({id:crypto.randomUUID(),role:'user' as const,text:'Attached '+file.name}))]);event.currentTarget.value='';}}/>
+            </div>
+          </div>
+          <label className="field-label" htmlFor="studio-text">Voice script preview</label>
+          <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="The selected transcript or your chat message will appear here…"/>
           <div className="studio-grid studio-primary-options">
             <label className="field-label">Voice<AppSelect ariaLabel="Voice" value={voiceName} onChange={setVoiceName} options={[{value:'nova',label:'Nova · bright'},{value:'shimmer',label:'Shimmer · clear'},{value:'coral',label:'Coral · warm'},{value:'sage',label:'Sage · measured'},{value:'onyx',label:'Onyx · deep'},{value:'echo',label:'Echo · clear'},{value:'ash',label:'Ash · conversational'},{value:'fable',label:'Fable · narrator'},{value:'alloy',label:'Alloy · neutral'}]}/></label>
             <label className="field-label">Delivery<AppSelect ariaLabel="Voice delivery" value={voiceStyle} onChange={setVoiceStyle} options={['Natural, conversational delivery','Professional presenter, polished and confident','Storytelling, expressive and vivid','Documentary narrator, steady and authoritative','Energetic, upbeat and engaging','Calm, gentle and reassuring'].map(value=>({value,label:value}))}/></label>
