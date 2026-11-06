@@ -36,13 +36,17 @@ const safeRate = (value: unknown) => Number.isFinite(Number(value)) ? Math.min(2
 
 async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHint?: string) {
   const failures: string[] = [];
-  if (env.ASSEMBLYAI_API_KEY) {
+  // Keep the Worker request inside the Vercel-to-Worker proxy timeout, leaving
+  // a small response margin so the caller receives the completed transcript.
+  const requestDeadline = Date.now() + 105000;
+  const remainingMs = () => Math.max(0, requestDeadline - Date.now());
+  if (env.ASSEMBLYAI_API_KEY && remainingMs() > 12000) {
     try {
       const upload = await fetch("https://api.assemblyai.com/v2/upload", {
         method: "POST",
         headers: { authorization: env.ASSEMBLYAI_API_KEY, "content-type": "application/octet-stream" },
         body: (() => { const uploadBytes = new Uint8Array(bytes.byteLength); uploadBytes.set(bytes); return uploadBytes.buffer; })(),
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(Math.min(15000, remainingMs() - 1000)),
       });
       const uploaded = await upload.json().catch(() => ({})) as { upload_url?: string; error?: string };
       if (!upload.ok || !uploaded.upload_url) throw new Error(uploaded.error || "AssemblyAI upload failed (HTTP " + upload.status + ").");
@@ -55,16 +59,16 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
           language_detection: true,
           speaker_labels: true,
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(Math.min(10000, remainingMs() - 1000)),
       });
       const job = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
       if (!submitted.ok || !job.id) throw new Error(job.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
-      const deadline = Date.now() + 90000;
-      while (Date.now() < deadline) {
+      const assemblyDeadline = Math.min(requestDeadline, Date.now() + 45000);
+      while (Date.now() < assemblyDeadline && remainingMs() > 9000) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(job.id), {
           headers: { authorization: env.ASSEMBLYAI_API_KEY },
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(Math.min(8000, remainingMs() - 1500)),
         });
         const result = await polled.json().catch(() => ({})) as {
           status?: string; text?: string; language_code?: string; error?: string;
@@ -97,6 +101,12 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
   ].filter(p => p.key);
   if (!providers.length) throw new Error("No backup transcription provider configured. " + failures.join(" | "));
   for (const provider of providers) {
+    // Reserve enough time for the next provider and the JSON response. Never
+    // let one slow provider consume the entire Worker request window.
+    if (remainingMs() < 4000) {
+      failures.push(provider.name + ": skipped because the backup request time budget was exhausted.");
+      break;
+    }
     try {
       const form = new FormData();
       const audio = new Uint8Array(bytes.byteLength); audio.set(bytes);
@@ -104,7 +114,7 @@ async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHin
       form.append("file", new Blob([audio.buffer], { type: mime }), "audio-chunk." + ext);
       form.append("model", provider.model); form.append("response_format", "verbose_json"); form.append("timestamp_granularities[]", "segment"); form.append("temperature", "0");
       if (languageHint) form.append("prompt", "Transcribe accurately. Preserve the spoken language. " + languageHint.slice(0, 120));
-      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key }, body: form, signal: AbortSignal.timeout(110000) });
+      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key }, body: form, signal: AbortSignal.timeout(Math.min(45000, remainingMs() - 1500)) });
       const payload = await response.json().catch(() => ({})) as { text?: string; language?: string; segments?: Array<{start?:number;end?:number;text?:string}>; error?: {message?:string}|string };
       if (!response.ok || !payload.text?.trim()) {
         const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
