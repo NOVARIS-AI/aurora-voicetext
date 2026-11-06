@@ -1811,8 +1811,9 @@ function App() {
         </section> : <div className="empty-state"><AudioWaveform/><strong>Select a transcript first</strong><span>Choose or transcribe an audio file to start a chat.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
       </section>}
 
-      {page === 'studio' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">VOICE WORKSPACE</div><h1>Shape audio and give words a voice.</h1><p>Generate voiceovers, preview recordings, trim clips and export finished audio—all in one workspace.</p></div>
+      {page === 'studio' && <section className="page-content voice-editor-page">
+        <div className="page-heading"><div className="eyebrow"><AudioWaveform size={14}/> AURORA // VOICE SYSTEM</div><h1>Voice <span>Command</span> Center.</h1><p>Compose, synthesize and refine audio inside your personal AI sound lab.</p></div>
+        <div className="voice-hud" aria-label="Voice system status"><div><span className="voice-hud-dot"/><small>SYSTEM STATUS</small><strong>ONLINE</strong></div><div><small>CORE MODULE</small><strong>VOICE SYNTHESIS</strong></div><div><small>WORKSPACE</small><strong>STUDIO / 02</strong></div></div>
         <section className="card studio-card">
           <div className="studio-icon"><Volume2 size={23}/></div>
           <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
