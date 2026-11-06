@@ -29,7 +29,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'audio-editor' | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -1028,6 +1028,10 @@ function App() {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
   const [audioPlayhead, setAudioPlayhead] = useState(0);
+  const [editorStart, setEditorStart] = useState(0);
+  const [editorEnd, setEditorEnd] = useState(0);
+  const [editorDuration, setEditorDuration] = useState(0);
+  const [editorBusy, setEditorBusy] = useState(false);
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
@@ -1594,7 +1598,7 @@ function App() {
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
-        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Studio',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
+        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Studio',Mic2],['audio-editor','Audio Editor',AudioWaveform],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
           <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
@@ -1723,6 +1727,26 @@ function App() {
           {status && <div className="status-message" role="status">{status}</div>}
           {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
         </section>
+      </section>}
+
+
+      {page === 'audio-editor' && <section className="page-content">
+        <div className="page-heading"><div className="eyebrow">AUDIO WORKSPACE</div><h1>Edit an audio section.</h1><p>Choose a recording, set the in and out points, preview the selection and export a separate clip. Your original recording stays unchanged.</p></div>
+        {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
+          <div className="card-title"><div><small>SELECTED RECORDING</small><h2>{active.file.name}</h2></div><button className="secondary small-button" type="button" onClick={()=>setPage('transcribe')}>Change file</button></div>
+          <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>
+          <div className="studio-grid">
+            <label className="field-label">Start time (seconds)<input type="number" min="0" max={editorDuration||undefined} step="0.1" value={editorStart} onChange={event=>setEditorStart(Math.max(0,Math.min(Number(event.target.value)||0,editorDuration||Number.MAX_SAFE_INTEGER)))}/></label>
+            <label className="field-label">End time (seconds)<input type="number" min={editorStart} max={editorDuration||undefined} step="0.1" value={editorEnd} onChange={event=>setEditorEnd(Math.max(editorStart,Math.min(Number(event.target.value)||0,editorDuration||Number.MAX_SAFE_INTEGER)))}/></label>
+          </div>
+          <div className="info-strip"><AudioWaveform size={18}/><div><strong>Selection length: {Math.max(0,editorEnd-editorStart).toFixed(1)} seconds</strong><p>Full recording: {editorDuration ? Math.floor(editorDuration/60)+':'+String(Math.floor(editorDuration%60)).padStart(2,'0') : 'Loading duration…'} · Playback stops at the selected end point.</p></div></div>
+          <div className="studio-actions">
+            <button className="secondary" type="button" disabled={!editorDuration} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=editorStart;void audioRef.current.play();}}}>Preview selection</button>
+            <button className="secondary" type="button" disabled={!editorDuration} onClick={()=>{setEditorStart(0);setEditorEnd(editorDuration);if(audioRef.current)audioRef.current.currentTime=0;}}>Reset selection</button>
+            <button className="primary" type="button" disabled={editorBusy||!editorDuration||editorEnd<=editorStart} onClick={async()=>{setEditorBusy(true);setError('');try{let wavBase64:string;if(active.nativePath){const result=await nativeAudioFiles.decodeSegment({path:active.nativePath,startSeconds:editorStart,durationSeconds:editorEnd-editorStart});wavBase64=result.wavBase64;}else{const context=new AudioContext();try{const decoded=await context.decodeAudioData(await active.file.arrayBuffer());const start=Math.floor(editorStart*decoded.sampleRate);const end=Math.min(decoded.length,Math.floor(editorEnd*decoded.sampleRate));if(end<=start)throw new Error('Choose a valid audio range.');const channels=decoded.numberOfChannels;const length=end-start;const buffer=new ArrayBuffer(44+length*channels*2);const view=new DataView(buffer);const write=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)view.setUint8(offset+i,value.charCodeAt(i));};write(0,'RIFF');view.setUint32(4,36+length*channels*2,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,decoded.sampleRate,true);view.setUint32(28,decoded.sampleRate*channels*2,true);view.setUint16(32,channels*2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,length*channels*2,true);let offset=44;for(let i=0;i<length;i++)for(let channel=0;channel<channels;channel++){const sample=Math.max(-1,Math.min(1,decoded.getChannelData(channel)[start+i]));view.setInt16(offset,sample<0?sample*32768:sample*32767,true);offset+=2;}const bytes=new Uint8Array(buffer);let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));wavBase64=btoa(binary);}finally{await context.close();}}const binary=atob(wavBase64);const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);await downloadFile(safeFileBaseName(active.file.name.replace(/\.[^.]+$/,'')+'-clip','aurora-clip')+'.wav',new Blob([bytes],{type:'audio/wav'}),'audio/wav');setStatus('Trimmed audio clip exported. Your original file was not changed.');}catch(reason){setError(reason instanceof Error?reason.message:'Could not export this audio section.');}finally{setEditorBusy(false);}}}>{editorBusy?<LoaderCircle className="spin" size={16}/>:<Download size={16}/>} {editorBusy?'Preparing clip…':'Export selected clip (WAV)'}</button>
+          </div>
+          <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
+        </section>}
       </section>}
 
       {page === 'subtitles' && <section className="page-content">
