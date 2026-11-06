@@ -94,7 +94,14 @@ jobs:
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
           chmod 600 "$HOME/.android/debug.keystore"
           keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey >/dev/null
-          echo "Persistent AURORA signing identity restored and verified."
+          # Capacitor's generated Android template can resolve the debug key from
+          # the app module directory. Put the exact same persistent key in both
+          # supported locations so Gradle cannot silently use a runner-generated key.
+          mkdir -p android/app
+          cp "$HOME/.android/debug.keystore" android/app/debug.keystore
+          chmod 600 android/app/debug.keystore
+          cmp -s "$HOME/.android/debug.keystore" android/app/debug.keystore
+          echo "Persistent AURORA signing identity restored in both Gradle debug-keystore locations."
 
       - name: Build debug APK with persistent signing identity
         working-directory: android
@@ -112,7 +119,7 @@ jobs:
             exit 1
           fi
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          KEY_SHA=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
+          KEY_SHA=$(keytool -list -v -keystore "android/app/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
           APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')
           if [ -z "$KEY_SHA" ] || [ "$APK_SHA" != "$KEY_SHA" ]; then
             echo "::error::APK signing certificate does not match the configured keystore."
