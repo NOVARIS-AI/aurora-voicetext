@@ -219,6 +219,94 @@ function readLibrary(): Recording[] {
   } catch { return []; }
 }
 
+// Persist the active workspace separately from the transcript library.
+const SESSION_DB = 'aurora-voicetext-workspace-v1';
+type StoredAudioMeta = {
+  id: string; name: string; type: string; lastModified: number; transcript: string;
+  translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[];
+  nativePath?: string; nativeSize?: number; nativeDurationMs?: number;
+  nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails;
+};
+function openSessionDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { reject(new Error('IndexedDB unavailable.')); return; }
+    const request = indexedDB.open(SESSION_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('workspace')) db.createObjectStore('workspace', { keyPath: 'key' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open workspace storage.'));
+  });
+}
+async function saveWorkspaceAudio(items: AudioFile[]): Promise<void> {
+  const db = await openSessionDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('audio', 'readwrite');
+      const store = tx.objectStore('audio');
+      for (const item of items) store.put({ id: item.id, name: item.file.name, type: item.file.type, lastModified: item.file.lastModified, blob: item.file.size ? item.file : null, nativePath: item.nativePath || null });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Could not save imported audio.'));
+      tx.onabort = () => reject(tx.error || new Error('Audio save interrupted.'));
+    });
+  } finally { db.close(); }
+}
+async function removeWorkspaceAudio(id: string): Promise<void> {
+  const db = await openSessionDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('audio', 'readwrite');
+      tx.objectStore('audio').delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Could not remove saved audio.'));
+    });
+  } finally { db.close(); }
+}
+async function saveWorkspaceState(items: AudioFile[], activeId: string | null, page: Page): Promise<void> {
+  const db = await openSessionDb();
+  try {
+    const files: StoredAudioMeta[] = items.map(item => ({
+      id: item.id, name: item.file.name, type: item.file.type, lastModified: item.file.lastModified,
+      transcript: item.transcript, translatedTranscript: item.translatedTranscript,
+      detectedLanguage: item.detectedLanguage, timedSegments: item.timedSegments,
+      nativePath: item.nativePath, nativeSize: item.nativeSize, nativeDurationMs: item.nativeDurationMs,
+      nativeFingerprint: item.nativeFingerprint, nativeAudioInfo: item.nativeAudioInfo,
+    }));
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('workspace', 'readwrite');
+      tx.objectStore('workspace').put({ key: 'current', files, activeId, page, savedAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Could not save workspace state.'));
+    });
+  } finally { db.close(); }
+}
+async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: string | null; page: Page } | null> {
+  const db = await openSessionDb();
+  try {
+    const snapshot = await new Promise<any>((resolve, reject) => {
+      const request = db.transaction('workspace', 'readonly').objectStore('workspace').get('current');
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error('Could not read saved workspace.'));
+    });
+    if (!snapshot || !Array.isArray(snapshot.files) || !snapshot.files.length) return null;
+    const files = await Promise.all(snapshot.files.map(async (meta: StoredAudioMeta) => {
+      const saved = await new Promise<any>((resolve, reject) => {
+        const request = db.transaction('audio', 'readonly').objectStore('audio').get(meta.id);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error);
+      });
+      const blob = saved?.blob instanceof Blob ? saved.blob : new Blob([], { type: meta.type });
+      const file = new File([blob], meta.name, { type: meta.type || blob.type, lastModified: meta.lastModified || Date.now() });
+      const nativePath = meta.nativePath || saved?.nativePath || undefined;
+      return { ...meta, file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), nativePath } as AudioFile;
+    }));
+    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','settings'];
+    return { files, activeId: typeof snapshot.activeId === 'string' ? snapshot.activeId : files[0]?.id ?? null, page: pages.includes(snapshot.page) ? snapshot.page : 'home' };
+  } finally { db.close(); }
+}
+
 
 const CHECKPOINT_DB = 'aurora-voicetext-checkpoints-v1';
 function openCheckpointDb(): Promise<IDBDatabase> {
@@ -1009,6 +1097,7 @@ function App() {
   const [page, setPage] = useState<Page>('home');
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [sessionHydrated, setSessionHydrated] = useState(false);
   const [library, setLibrary] = useState<Recording[]>(readLibrary);
   const [busy, setBusy] = useState(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
@@ -1114,6 +1203,23 @@ function App() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
 
+  // Restore before autosaving, so the initial empty React state cannot erase a session.
+  useEffect(() => {
+    let cancelled = false;
+    void restoreWorkspaceState().then(saved => {
+      if (cancelled) return;
+      if (saved) { setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); }
+    }).catch(() => {
+      // Recovery is best-effort; saved library transcripts remain available.
+    }).finally(() => { if (!cancelled) setSessionHydrated(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionHydrated) return;
+    void saveWorkspaceState(files, activeId, page).catch(() => undefined);
+  }, [files, activeId, page, sessionHydrated]);
+
   useEffect(() => {
     void pruneSavedCheckpoints().catch(() => {
       // Checkpoint cleanup is best-effort; saved transcripts remain untouched.
@@ -1187,6 +1293,7 @@ function App() {
       return { id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), transcript: '', nativePath, nativeSize: nativeDetails?.[index]?.size, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeFingerprint: nativeDetails?.[index]?.contentHash, nativeAudioInfo: nativeDetails?.[index]?.audioInfo };
     });
     setFiles(current => [...current, ...next]);
+    void saveWorkspaceAudio(next).catch(() => setStatus('Audio is loaded, but this device could not save a reload-safe copy. Save your transcript to the library as a backup.'));
     setActiveId(current => current ?? next[0].id);
     setError('');
   }
@@ -1468,6 +1575,7 @@ function App() {
       const removed = current.find(item => item.id === id);
       if (removed) URL.revokeObjectURL(removed.url);
       const next = current.filter(item => item.id !== id);
+      void removeWorkspaceAudio(id).catch(() => undefined);
       if (activeId === id) setActiveId(next[0]?.id ?? null);
       return next;
     });
@@ -1489,16 +1597,40 @@ function App() {
     const transcriptDocument = documentTitle + '\n' + (templateSubtitle ? templateSubtitle + '\n' : '') + attribution + '\n\n' + timestamped;
     if (exportType === 'docx') {
       try {
-        const paragraphs = includeTimestamps && timestampsCoverTranscript
-          ? timedSegments!.map(segment => new Paragraph({ children: [new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91' }), new TextRun(segment.text)], spacing: { after: 120 } }))
-          : text.split(/\r?\n/).map(line => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
-        const doc = new Document({ sections: [{ properties: {}, children: [
-          new Paragraph({ children: [new TextRun({ text: templateLabel, bold: true, size: 18, color: '167D91', characterSpacing: 24 })], spacing: { after: 100 } }),
-          new Paragraph({ children: [new TextRun({ text: documentTitle, bold: true, size: 34, color: '172033' })], spacing: { after: 100 } }),
-          ...(templateSubtitle ? [new Paragraph({ children: [new TextRun({ text: templateSubtitle, color: '475569', size: 22 })], spacing: { after: 100 } })] : []),
-          new Paragraph({ children: [new TextRun({ text: attribution, italics: true, color: '64748B', size: 20 })], spacing: { after: 360 } }),
-          ...paragraphs
-        ] }] });
+        const bodyParagraphs = includeTimestamps && timestampsCoverTranscript
+          ? timedSegments!.filter(segment => segment.text.trim()).map(segment => new Paragraph({
+              children: [
+                new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91', size: 20 }),
+                new TextRun({ text: segment.text.trim(), font: 'Aptos', size: 22 }),
+              ],
+              spacing: { before: 40, after: 180, line: 300 },
+              indent: { left: 120 },
+            }))
+          : text.replace(/\\r\\n/g, '\\n').split(/\\n\\s*\\n/).map(block => block.trim()).filter(Boolean).map(block => new Paragraph({
+              children: [new TextRun({ text: block.replace(/\\n+/g, ' ').replace(/\\s+/g, ' '), font: 'Aptos', size: 22 })],
+              spacing: { before: 40, after: 220, line: 320 },
+              alignment: 'left',
+            }));
+        const doc = new Document({
+          styles: {
+            default: {
+              document: {
+                run: { font: 'Aptos', size: 22, color: '202938' },
+                paragraph: { spacing: { after: 180, line: 300 } },
+              },
+            },
+          },
+          sections: [{
+            properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, right: 1320, bottom: 1440, left: 1320 } } },
+            children: [
+              new Paragraph({ children: [new TextRun({ text: templateLabel, bold: true, size: 18, color: '167D91', characterSpacing: 28, font: 'Aptos' })], spacing: { after: 180 } }),
+              new Paragraph({ children: [new TextRun({ text: documentTitle, bold: true, size: 36, color: '172033', font: 'Aptos Display' })], spacing: { after: 140, line: 420 } }),
+              ...(templateSubtitle ? [new Paragraph({ children: [new TextRun({ text: templateSubtitle, color: '475569', size: 22, font: 'Aptos' })], spacing: { after: 100 } })] : []),
+              new Paragraph({ children: [new TextRun({ text: attribution, italics: true, color: '64748B', size: 18, font: 'Aptos' })], spacing: { after: 420, border: { bottom: { color: 'D9E2EC', space: 8, style: 'single', size: 4 } } } }),
+              ...bodyParagraphs,
+            ],
+          }],
+        });
         const blob = await Packer.toBlob(doc);
         await downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
