@@ -128,7 +128,7 @@ async function postBinary(url: string, payload: unknown, readTimeout = 120000): 
   if (nativeResponse.status >= 200 && nativeResponse.status < 300) {
     if (typeof raw === 'string') {
       // Capacitor's Android arraybuffer response is transported to JavaScript as base64.
-      const encoded = raw.replace(/\\s/g, '');
+      const encoded = raw.replace(/\s/g, '');
       const decoded = atob(encoded);
       const bytes = new Uint8Array(decoded.length);
       for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
@@ -1573,7 +1573,7 @@ function App() {
     const mention = message.match(/@([^\\s]+)/)?.[1]?.replace(/[.,!?;:]+$/, '');
     const allTranscripts = [...library, ...files.filter(item => item.transcript.trim()).map(item => ({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))];
     const found = mention ? allTranscripts.find(item => item.name.toLowerCase().includes(mention.toLowerCase()) || safeFileBaseName(item.name, '').toLowerCase().includes(mention.toLowerCase())) : undefined;
-    const userContent = found ? message + "\\n\\nSaved transcript to use as context:\\n" + found.transcript : message;
+    const userContent = found ? message + "\n\nSaved transcript to use as context:\n" + found.transcript : message;
     const history = [...voiceChatMessages.slice(-14).map(item => ({role:item.role,content:item.text})), {role:'user' as const,content:userContent}];
     setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'user',text:message}]);
     setVoiceChatInput('');
