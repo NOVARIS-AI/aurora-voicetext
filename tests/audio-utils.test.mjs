@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds } from '../src/audio-utils.js';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, isVideoMediaFile } from '../src/audio-utils.js';
 
 test('merges duplicate words at section boundaries', () => {
   assert.equal(
@@ -150,4 +150,14 @@ test('rejects damaged checkpoint parts and invalid timestamp segments', async ()
   assert.equal(isValidTranscriptionCheckpoint({ ...base, segments: [{ start: 4, end: 2, text: 'Bad timing' }] }, expected), false);
   assert.equal(isValidTranscriptionCheckpoint({ ...base, segments: [{ start: 0, end: 1, text: ' ' }] }, expected), false);
   assert.equal(isValidTranscriptionCheckpoint({ ...base, nextChunk: 3 }, expected), false);
+});
+
+
+test('recognizes supported video containers by MIME type or filename', () => {
+  for (const name of ['clip.mp4', 'clip.MOV', 'clip.mkv', 'clip.webm', 'clip.avi', 'clip.m4v']) {
+    assert.equal(isVideoMediaFile({ name, type: '' }), true, name);
+  }
+  assert.equal(isVideoMediaFile({ name: 'clip.bin', type: 'video/mp4' }), true);
+  assert.equal(isVideoMediaFile({ name: 'voice.mp3', type: 'audio/mpeg' }), false);
+  assert.equal(isVideoMediaFile({ name: 'document.pdf', type: 'application/pdf' }), false);
 });
