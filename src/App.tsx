@@ -1293,12 +1293,12 @@ function App() {
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
       let parts: string[];
-      if (mode === 'offline') {
+      if (mode === 'offline' && !isVideoMediaFile(selected.file)) {
         setStatus('Offline mode · audio stays on this device.');
         parts = await runOffline();
       } else {
         try {
-          setStatus('Online mode · preparing upload-safe audio sections…');
+          setStatus('Preparing media for transcription…');
           const onlineFile = selected.nativePath && selected.file.size === 0
             ? await loadNativeAudioForOnline(selected)
             : selected.file;
@@ -1313,7 +1313,7 @@ function App() {
             controller.signal,
           );
         } catch (onlineProblem) {
-          if (mode === 'online' || controller.signal.aborted) throw onlineProblem;
+          if (mode === 'online' || isVideoMediaFile(selected.file) || controller.signal.aborted) throw onlineProblem;
           setStatus('The online service is unavailable. Trying another available method…');
           try {
             parts = await runOffline();
