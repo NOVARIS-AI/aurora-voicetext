@@ -3,7 +3,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 export const ADMIN_EMAIL = "alwerioghenepeace563@gmail.com";
 
 export async function requireAdmin(req: VercelRequest, res: VercelResponse): Promise<boolean> {
-  const header = req.headers.authorization || "";
+  const rawHeader = req.headers.authorization || "";
+  const header = Array.isArray(rawHeader) ? rawHeader[0] || "" : rawHeader;
   const match = header.match(/^Bearer\s+(.+)$/i);
   if (!match) { res.status(401).json({ error: "Google sign-in is required." }); return false; }
   const clientId = process.env.GOOGLE_CLIENT_ID;
