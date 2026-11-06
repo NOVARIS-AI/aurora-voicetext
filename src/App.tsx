@@ -1595,8 +1595,9 @@ function App() {
     recognition.start();
   }
 
-  async function generateVoice() {
-    if (!studioText.trim()) { setError('Add a script or choose a saved transcript first.'); return; }
+  async function generateVoice(sourceText: string = studioText) {
+    const scriptText = sourceText.trim();
+    if (!scriptText) { setError('Write a message or choose a saved transcript first.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
     setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Preparing your voice…');
     try {
@@ -1615,10 +1616,12 @@ function App() {
       }
       const finalAudio = combineMp3Chunks(audioParts);
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
-      setStatus('Your voice audio is ready. Preview it or download the MP3.');\n      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:'Your voice is ready. You can preview it or download the MP3 below.'}]);
+      setStatus('Your voice audio is ready. Preview it or download the MP3.');
+      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:'Your voice is ready. You can preview it or download the MP3 below.'}]);
     } catch (reason) {
       setError(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
       setStatus('');
+      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:reason instanceof Error ? 'I could not generate that voice: ' + reason.message : 'Voice generation failed. Please try again.'}]);
     } finally { setVoiceBusy(false); }
   }
 
