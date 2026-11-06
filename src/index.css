@@ -346,3 +346,70 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .voice-chat-composer{position:relative;padding:12px;border-top:1px solid rgba(255,255,255,.08)}.voice-chat-input{width:100%;min-height:72px;resize:vertical;padding:12px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:#080f1d;color:#edf4ff;font:inherit;font-size:14px}.voice-chat-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:9px}
 .voice-mention-menu{position:absolute;z-index:12;left:12px;right:12px;bottom:calc(100% - 3px);max-height:220px;overflow:auto;padding:10px;border:1px solid rgba(92,224,228,.25);border-radius:12px;background:#101a2b;box-shadow:0 14px 40px #0009}.voice-mention-menu>strong{display:block;padding:4px 7px 8px;color:#9eacc4;font-size:12px}.voice-mention-menu>button{display:flex;align-items:center;gap:9px;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:#edf4ff;text-align:left}.voice-mention-menu>button:hover{background:#1b2b40}.voice-mention-menu>button span{display:grid;gap:4px;min-width:0}.voice-mention-menu>button small{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9eacc4}
 @media(max-width:560px){.voice-chat-actions{justify-content:stretch}.voice-chat-actions button{flex:1;justify-content:center}}
+
+
+/* AURORA VOICE COMMAND // sci-fi studio skin */
+.voice-editor-page{position:relative;isolation:isolate;overflow:hidden;padding-top:28px}
+.voice-editor-page:before{content:"";position:absolute;z-index:-1;pointer-events:none;inset:-30px -22vw auto;height:540px;background:radial-gradient(ellipse at 18% 10%,rgba(31,190,220,.13),transparent 42%),radial-gradient(ellipse at 82% 5%,rgba(139,92,246,.13),transparent 38%)}
+.voice-editor-page .page-heading{position:relative;margin-bottom:18px;padding:20px 20px 17px;border:1px solid rgba(70,211,232,.2);border-radius:20px;background:linear-gradient(120deg,rgba(9,25,42,.96),rgba(18,17,43,.9));box-shadow:0 12px 38px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.035);overflow:hidden}
+.voice-editor-page .page-heading:after{content:"";position:absolute;right:-30px;top:-65px;width:210px;height:210px;border:1px solid rgba(92,224,228,.15);border-radius:50%;box-shadow:0 0 0 18px rgba(92,224,228,.025),0 0 0 38px rgba(92,224,228,.018);pointer-events:none}
+.voice-editor-page .page-heading .eyebrow{color:#69e7f1;letter-spacing:.2em}
+.voice-editor-page .page-heading h1{font-size:clamp(34px,5.4vw,54px);letter-spacing:-.06em}
+.voice-editor-page .page-heading h1 span{background:linear-gradient(95deg,#56e4ef 5%,#9b8cff 80%);background-clip:text;-webkit-background-clip:text}
+.voice-editor-page .page-heading>p{max-width:520px;margin-bottom:0;color:#9db5ce}
+.voice-hud{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:0 0 15px}
+.voice-hud>div{display:grid;grid-template-columns:auto 1fr;align-items:center;column-gap:8px;row-gap:4px;min-width:0;padding:11px 13px;border:1px solid rgba(76,195,225,.18);border-radius:13px;background:linear-gradient(145deg,rgba(13,31,49,.96),rgba(14,19,38,.96));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.voice-hud small{grid-column:2;color:#718eaa;font-size:8px;font-weight:800;letter-spacing:.13em}
+.voice-hud strong{grid-column:2;overflow:hidden;color:#d9f8ff;font-size:10px;letter-spacing:.06em;text-overflow:ellipsis;white-space:nowrap}
+.voice-hud-dot{grid-row:1 / span 2;width:7px;height:7px;border-radius:50%;background:#48e5bd;box-shadow:0 0 11px #48e5bd}
+.voice-editor-page .studio-card,.voice-editor-page .voice-workspace-grid>.studio-card{position:relative;max-width:none;padding:19px;border:1px solid rgba(70,173,213,.24);border-radius:19px;background:linear-gradient(145deg,rgba(15,29,49,.98),rgba(9,17,32,.99));box-shadow:0 18px 44px rgba(0,0,0,.25),inset 0 1px rgba(255,255,255,.035)}
+.voice-editor-page .studio-icon{width:52px;height:52px;border:1px solid rgba(111,137,255,.25);border-radius:16px;color:#80eaf2;background:linear-gradient(145deg,rgba(38,187,211,.16),rgba(132,102,255,.16));box-shadow:0 0 24px rgba(52,190,220,.1)}
+.voice-editor-page .field-label{color:#b8cce0}
+.voice-editor-page .field-label input,.voice-editor-page .studio-grid select,.voice-editor-page .app-select-trigger{border-color:#294a64;background-color:#0a1728;color:#eaf7ff}
+.voice-editor-page .studio-source-actions .secondary,.voice-editor-page .voice-chat-actions .secondary,.voice-editor-page .studio-actions .secondary{border-color:#34516d;background:#12243a;color:#b9d8ec}
+.voice-editor-page .primary{background:linear-gradient(105deg,#35d8e6,#7f9cff);color:#061421;box-shadow:0 5px 22px rgba(49,196,224,.16)}
+.voice-editor-page .voice-chat-shell{margin:20px 0;border:1px solid rgba(65,211,231,.28);border-radius:17px;background:linear-gradient(145deg,#0b1c30,#10142c);box-shadow:inset 0 1px rgba(255,255,255,.035),0 12px 30px rgba(0,0,0,.14)}
+.voice-editor-page .voice-chat-heading{padding:16px 17px;border-bottom:1px solid rgba(92,198,225,.14);background:linear-gradient(90deg,rgba(38,175,202,.09),transparent)}
+.voice-editor-page .voice-chat-heading strong{color:#e2faff;font-family:Manrope,sans-serif;letter-spacing:.02em}
+.voice-editor-page .voice-chat-heading strong svg,.voice-editor-page .voice-chat-welcome svg{color:#65e5f0;filter:drop-shadow(0 0 7px rgba(65,216,234,.35))}
+.voice-editor-page .voice-chat-heading span{color:#89a8c3}
+.voice-editor-page .voice-chat-thread{min-height:170px;background-image:linear-gradient(rgba(88,155,197,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(88,155,197,.025) 1px,transparent 1px);background-size:22px 22px}
+.voice-editor-page .voice-chat-welcome{color:#89a8c3}
+.voice-editor-page .voice-chat-welcome strong{color:#e4f7ff}
+.voice-editor-page .voice-chat-message{border:1px solid rgba(104,155,198,.2);background:#14243a}
+.voice-editor-page .voice-chat-message.user{border-color:rgba(56,193,213,.28);background:#123544}
+.voice-editor-page .voice-chat-message>span{color:#71e3ec}
+.voice-editor-page .voice-chat-composer{border-top-color:rgba(92,198,225,.14)}
+.voice-editor-page .voice-chat-input,.voice-editor-page .studio-input{border-color:#294964;border-radius:13px;background:#071321;color:#e8f7ff;box-shadow:inset 0 1px 8px rgba(0,0,0,.18)}
+.voice-editor-page .voice-chat-input:focus,.voice-editor-page .studio-input:focus{border-color:#4bd7e5;box-shadow:0 0 0 3px rgba(63,202,224,.12)}
+.voice-editor-page .studio-input{min-height:230px;line-height:1.8}
+.voice-editor-page .voice-advanced{border-color:#2b4963;background:linear-gradient(120deg,#0d1b2d,#11172c)}
+.voice-editor-page .voice-advanced summary{color:#a8c8df}
+.voice-editor-page .voice-advanced summary:after{color:#6ce5ef}
+.voice-editor-page .studio-grid{gap:13px}
+.voice-editor-page .sliders{padding:14px;border:1px solid rgba(76,180,218,.16);border-radius:13px;background:rgba(5,16,30,.55)}
+.voice-editor-page .sliders label{color:#a8bfd4}
+.voice-editor-page input[type=range]{accent-color:#55dce9}
+.voice-editor-page .generated-audio{border-color:rgba(68,213,224,.28);background:linear-gradient(120deg,#0d2a3a,#151b36)}
+.voice-editor-page .generated-audio strong{color:#b7f5f6}
+.voice-editor-page .voice-workspace-grid{gap:14px}
+.voice-editor-page .voice-workspace-grid .card-title small{color:#6de4ee;letter-spacing:.16em}
+.voice-editor-page .voice-workspace-grid .card-title h2{color:#e5f5ff;overflow-wrap:anywhere}
+.voice-editor-page .audio-player{accent-color:#55dce9}
+.voice-editor-page .editor-tools{color:#8ba8c1}
+.voice-editor-page .voice-workspace-grid .secondary{border-color:#31516c;background:#102238;color:#c2d9eb}
+.voice-editor-page .empty-state{border:1px dashed rgba(77,193,220,.24);border-radius:17px;background:rgba(9,23,39,.7)}
+@media(max-width:560px){
+ .voice-editor-page{padding-top:18px}
+ .voice-editor-page .page-heading{padding:17px 15px;border-radius:17px}
+ .voice-editor-page .page-heading h1{font-size:36px}
+ .voice-hud{gap:6px}
+ .voice-hud>div{padding:9px 7px;column-gap:6px}
+ .voice-hud small{font-size:7px;letter-spacing:.08em}
+ .voice-hud strong{font-size:8px;letter-spacing:0}
+ .voice-editor-page .studio-card,.voice-editor-page .voice-workspace-grid>.studio-card{padding:15px;border-radius:16px}
+ .voice-editor-page .voice-chat-actions{display:grid;grid-template-columns:1fr 1fr}
+ .voice-editor-page .voice-chat-actions .primary{grid-column:1/-1}
+ .voice-editor-page .studio-actions{display:grid;grid-template-columns:1fr auto}
+}
+@media(max-width:360px){.voice-hud{grid-template-columns:1fr}.voice-hud>div{grid-template-columns:14px 1fr}.voice-editor-page .page-heading h1{font-size:32px}}
