@@ -106,9 +106,14 @@ jobs:
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
-          apksigner verify --verbose --print-certs "$APK"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::Android SDK apksigner was not found."
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
           KEY_SHA=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
-          APK_SHA=$(apksigner verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')
+          APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')
           if [ -z "$KEY_SHA" ] || [ "$APK_SHA" != "$KEY_SHA" ]; then
             echo "::error::APK signing certificate does not match the configured keystore."
             exit 1
