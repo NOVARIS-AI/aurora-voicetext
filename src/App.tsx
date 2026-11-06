@@ -1055,6 +1055,7 @@ function App() {
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const libraryImportRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<AudioFile[]>(files);
   filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
@@ -1386,6 +1387,66 @@ function App() {
     const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now() };
     setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]);
     setError(''); setStatus('Saved to your on-device library.');
+  }
+
+  async function exportLibraryBackup() {
+    const payload = {
+      format: 'aurora-voicetext-library',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      recordings: library.map(item => ({
+        id: item.id,
+        name: item.name,
+        transcript: item.transcript,
+        updatedAt: item.updatedAt,
+      })),
+    };
+    const stamp = new Date().toISOString().slice(0, 10);
+    await downloadFile('aurora-voicetext-library-' + stamp + '.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+    setStatus('Library backup exported. Keep a copy somewhere safe.');
+    setError('');
+  }
+
+  async function importLibraryBackup(file?: File) {
+    if (!file) return;
+    try {
+      if (file.size > 25 * 1024 * 1024) throw new Error('This backup is larger than 25 MB.');
+      const parsed = JSON.parse(await file.text()) as { format?: unknown; version?: unknown; recordings?: unknown };
+      if (parsed?.format !== 'aurora-voicetext-library' || parsed.version !== 1 || !Array.isArray(parsed.recordings)) {
+        throw new Error('This is not a supported AURORA VoiceText library backup.');
+      }
+      if (parsed.recordings.length > 5000) throw new Error('This backup contains too many recordings.');
+      const imported: Recording[] = [];
+      for (const raw of parsed.recordings) {
+        if (!raw || typeof raw !== 'object') continue;
+        const item = raw as Record<string, unknown>;
+        if (typeof item.name !== 'string' || typeof item.transcript !== 'string') continue;
+        const name = item.name.trim().slice(0, 240);
+        const transcript = item.transcript.slice(0, 5_000_000);
+        if (!name || !transcript.trim()) continue;
+        imported.push({
+          id: typeof item.id === 'string' && item.id.length <= 160 ? item.id : crypto.randomUUID(),
+          name,
+          transcript,
+          updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now(),
+        });
+      }
+      if (!imported.length) throw new Error('No valid saved transcripts were found in this backup.');
+      setLibrary(current => {
+        const merged = new Map(current.map(item => [item.id, item]));
+        for (const item of imported) {
+          const existing = merged.get(item.id);
+          if (!existing || item.updatedAt >= existing.updatedAt) merged.set(item.id, item);
+        }
+        return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+      });
+      setStatus(imported.length + ' transcript(s) imported or updated. Your existing library was kept.');
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not import this library backup.');
+    } finally {
+      if (libraryImportRef.current) libraryImportRef.current.value = '';
+    }
   }
 
   function removeFile(id: string) {
@@ -1815,7 +1876,7 @@ function App() {
         </section>
       </section>}
 
-      {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Export important work to keep a separate copy.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
+      {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Your library stays on this device unless you export a backup.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Back up your library</strong><p>Export a JSON backup or restore one later. Importing merges saved transcripts and keeps existing entries.</p></div><div className="library-actions"><button className="secondary small-button" type="button" onClick={()=>void exportLibraryBackup().catch(reason=>setError(reason instanceof Error?reason.message:'Could not export library backup.'))}><Download size={15}/> Export backup</button><button className="secondary small-button" type="button" onClick={()=>libraryImportRef.current?.click()}><Upload size={15}/> Import backup</button><input ref={libraryImportRef} className="hidden-input" type="file" accept=".json,application/json" onChange={event=>void importLibraryBackup(event.currentTarget.files?.[0])}/></div></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><FileText/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
 
       {error && <div className="error-message" role="alert"><span>{error}</span>{page === 'transcribe' && active && transcriptionFailed && <button className="secondary small-button" onClick={transcribe} disabled={busy} type="button"><WandSparkles size={15}/> Retry from saved section</button>}<button onClick={() => { setError(''); if (transcriptionFailed) setTranscriptionFailed(false); }} aria-label="Dismiss error" type="button"><X size={16}/></button></div>}
       <footer className="footer"><span><AudioLines size={15}/> AURORA VoiceText</span><span><ShieldCheck size={14}/> Your voice notes, made readable</span></footer>
