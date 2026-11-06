@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getTranscriptionHealth } from "./_lib/transcription-health.mjs";
 import { getBackupHealth } from "./_lib/backup-health.mjs";
+import { requireAdmin } from "./_lib/admin-auth.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
@@ -9,6 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.setHeader("Cache-Control", "no-store");
+  if (!await requireAdmin(req, res)) return;
   const transcriptionHealth = getTranscriptionHealth(process.env);
   const backupHealth = await getBackupHealth(process.env);
   const providers = transcriptionHealth.providers;
