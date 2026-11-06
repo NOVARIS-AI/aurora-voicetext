@@ -103,6 +103,28 @@ jobs:
           cmp -s "$HOME/.android/debug.keystore" android/app/debug.keystore
           echo "Persistent AURORA signing identity restored in both Gradle debug-keystore locations."
 
+      - name: Pin Gradle debug signing to the persistent keystore
+        run: |
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          // Keep debug builds on the user's persistent AURORA identity.
+          android {
+              signingConfigs {
+                  debug {
+                      storeFile file(System.getProperty("user.home") + "/.android/debug.keystore")
+                      storePassword "android"
+                      keyAlias "androiddebugkey"
+                      keyPassword "android"
+                  }
+              }
+              buildTypes {
+                  debug {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+          GRADLE
+
       - name: Build debug APK with persistent signing identity
         working-directory: android
         run: |
@@ -119,8 +141,10 @@ jobs:
             exit 1
           fi
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          KEY_SHA=$(keytool -list -v -keystore "android/app/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
+          KEY_SHA=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')
           APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':')
+          echo "Persistent keystore SHA-256: $KEY_SHA"
+          echo "APK signer SHA-256: $APK_SHA"
           if [ -z "$KEY_SHA" ] || [ "$APK_SHA" != "$KEY_SHA" ]; then
             echo "::error::APK signing certificate does not match the configured keystore."
             exit 1
