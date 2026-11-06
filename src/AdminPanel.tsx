@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, RefreshCw, LogOut, Users, Activity, Bug, AlertTriangle } from "lucide-react";
 
 declare global { interface Window { google?: any; } }
-type AdminData = { users: any[]; events: any[]; reports: any[]; checkedAt?: string };
+type AdminData = { users: any[]; events: any[]; reports: any[]; health?: any; checkedAt?: string };
 export default function AdminPanel() {
   const buttonRef = useRef<HTMLDivElement>(null);
   const [credential, setCredential] = useState("");
