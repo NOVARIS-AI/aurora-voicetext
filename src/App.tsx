@@ -3,7 +3,7 @@ import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint, isVideoMediaFile } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -920,7 +920,12 @@ async function transcribeOpusInSegments(
         '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
         '-c:a', 'libmp3lame', '-b:a', '64k', '-f', 'mp3', outputName,
       ]);
-      if (encodeExitCode !== 0) throw new Error('FFmpeg could not prepare online section ' + (index + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
+      if (encodeExitCode !== 0) {
+        if (isVideoMediaFile(file)) {
+          throw new Error('AURORA could not extract an audio track from this video. Make sure the video contains audible speech or sound, then try MP4, MOV or WebM.');
+        }
+        throw new Error('FFmpeg could not prepare online section ' + (index + 1) + ' (exit ' + encodeExitCode + '). Check the audio format or try MP3.');
+      }
       const output = await ffmpeg.readFile(outputName);
       if (typeof output === 'string') throw new Error('The audio decoder returned invalid section data.');
       if (!output.length) throw new Error('The audio decoder created an empty section.');
