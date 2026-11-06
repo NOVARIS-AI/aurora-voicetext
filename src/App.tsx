@@ -340,19 +340,23 @@ async function makeAudioFileKey(file: File, nativePath?: string, nativeSize?: nu
   } catch { return identity; }
 }
 
+function isVideoMediaFile(file: File): boolean {
+  return file.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name);
+}
+
 async function getAudioDurationSeconds(file: File): Promise<number> {
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
-    const audio = document.createElement('audio');
-    audio.preload = 'metadata';
+    const media = document.createElement(isVideoMediaFile(file) ? 'video' : 'audio');
+    media.preload = 'metadata';
     let settled = false;
-    const timer = window.setTimeout(() => finish(new Error('Reading audio metadata took too long. Try MP3, M4A, WAV or OGG.')), 15000);
+    const timer = window.setTimeout(() => finish(new Error('Reading media duration took too long. Try a supported MP4, MOV or WebM video, or an MP3, M4A, WAV or OGG recording.')), 20000);
     const cleanup = () => {
-      audio.onloadedmetadata = null;
-      audio.onerror = null;
-      audio.onabort = null;
-      audio.removeAttribute('src');
-      audio.load();
+      media.onloadedmetadata = null;
+      media.onerror = null;
+      media.onabort = null;
+      media.removeAttribute('src');
+      media.load();
       URL.revokeObjectURL(url);
       window.clearTimeout(timer);
     };
@@ -362,16 +366,16 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
       cleanup();
       if (error) reject(error);
       else if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) resolve(duration);
-      else reject(new Error('Could not read the recording duration. Try exporting the audio as MP3, M4A, WAV or OGG.'));
+      else reject(new Error('Could not read the media duration. Check that the selected file contains a playable audio track.'));
     };
-    audio.onloadedmetadata = () => finish(undefined, audio.duration);
-    audio.onerror = () => finish(new Error('This browser could not read the audio duration. Try Chrome or convert the recording to MP3, M4A, WAV or OGG.'));
-    audio.onabort = () => finish(new Error('Reading audio metadata was interrupted. Please select the recording again.'));
-    audio.src = url;
+    media.onloadedmetadata = () => finish(undefined, media.duration);
+    media.onerror = () => finish(new Error('This device could not read the selected media metadata. Try MP4, MOV or WebM for video, or MP3, M4A, WAV or OGG for audio.'));
+    media.onabort = () => finish(new Error('Reading media metadata was interrupted. Please select the file again.'));
+    media.src = url;
   });
 }
 
-function safeFileBaseName(value: string, fallback = 'aurora-transcript'): string {
+
   const cleaned = value.trim().replace(/\\.[a-z0-9]{1,8}$/i, '').replace(/[\\/:*?"<>|\\u0000-\\u001f]/g, '-').replace(/\s+/g, ' ').replace(/[. ]+$/g, '').slice(0, 100);
   return cleaned || fallback;
 }
@@ -1055,6 +1059,8 @@ function App() {
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const libraryImportRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<AudioFile[]>(files);
   filesRef.current = files;
@@ -1165,9 +1171,9 @@ function App() {
     const accepted = incoming.map((file, index) => ({ file, index })).filter(({ file, index }) => {
       const nativeItem = nativeDetails?.[index];
       const hasAudioBytes = file.size > 0 || Boolean(nativeItem?.path && (nativeItem.size ?? 0) > 0);
-      return hasAudioBytes && (file.type.startsWith('audio/') || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));
+      return hasAudioBytes && (file.type.startsWith('audio/') || isVideoMediaFile(file) || /\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));
     });
-    if (!accepted.length) { setError('Choose an audio file such as OPUS, OGG, MP3, M4A or WAV.'); return; }
+    if (!accepted.length) { setError('Choose an audio recording or a video containing an audio track.'); return; }
     const next = accepted.map(({ file, index }) => {
       const nativePath = nativeDetails?.[index]?.path;
       return { id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), transcript: '', nativePath, nativeSize: nativeDetails?.[index]?.size, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeFingerprint: nativeDetails?.[index]?.contentHash, nativeAudioInfo: nativeDetails?.[index]?.audioInfo };
@@ -1726,6 +1732,8 @@ function App() {
             <div className="card-title"><div><small>STEP 01</small><h2>Your recordings</h2></div><span className="count">{files.length}</span></div>
             <button className="upload-box" type="button" onClick={() => void pickNativeAudioFiles()}><span className="upload-symbol"><Upload/></span><strong>Choose audio files</strong><span>Browse your phone storage</span><small>OPUS · OGG · MP3 · M4A · WAV · AAC</small></button>
             <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+             <input ref={videoInputRef} className="hidden-input" type="file" accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+             <button className="text-button" type="button" onClick={() => videoInputRef.current?.click()}><Plus size={16}/> Import video</button>
             <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round((item.nativeSize ?? item.file.size) / 1024))} KB{item.nativeDurationMs ? ' · ' + Math.floor(item.nativeDurationMs / 60000) + ':' + String(Math.floor((item.nativeDurationMs % 60000) / 1000)).padStart(2, '0') : ''}{item.nativeAudioInfo?.sampleRate ? ' · ' + Math.round(item.nativeAudioInfo.sampleRate / 1000) + ' kHz' : ''} · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => void pickNativeAudioFiles()}><Plus size={16}/> Add more audio</button>}
 
@@ -1734,7 +1742,7 @@ function App() {
             <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">AUTO LANGUAGE</span></div>
             {active ? <>
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
-              <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>
+{isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/> :               <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>}
 
               <div className="mode-switch" role="group" aria-label="Transcription mode">
                 <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Recommended</small></button>
@@ -1791,8 +1799,8 @@ function App() {
           {active.translatedTranscript && <section className="chat-result"><div className="card-title"><div><small>TRANSLATION</small><h2>{transcriptTargetLanguage}</h2></div><button className="secondary small-button" type="button" onClick={()=>copyText(active.translatedTranscript || '')}><Copy size={14}/> Copy</button></div><textarea className="transcript-input" value={active.translatedTranscript} readOnly aria-label="Translated transcript"/></section>}
           <div className="studio-actions"><button className="secondary" type="button" onClick={()=>{setPreviewMessages([]);setPreviewInput('@'+active.file.name+' ');}}><Plus size={15}/> New chat</button><button className="secondary" type="button" onClick={saveToLibrary}><Save size={15}/> Save transcript</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={15}/> Export</button></div>
           <details className="preview-edit-details"><summary>Edit transcript and timestamps</summary>
-            <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>
-            {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'timestamp-chip active':'timestamp-chip'} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=segment.start;void audioRef.current.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker?segment.speaker+': ':'')+segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/>}
+{isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/> :             <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>}
+            {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'timestamp-chip active':'timestamp-chip'} onClick={()=>{const media=videoRef.current||audioRef.current;if(media){media.currentTime=segment.start;void media.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker?segment.speaker+': ':'')+segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/>}
           </details>
         </section> : <div className="empty-state"><AudioWaveform/><strong>Select a transcript first</strong><span>Choose or transcribe an audio file to start a chat.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
       </section>}
@@ -1816,7 +1824,7 @@ function App() {
               {voiceMentionOpen && <div className="voice-mention-menu"><strong>Matching saved transcripts</strong>{[...library,...files.filter(item=>item.transcript.trim()).map(item=>({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))].filter((item,index,all)=>all.findIndex(other=>other.id===item.id)===index).filter(item=>item.name.toLowerCase().includes(voiceMentionQuery.toLowerCase())).slice(0,8).map(item=><button key={item.id} type="button" onClick={()=>{setStudioText(item.transcript);setVoiceFilename(safeFileBaseName(item.name,'aurora-voice'));setVoiceChatMessages(items=>[...items,{id:crypto.randomUUID(),role:'assistant',text:'Loaded @'+item.name+' into your voice script.'}]);setVoiceChatInput('');setVoiceMentionOpen(false);}}><FileText size={15}/><span>@{item.name}<small>{item.transcript.slice(0,80)}</small></span></button>)}{library.length===0&&!files.some(item=>item.transcript.trim())&&<small>No saved transcripts yet. Save a transcript to find it here.</small>}</div>}
               <textarea className="voice-chat-input" aria-label="Message AURORA" value={voiceChatInput} onChange={event=>{setVoiceChatInput(event.target.value);const match=event.target.value.match(/@([^\\s]*)$/);setVoiceMentionOpen(Boolean(match));setVoiceMentionQuery(match?.[1]||'');}} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendVoiceChatMessage();}}} placeholder="Message AURORA… use @ to find a transcript"/>
               <div className="voice-chat-actions"><button className="secondary small-button" type="button" onClick={startVoiceDictation}><Mic2 size={15}/> Speak</button><button className="secondary small-button" type="button" onClick={()=>voiceAttachmentRef.current?.click()}><Upload size={15}/> Attach audio/video</button><button className="primary small-button" type="button" disabled={!voiceChatInput.trim()} onClick={sendVoiceChatMessage}>Send <AudioLines size={15}/></button></div>
-              <input ref={voiceAttachmentRef} className="hidden-input" type="file" accept="audio/*,video/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm,.mp4,.mov,.mkv" multiple onChange={event=>{const chosen=Array.from(event.currentTarget.files||[]);const audio=chosen.filter(file=>file.type.startsWith('audio/')||/\\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));const video=chosen.filter(file=>file.type.startsWith('video/')||/\\.(mp4|mov|mkv)$/i.test(file.name));if(audio.length)addFiles(audio);if(video.length)setError('Video attachment received, but video-to-audio extraction is not yet enabled. Extract its audio track or attach an audio file to transcribe it.');setVoiceChatMessages(items=>[...items,...chosen.map(file=>({id:crypto.randomUUID(),role:'user' as const,text:'Attached '+file.name}))]);event.currentTarget.value='';}}/>
+              <input ref={voiceAttachmentRef} className="hidden-input" type="file" accept="audio/*,video/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm,.mp4,.mov,.mkv" multiple onChange={event=>{const chosen=Array.from(event.currentTarget.files||[]);const audio=chosen.filter(file=>file.type.startsWith('audio/')||/\\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm)$/i.test(file.name));const video=chosen.filter(file=>file.type.startsWith('video/')||/\\.(mp4|mov|mkv)$/i.test(file.name));if(audio.length)addFiles(audio);if(video.length)setError('Your video is ready for automatic audio-track transcription.');setVoiceChatMessages(items=>[...items,...chosen.map(file=>({id:crypto.randomUUID(),role:'user' as const,text:'Attached '+file.name}))]);event.currentTarget.value='';}}/>
             </div>
           </div>
           <label className="field-label" htmlFor="studio-text">Voice script preview</label>
@@ -1842,7 +1850,7 @@ function App() {
         <div className="voice-workspace-grid">
           {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
           <div className="card-title"><div><small>SELECTED RECORDING</small><h2>{active.file.name}</h2></div><button className="secondary small-button" type="button" onClick={()=>setPage('transcribe')}>Change file</button></div>
-          <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>
+{isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>
           <div className="studio-grid">
             <label className="field-label">Start time (seconds)<input type="number" min="0" max={editorDuration||undefined} step="0.1" value={editorStart} onChange={event=>setEditorStart(Math.max(0,Math.min(Number(event.target.value)||0,editorDuration||Number.MAX_SAFE_INTEGER)))}/></label>
             <label className="field-label">End time (seconds)<input type="number" min={editorStart} max={editorDuration||undefined} step="0.1" value={editorEnd} onChange={event=>setEditorEnd(Math.max(editorStart,Math.min(Number(event.target.value)||0,editorDuration||Number.MAX_SAFE_INTEGER)))}/></label>
