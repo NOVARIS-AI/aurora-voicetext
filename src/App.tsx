@@ -1027,6 +1027,8 @@ function App() {
   const [voiceFilename, setVoiceFilename] = useState('aurora-voice');
   const [studioText, setStudioText] = useState('');
   const [voiceChatInput, setVoiceChatInput] = useState('');
+  const [voiceChatBusy, setVoiceChatBusy] = useState(false);
+  const [voiceAutoGenerate, setVoiceAutoGenerate] = useState(true);
   const [voiceChatMessages, setVoiceChatMessages] = useState<Array<{id:string;role:'user'|'assistant';text:string}>>([]);
   const [voiceMentionOpen, setVoiceMentionOpen] = useState(false);
   const [voiceMentionQuery, setVoiceMentionQuery] = useState('');
@@ -1565,20 +1567,39 @@ function App() {
 
 
 
-  function submitVoicePrompt() {
+  async function submitVoicePrompt() {
     const message = voiceChatInput.trim();
-    if (!message || voiceBusy) return;
+    if (!message || voiceBusy || voiceChatBusy) return;
     const mention = message.match(/@([^\\s]+)/)?.[1]?.replace(/[.,!?;:]+$/, '');
     const allTranscripts = [...library, ...files.filter(item => item.transcript.trim()).map(item => ({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))];
     const found = mention ? allTranscripts.find(item => item.name.toLowerCase().includes(mention.toLowerCase()) || safeFileBaseName(item.name, '').toLowerCase().includes(mention.toLowerCase())) : undefined;
-    const script = found?.transcript || (message.replace(/@[^\\s]+/g, '').trim() || studioText);
-    if (!script) { setError('Write a message or choose a saved transcript first.'); return; }
-    setVoiceFilename(current => found ? safeFileBaseName(found.name, 'aurora-voice') : current);
-    setStudioText(script);
-    setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'user',text:message}, {id:crypto.randomUUID(),role:'assistant',text:'I’m preparing your voice with the selected profile and delivery settings…'}]);
+    const userContent = found ? message + "\\n\\nSaved transcript to use as context:\\n" + found.transcript : message;
+    const history = [...voiceChatMessages.slice(-14).map(item => ({role:item.role,content:item.text})), {role:'user' as const,content:userContent}];
+    setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'user',text:message}]);
     setVoiceChatInput('');
     setVoiceMentionOpen(false);
-    void generateVoice(script);
+    setVoiceChatBusy(true);
+    setError('');
+    if (found) setVoiceFilename(safeFileBaseName(found.name, 'aurora-voice'));
+    try {
+      const { data } = await requestFeature('/api/voice-chat', { messages: history });
+      const reply = String(data?.text || '').trim();
+      if (!reply) throw new Error('AURORA returned an empty response. Please try again.');
+      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:reply}]);
+      setStudioText(reply);
+      if (voiceAutoGenerate) {
+        setVoiceChatBusy(false);
+        await generateVoice(reply);
+      } else {
+        setStatus('AURORA replied. Turn on “Generate spoken audio” whenever you want a voice version.');
+      }
+    } catch (reason) {
+      const messageText = reason instanceof Error ? reason.message : 'AURORA could not respond. Please try again.';
+      setError(messageText);
+      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:messageText}]);
+    } finally {
+      setVoiceChatBusy(false);
+    }
   }
 
   function startVoiceDictation() {
@@ -1844,8 +1865,9 @@ function App() {
               </div>
               <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
             </details>
+            <label className="voice-auto-generate-toggle"><input type="checkbox" checked={voiceAutoGenerate} onChange={event=>setVoiceAutoGenerate(event.target.checked)}/><span><strong>Generate spoken audio</strong><small>Automatically speak AURORA’s reply using the selected voice profile.</small></span></label>
             <div className="voice-ai-format-row"><span>Output format</span><strong>MP3 · High compatibility</strong><small>MP3 is the format currently returned by the connected voice engine.</small></div>
-            <button className="primary voice-ai-generate" type="button" disabled={voiceBusy||(!voiceChatInput.trim()&&!studioText.trim())} onClick={submitVoicePrompt}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating your voice…':'Generate voice'}</button>
+            <button className="primary voice-ai-generate" type="button" disabled={voiceBusy||voiceChatBusy||!voiceChatInput.trim()} onClick={submitVoicePrompt}>{voiceChatBusy?<LoaderCircle className="spin" size={17}/>:<AudioLines size={17}/>} {voiceChatBusy?'AURORA is thinking…':'Send message'}</button>
           </div>
           {status && <div className="status-message" role="status">{status}</div>}
           {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
