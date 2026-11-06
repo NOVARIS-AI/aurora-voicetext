@@ -334,3 +334,6 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .app-select-option.active{background:rgba(45,212,230,.12);color:#8ceaf0}
 .app-select-option svg{flex:0 0 auto;color:#51d7df}
 @media(max-width:600px){.app-select-menu{max-height:48vh}.app-select-option{min-height:44px}}
+
+/* Audio trimming is embedded in the Voice Workspace, not a separate destination. */
+.voice-workspace-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:15px;align-items:start;margin-top:15px}.voice-workspace-grid>.studio-card{max-width:none;min-width:0}.voice-workspace-grid .studio-section-heading{margin-bottom:16px}.voice-workspace-grid .studio-section-heading small{color:#bcaeff;font-size:10px;letter-spacing:.13em;font-weight:800}.voice-workspace-grid .studio-section-heading h2{margin:6px 0;font-size:21px}.voice-workspace-grid .studio-section-heading p{margin:0;color:#9aa8bd;font-size:12px;line-height:1.5}
