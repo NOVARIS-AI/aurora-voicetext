@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { requireAdmin, supabaseAdminHeaders, supabaseRestUrl } from "./_lib/admin-auth.js";
+import { getTranscriptionHealth } from "./_lib/transcription-health.mjs";
+import { getBackupHealth } from "./_lib/backup-health.mjs";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Cache-Control", "no-store");
@@ -15,7 +17,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]);
     if (!usersResponse.ok || !eventsResponse.ok || !reportsResponse.ok) throw new Error("Diagnostics tables unavailable.");
     const [users, events, reports] = await Promise.all([usersResponse.json(), eventsResponse.json(), reportsResponse.json()]);
-    return res.status(200).json({ users, events, reports, checkedAt: new Date().toISOString() });
+    const transcriptionHealth = getTranscriptionHealth(process.env);
+    const backupHealth = await getBackupHealth(process.env);
+    return res.status(200).json({ users, events, reports, health: { transcriptionHealth, backupHealth }, checkedAt: new Date().toISOString() });
   } catch {
     return res.status(503).json({ error: "Could not load diagnostics. Apply the AURORA VoiceText diagnostics SQL migration in Supabase, then retry." });
   }
