@@ -122,3 +122,32 @@ test('rejects incomplete native audio identities rather than creating unsafe res
   assert.throws(() => createNativeAudioResumeKey({ name: 'meeting.opus', size: 0, contentHash: 'a'.repeat(64) }), /identity is incomplete/i);
   assert.throws(() => createNativeAudioResumeKey({ name: 'meeting.opus', size: 123, contentHash: 'not-a-hash' }), /identity is incomplete/i);
 });
+
+
+test('accepts a checkpoint only for the matching recording and processing settings', async () => {
+  const { isValidTranscriptionCheckpoint } = await import('../src/audio-utils.js');
+  const checkpoint = {
+    fileId: 'recording-a', mode: 'online', segmentSeconds: 45, overlapSeconds: 2,
+    totalChunks: 3, nextChunk: 1, parts: ['First section'],
+    segments: [{ start: 0, end: 4.2, text: 'First section' }],
+  };
+  const expected = { fileId: 'recording-a', mode: 'online', segmentSeconds: 45, overlapSeconds: 2, totalChunks: 3 };
+  assert.equal(isValidTranscriptionCheckpoint(checkpoint, expected), true);
+  assert.equal(isValidTranscriptionCheckpoint(checkpoint, { ...expected, fileId: 'another-recording' }), false);
+  assert.equal(isValidTranscriptionCheckpoint(checkpoint, { ...expected, mode: 'offline' }), false);
+  assert.equal(isValidTranscriptionCheckpoint(checkpoint, { ...expected, segmentSeconds: 60 }), false);
+});
+
+test('rejects damaged checkpoint parts and invalid timestamp segments', async () => {
+  const { isValidTranscriptionCheckpoint } = await import('../src/audio-utils.js');
+  const base = {
+    fileId: 'recording-a', mode: 'offline', segmentSeconds: 35, overlapSeconds: 2,
+    totalChunks: 2, nextChunk: 1, parts: ['Saved section'],
+    segments: [{ start: 0, end: 3, text: 'Saved section' }],
+  };
+  const expected = { fileId: 'recording-a', mode: 'offline', segmentSeconds: 35, overlapSeconds: 2, totalChunks: 2 };
+  assert.equal(isValidTranscriptionCheckpoint({ ...base, parts: [] }, expected), false);
+  assert.equal(isValidTranscriptionCheckpoint({ ...base, segments: [{ start: 4, end: 2, text: 'Bad timing' }] }, expected), false);
+  assert.equal(isValidTranscriptionCheckpoint({ ...base, segments: [{ start: 0, end: 1, text: ' ' }] }, expected), false);
+  assert.equal(isValidTranscriptionCheckpoint({ ...base, nextChunk: 3 }, expected), false);
+});

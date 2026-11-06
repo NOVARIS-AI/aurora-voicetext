@@ -3,7 +3,7 @@ import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -303,20 +303,15 @@ function getAudioSegmentSeconds(mode: 'online' | 'offline' = 'online'): number {
 
 function isUsableCheckpoint(
   value: unknown,
+  fileId: string,
   totalChunks: number,
   mode: 'online' | 'offline',
   segmentSeconds: number,
   overlapSeconds: number,
 ): value is TranscriptionCheckpoint {
-  if (!value || typeof value !== 'object') return false;
-  const checkpoint = value as Partial<TranscriptionCheckpoint>;
-  return checkpoint.mode === mode && checkpoint.segmentSeconds === segmentSeconds &&
-    checkpoint.overlapSeconds === overlapSeconds && checkpoint.totalChunks === totalChunks &&
-    Number.isInteger(checkpoint.nextChunk) &&
-    (checkpoint.nextChunk as number) >= 0 && (checkpoint.nextChunk as number) <= totalChunks &&
-    Array.isArray(checkpoint.parts) && checkpoint.parts.length === checkpoint.nextChunk &&
-    checkpoint.parts.every(part => typeof part === 'string') &&
-    (checkpoint.segments === undefined || Array.isArray(checkpoint.segments));
+  return isValidTranscriptionCheckpoint(value, {
+    fileId, totalChunks, mode, segmentSeconds, overlapSeconds,
+  });
 }
 
 async function makeAudioFileKey(file: File, nativePath?: string, nativeSize?: number, nativeFingerprint?: string): Promise<string> {
@@ -695,7 +690,7 @@ async function transcribeOpusOfflineInSegments(
     const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
     const total = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!total || total > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
-    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, total, 'offline', segmentSeconds, overlapSeconds)
+    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, fileKey, total, 'offline', segmentSeconds, overlapSeconds)
       ? { ...saved, fileId: fileKey }
       : { fileId: fileKey, mode: 'offline', segmentSeconds, overlapSeconds, parts: [], nextChunk: 0, totalChunks: total };
     parts.push(...checkpoint.parts);
@@ -862,7 +857,7 @@ async function transcribeOpusInSegments(
     const stepSeconds = Math.max(1, segmentSeconds - overlapSeconds);
     const totalParts = Math.max(1, Math.ceil((duration - overlapSeconds) / stepSeconds));
     if (!totalParts || totalParts > 2000) throw new Error('This recording is too long for the current browser session. Split it into smaller files and try again.');
-    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, totalParts, 'online', segmentSeconds, overlapSeconds)
+    const checkpoint: TranscriptionCheckpoint = isUsableCheckpoint(saved, fileKey, totalParts, 'online', segmentSeconds, overlapSeconds)
       ? { ...saved, fileId: fileKey }
       : { fileId: fileKey, mode: 'online', segmentSeconds, overlapSeconds, parts: [], nextChunk: 0, totalChunks: totalParts };
     const parts: string[] = [...checkpoint.parts];

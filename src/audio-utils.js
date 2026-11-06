@@ -136,3 +136,33 @@ export function createNativeAudioResumeKey({ name, size, mimeType, contentHash }
   }
   return ['native-audio-v1', safeName, byteSize, String(mimeType || 'application/octet-stream'), hash].join('|');
 }
+
+/**
+ * Validate a persisted section checkpoint before reusing it. A checkpoint is
+ * accepted only for the exact recording identity and processing configuration
+ * that created it; malformed timing data is discarded rather than merged.
+ */
+export function isValidTranscriptionCheckpoint(value, expected = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const checkpoint = value;
+  const { fileId, totalChunks, mode, segmentSeconds, overlapSeconds } = expected;
+  if (typeof fileId !== 'string' || !fileId || checkpoint.fileId !== fileId) return false;
+  if (!['online', 'offline'].includes(mode) || checkpoint.mode !== mode) return false;
+  if (!Number.isInteger(totalChunks) || totalChunks < 1 || checkpoint.totalChunks !== totalChunks) return false;
+  if (!Number.isFinite(segmentSeconds) || segmentSeconds < 15 || checkpoint.segmentSeconds !== segmentSeconds) return false;
+  if (!Number.isFinite(overlapSeconds) || overlapSeconds < 0 || checkpoint.overlapSeconds !== overlapSeconds) return false;
+  if (!Number.isInteger(checkpoint.nextChunk) || checkpoint.nextChunk < 0 || checkpoint.nextChunk > totalChunks) return false;
+  if (!Array.isArray(checkpoint.parts) || checkpoint.parts.length !== checkpoint.nextChunk) return false;
+  if (!checkpoint.parts.every(part => typeof part === 'string')) return false;
+  if (checkpoint.segments !== undefined) {
+    if (!Array.isArray(checkpoint.segments)) return false;
+    if (!checkpoint.segments.every(segment =>
+      segment && typeof segment === 'object' &&
+      Number.isFinite(segment.start) && segment.start >= 0 &&
+      Number.isFinite(segment.end) && segment.end > segment.start &&
+      typeof segment.text === 'string' && segment.text.trim().length > 0 &&
+      (segment.speaker === undefined || typeof segment.speaker === 'string')
+    )) return false;
+  }
+  return true;
+}
