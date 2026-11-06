@@ -460,3 +460,10 @@ button:disabled{opacity:.52;cursor:not-allowed}
  .voice-ai-input-actions button{flex:1;justify-content:center}
  .voice-audio-tools{margin:14px}
 }
+
+
+.voice-auto-generate-toggle{display:flex;align-items:center;gap:11px;margin:14px 0;padding:13px;border:1px solid rgba(75,207,222,.25);border-radius:12px;background:rgba(26,116,133,.09);cursor:pointer}
+.voice-auto-generate-toggle input{width:17px;height:17px;flex:none;margin:0;accent-color:#55dce9}
+.voice-auto-generate-toggle span{display:grid;gap:3px}
+.voice-auto-generate-toggle strong{color:#d8f7ff;font-size:12px}
+.voice-auto-generate-toggle small{color:#89a9c1;font-size:10px;line-height:1.4}
