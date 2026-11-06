@@ -37,7 +37,7 @@ export default function AdminPanel() {
       return () => { cancelled = true; script?.removeEventListener("load", render); };
     }
     return () => { cancelled = true; };
-  }, [clientId]);
+  }, [clientId, data]);
   async function refresh() { if (credential) await load(credential); }
   const openReports = data?.reports.filter((report: any) => report.status === "open") || [];
   const errors = data?.events.filter((event: any) => event.severity === "error") || [];
