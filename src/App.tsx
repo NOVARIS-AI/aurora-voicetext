@@ -1565,22 +1565,20 @@ function App() {
 
 
 
-  function sendVoiceChatMessage() {
+  function submitVoicePrompt() {
     const message = voiceChatInput.trim();
-    if (!message) return;
+    if (!message || voiceBusy) return;
     const mention = message.match(/@([^\\s]+)/)?.[1]?.replace(/[.,!?;:]+$/, '');
     const allTranscripts = [...library, ...files.filter(item => item.transcript.trim()).map(item => ({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))];
     const found = mention ? allTranscripts.find(item => item.name.toLowerCase().includes(mention.toLowerCase()) || safeFileBaseName(item.name, '').toLowerCase().includes(mention.toLowerCase())) : undefined;
-    if (found) {
-      setStudioText(found.transcript);
-      setVoiceFilename(safeFileBaseName(found.name, 'aurora-voice'));
-      setVoiceChatMessages(items => [...items,{id:crypto.randomUUID(),role:'user',text:message},{id:crypto.randomUUID(),role:'assistant',text:'Loaded @'+found.name+' into your voice script. You can generate it now.'}]);
-    } else {
-      setStudioText(message.replace(/@[^\\s]+/g, '').trim() || message);
-      setVoiceChatMessages(items => [...items,{id:crypto.randomUUID(),role:'user',text:message},{id:crypto.randomUUID(),role:'assistant',text:'Your message is now the voice script. Choose your voice settings and generate the audio below.'}]);
-    }
+    const script = found?.transcript || (message.replace(/@[^\\s]+/g, '').trim() || studioText);
+    if (!script) { setError('Write a message or choose a saved transcript first.'); return; }
+    setVoiceFilename(current => found ? safeFileBaseName(found.name, 'aurora-voice') : current);
+    setStudioText(script);
+    setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'user',text:message}, {id:crypto.randomUUID(),role:'assistant',text:'I’m preparing your voice with the selected profile and delivery settings…'}]);
     setVoiceChatInput('');
     setVoiceMentionOpen(false);
+    void generateVoice(script);
   }
 
   function startVoiceDictation() {
@@ -1602,7 +1600,7 @@ function App() {
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
     setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Preparing your voice…');
     try {
-      const chunks = splitLongText(studioText, 3500);
+      const chunks = splitLongText(scriptText, 3500);
       const audioParts: Blob[] = [];
       for (let index = 0; index < chunks.length; index++) {
         setStatus(chunks.length > 1 ? 'Creating audio section ' + (index + 1) + ' of ' + chunks.length + '…' : 'Creating your audio…');
@@ -1617,7 +1615,7 @@ function App() {
       }
       const finalAudio = combineMp3Chunks(audioParts);
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
-      setStatus('Your voice audio is ready. Preview it or download the MP3.');
+      setStatus('Your voice audio is ready. Preview it or download the MP3.');\n      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:'Your voice is ready. You can preview it or download the MP3 below.'}]);
     } catch (reason) {
       setError(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
       setStatus('');
@@ -1812,49 +1810,44 @@ function App() {
       </section>}
 
       {page === 'studio' && <section className="page-content voice-editor-page">
-        <div className="page-heading"><div className="eyebrow"><AudioWaveform size={14}/> AURORA // VOICE SYSTEM</div><h1>Voice <span>Command</span> Center.</h1><p>Compose, synthesize and refine audio inside your personal AI sound lab.</p></div>
-        <div className="voice-hud" aria-label="Voice system status"><div><span className="voice-hud-dot"/><small>SYSTEM STATUS</small><strong>ONLINE</strong></div><div><small>CORE MODULE</small><strong>VOICE SYNTHESIS</strong></div><div><small>WORKSPACE</small><strong>STUDIO / 02</strong></div></div>
-        <section className="card studio-card">
-          <div className="studio-icon"><Volume2 size={23}/></div>
-          <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
-          <div className="studio-source-actions">
-            {active?.transcript.trim() && <button className="secondary small-button" type="button" onClick={()=>setStudioText(active.transcript)}><FileText size={15}/> Use current transcript</button>}
-            {library.length>0 && <label className="field-label">Saved transcript<AppSelect ariaLabel="Saved transcript" value="" onChange={value=>{const item=library.find(entry=>entry.id===value);if(item)setStudioText(item.transcript);}} options={[{value:'',label:'Choose from library…'},...library.map(item=>({value:item.id,label:item.name}))]}/></label>}
+        <div className="page-heading"><div className="eyebrow"><AudioWaveform size={14}/> AURORA // VOICE AI</div><h1>Your voice, <span>your words.</span></h1><p>Chat with AURORA, choose a voice, and generate your audio in one workspace.</p></div>
+        <section className="card studio-card voice-ai-card">
+          <div className="voice-chat-heading voice-ai-title"><div><strong><Sparkles size={18}/> AURORA Voice AI</strong><span>Write naturally. Choose how it should sound. Generate your voice.</span></div><span className="voice-format-pill">MP3 AUDIO</span></div>
+          <div className="voice-chat-thread voice-ai-thread" aria-live="polite">
+            {voiceChatMessages.length===0 && <div className="voice-chat-welcome"><Sparkles size={22}/><strong>What would you like me to say?</strong><span>Type your script below, or use @ to load a saved transcript.</span></div>}
+            {voiceChatMessages.map(message=><div key={message.id} className={'voice-chat-message '+message.role}><span>{message.role==='user'?'YOU':'AURORA'}</span><p>{message.text}</p></div>)}
           </div>
-          <div className="voice-chat-shell">
-            <div className="voice-chat-heading"><div><strong><Sparkles size={16}/> AURORA Voice Chat</strong><span>Type, speak, attach audio, or find an old transcript with @</span></div></div>
-            <div className="voice-chat-thread" aria-live="polite">
-              {voiceChatMessages.length===0 && <div className="voice-chat-welcome"><Sparkles size={20}/><strong>What should I turn into a voice?</strong><span>Send a message or type @ to search your saved transcripts.</span></div>}
-              {voiceChatMessages.map(message=><div key={message.id} className={'voice-chat-message '+message.role}><span>{message.role==='user'?'YOU':'AURORA'}</span><p>{message.text}</p></div>)}
+          <div className="voice-chat-composer voice-ai-composer">
+            {voiceMentionOpen && <div className="voice-mention-menu"><strong>Matching saved transcripts</strong>{[...library,...files.filter(item=>item.transcript.trim()).map(item=>({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))].filter((item,index,all)=>all.findIndex(other=>other.id===item.id)===index).filter(item=>item.name.toLowerCase().includes(voiceMentionQuery.toLowerCase())).slice(0,8).map(item=><button key={item.id} type="button" onClick={()=>{setVoiceChatInput('@'+item.name);setStudioText(item.transcript);setVoiceFilename(safeFileBaseName(item.name,'aurora-voice'));setVoiceMentionOpen(false);setVoiceChatMessages(items=>[...items,{id:crypto.randomUUID(),role:'assistant',text:'Loaded '+item.name+'. Your saved transcript is ready to generate.'}]);}}><FileText size={15}/><span>@{item.name}<small>{item.transcript.slice(0,80)}</small></span></button>)}{library.length===0&&!files.some(item=>item.transcript.trim())&&<small>No saved transcripts yet. Save a transcript to find it here.</small>}</div>}
+            <textarea className="voice-chat-input voice-ai-prompt" aria-label="Message AURORA Voice AI" value={voiceChatInput} onChange={event=>{setVoiceChatInput(event.target.value);const match=event.target.value.match(/@([^\\s]*)$/);setVoiceMentionOpen(Boolean(match));setVoiceMentionQuery(match?.[1]||'');}} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitVoicePrompt();}}} placeholder="Write or paste what you want AURORA to say…"/>
+            <div className="voice-chat-actions voice-ai-input-actions"><button className="secondary small-button" type="button" onClick={startVoiceDictation}><Mic2 size={15}/> Speak</button><button className="secondary small-button" type="button" onClick={()=>voiceAttachmentRef.current?.click()}><Upload size={15}/> Attach media</button></div>
+            <input ref={voiceAttachmentRef} className="hidden-input" type="file" accept="audio/*,video/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm,.mp4,.mov,.mkv,.avi,.m4v" multiple onChange={event=>{const chosen=Array.from(event.currentTarget.files||[]);const supported=chosen.filter(file=>file.type.startsWith('audio/')||file.type.startsWith('video/')||/\\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm|mp4|mov|mkv|avi|m4v)$/i.test(file.name));if(supported.length){addFiles(supported);if(supported.some(isVideoMediaFile)){setPage('transcribe');setVoiceChatMessages(items=>[...items,{id:crypto.randomUUID(),role:'assistant',text:'Your video is ready in the transcription workspace. AURORA will process its audio track automatically.'}]);}}else setError('Choose a supported audio or video file.');setVoiceChatMessages(items=>[...items,...chosen.map(file=>({id:crypto.randomUUID(),role:'user' as const,text:'Attached '+file.name}))]);event.currentTarget.value='';}}/>
+          </div>
+          <div className="voice-ai-options">
+            <div className="voice-ai-options-heading"><div><small>VOICE SETTINGS</small><strong>Choose how it sounds</strong></div><label className="field-label voice-filename-field">File name<input value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="aurora-voice"/></label></div>
+            <div className="voice-profile-grid" role="group" aria-label="Voice profile">
+              {([{value:'nova',label:'Nova',tone:'Bright'},{value:'shimmer',label:'Shimmer',tone:'Clear'},{value:'coral',label:'Coral',tone:'Warm'},{value:'sage',label:'Sage',tone:'Measured'},{value:'onyx',label:'Onyx',tone:'Deep'},{value:'echo',label:'Echo',tone:'Balanced'},{value:'ash',label:'Ash',tone:'Conversational'},{value:'fable',label:'Fable',tone:'Narrator'},{value:'alloy',label:'Alloy',tone:'Neutral'}] as const).map(option=><label className={voiceName===option.value?'voice-profile-option selected':'voice-profile-option'} key={option.value}><input type="checkbox" checked={voiceName===option.value} onChange={()=>setVoiceName(option.value)}/><span><strong>{option.label}</strong><small>{option.tone}</small></span></label>)}
             </div>
-            <div className="voice-chat-composer">
-              {voiceMentionOpen && <div className="voice-mention-menu"><strong>Matching saved transcripts</strong>{[...library,...files.filter(item=>item.transcript.trim()).map(item=>({id:item.id,name:item.file.name,transcript:item.transcript,updatedAt:Date.now()}))].filter((item,index,all)=>all.findIndex(other=>other.id===item.id)===index).filter(item=>item.name.toLowerCase().includes(voiceMentionQuery.toLowerCase())).slice(0,8).map(item=><button key={item.id} type="button" onClick={()=>{setStudioText(item.transcript);setVoiceFilename(safeFileBaseName(item.name,'aurora-voice'));setVoiceChatMessages(items=>[...items,{id:crypto.randomUUID(),role:'assistant',text:'Loaded @'+item.name+' into your voice script.'}]);setVoiceChatInput('');setVoiceMentionOpen(false);}}><FileText size={15}/><span>@{item.name}<small>{item.transcript.slice(0,80)}</small></span></button>)}{library.length===0&&!files.some(item=>item.transcript.trim())&&<small>No saved transcripts yet. Save a transcript to find it here.</small>}</div>}
-              <textarea className="voice-chat-input" aria-label="Message AURORA" value={voiceChatInput} onChange={event=>{setVoiceChatInput(event.target.value);const match=event.target.value.match(/@([^\\s]*)$/);setVoiceMentionOpen(Boolean(match));setVoiceMentionQuery(match?.[1]||'');}} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendVoiceChatMessage();}}} placeholder="Message AURORA… use @ to find a transcript"/>
-              <div className="voice-chat-actions"><button className="secondary small-button" type="button" onClick={startVoiceDictation}><Mic2 size={15}/> Speak</button><button className="secondary small-button" type="button" onClick={()=>voiceAttachmentRef.current?.click()}><Upload size={15}/> Attach audio/video</button><button className="primary small-button" type="button" disabled={!voiceChatInput.trim()} onClick={sendVoiceChatMessage}>Send <AudioLines size={15}/></button></div>
-               <input ref={voiceAttachmentRef} className="hidden-input" type="file" accept="audio/*,video/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm,.mp4,.mov,.mkv,.avi,.m4v" multiple onChange={event=>{const chosen=Array.from(event.currentTarget.files||[]);const supported=chosen.filter(file=>file.type.startsWith('audio/')||file.type.startsWith('video/')||/\.(opus|ogg|mp3|m4a|wav|aac|amr|3gp|webm|mp4|mov|mkv|avi|m4v)$/i.test(file.name));if(supported.length){addFiles(supported);if(supported.some(isVideoMediaFile)){setPage('transcribe');setVoiceChatMessages(items=>[...items,{id:crypto.randomUUID(),role:'assistant',text:'Your video is ready in the transcription workspace. AURORA will process its audio track automatically.'}]);}}else setError('Choose a supported audio or video file.');setVoiceChatMessages(items=>[...items,...chosen.map(file=>({id:crypto.randomUUID(),role:'user' as const,text:'Attached '+file.name}))]);event.currentTarget.value='';}}/>
-            </div>
-          </div>
-          <label className="field-label" htmlFor="studio-text">Voice script preview</label>
-          <textarea id="studio-text" className="transcript-input studio-input" value={studioText} onChange={event => setStudioText(event.target.value)} placeholder="The selected transcript or your chat message will appear here…"/>
-          <div className="studio-grid studio-primary-options">
-            <label className="field-label">Voice<AppSelect ariaLabel="Voice" value={voiceName} onChange={setVoiceName} options={[{value:'nova',label:'Nova · bright'},{value:'shimmer',label:'Shimmer · clear'},{value:'coral',label:'Coral · warm'},{value:'sage',label:'Sage · measured'},{value:'onyx',label:'Onyx · deep'},{value:'echo',label:'Echo · clear'},{value:'ash',label:'Ash · conversational'},{value:'fable',label:'Fable · narrator'},{value:'alloy',label:'Alloy · neutral'}]}/></label>
-            <label className="field-label">Delivery<AppSelect ariaLabel="Voice delivery" value={voiceStyle} onChange={setVoiceStyle} options={['Natural, conversational delivery','Professional presenter, polished and confident','Storytelling, expressive and vivid','Documentary narrator, steady and authoritative','Energetic, upbeat and engaging','Calm, gentle and reassuring'].map(value=>({value,label:value}))}/></label>
-          </div>
-          <details className="voice-advanced"><summary>More voice controls</summary>
-            <div className="studio-grid">
-              <label className="field-label">Emotion<AppSelect ariaLabel="Voice emotion" value={voiceEmotion} onChange={setVoiceEmotion} options={['Warm and friendly','Neutral and informative','Excited and enthusiastic','Serious and thoughtful','Hopeful and inspiring'].map(value=>({value,label:value}))}/></label>
-              <label className="field-label">Language<AppSelect ariaLabel="Voice language" value={voiceLanguage} onChange={setVoiceLanguage} options={[{"value":"Auto-detect","label":"Auto-detect"},{"value":"English","label":"English"},{"value":"Arabic","label":"Arabic"},{"value":"Bengali","label":"Bengali"},{"value":"Bulgarian","label":"Bulgarian"},{"value":"Burmese","label":"Burmese"},{"value":"Catalan","label":"Catalan"},{"value":"Chinese","label":"Chinese"},{"value":"Croatian","label":"Croatian"},{"value":"Czech","label":"Czech"},{"value":"Danish","label":"Danish"},{"value":"Dutch","label":"Dutch"},{"value":"Estonian","label":"Estonian"},{"value":"Finnish","label":"Finnish"},{"value":"French","label":"French"},{"value":"German","label":"German"},{"value":"Greek","label":"Greek"},{"value":"Gujarati","label":"Gujarati"},{"value":"Hausa","label":"Hausa"},{"value":"Hebrew","label":"Hebrew"},{"value":"Hindi","label":"Hindi"},{"value":"Hungarian","label":"Hungarian"},{"value":"Icelandic","label":"Icelandic"},{"value":"Indonesian","label":"Indonesian"},{"value":"Irish","label":"Irish"},{"value":"Italian","label":"Italian"},{"value":"Japanese","label":"Japanese"},{"value":"Javanese","label":"Javanese"},{"value":"Kannada","label":"Kannada"},{"value":"Kazakh","label":"Kazakh"},{"value":"Khmer","label":"Khmer"},{"value":"Korean","label":"Korean"},{"value":"Lao","label":"Lao"},{"value":"Latvian","label":"Latvian"},{"value":"Lithuanian","label":"Lithuanian"},{"value":"Macedonian","label":"Macedonian"},{"value":"Malay","label":"Malay"},{"value":"Malayalam","label":"Malayalam"},{"value":"Marathi","label":"Marathi"},{"value":"Mongolian","label":"Mongolian"},{"value":"Nepali","label":"Nepali"},{"value":"Norwegian","label":"Norwegian"},{"value":"Persian","label":"Persian"},{"value":"Polish","label":"Polish"},{"value":"Portuguese","label":"Portuguese"},{"value":"Punjabi","label":"Punjabi"},{"value":"Romanian","label":"Romanian"},{"value":"Russian","label":"Russian"},{"value":"Serbian","label":"Serbian"},{"value":"Slovak","label":"Slovak"},{"value":"Slovenian","label":"Slovenian"},{"value":"Somali","label":"Somali"},{"value":"Spanish","label":"Spanish"},{"value":"Swahili","label":"Swahili"},{"value":"Swedish","label":"Swedish"},{"value":"Tagalog","label":"Tagalog"},{"value":"Tamil","label":"Tamil"},{"value":"Telugu","label":"Telugu"},{"value":"Thai","label":"Thai"},{"value":"Turkish","label":"Turkish"},{"value":"Ukrainian","label":"Ukrainian"},{"value":"Urdu","label":"Urdu"},{"value":"Uzbek","label":"Uzbek"},{"value":"Vietnamese","label":"Vietnamese"},{"value":"Yoruba","label":"Yoruba"},{"value":"Igbo","label":"Igbo"},{"value":"Zulu","label":"Zulu"},{"value":"Amharic","label":"Amharic"},{"value":"Afrikaans","label":"Afrikaans"},{"value":"Xhosa","label":"Xhosa"},{"value":"Kinyarwanda","label":"Kinyarwanda"},{"value":"Pashto","label":"Pashto"},{"value":"Sinhala","label":"Sinhala"},{"value":"Azerbaijani","label":"Azerbaijani"},{"value":"Armenian","label":"Armenian"},{"value":"Georgian","label":"Georgian"},{"value":"Basque","label":"Basque"},{"value":"Galician","label":"Galician"},{"value":"Welsh","label":"Welsh"},{"value":"Albanian","label":"Albanian"},{"value":"Bosnian","label":"Bosnian"},{"value":"Cebuano","label":"Cebuano"},{"value":"Malagasy","label":"Malagasy"},{"value":"Chichewa","label":"Chichewa"},{"value":"Shona","label":"Shona"},{"value":"Sundanese","label":"Sundanese"},{"value":"Kurdish","label":"Kurdish"},{"value":"Scottish Gaelic","label":"Scottish Gaelic"},{"value":"Māori","label":"Māori"},{"value":"Luxembourgish","label":"Luxembourgish"},{"value":"Maltese","label":"Maltese"},{"value":"Yiddish","label":"Yiddish"},{"value":"Faroese","label":"Faroese"},{"value":"Tatar","label":"Tatar"},{"value":"Tajik","label":"Tajik"}]}/></label>
+            <div className="studio-grid voice-ai-selects">
+              <label className="field-label">Delivery<AppSelect ariaLabel="Voice delivery" value={voiceStyle} onChange={setVoiceStyle} options={['Natural, conversational delivery','Professional presenter, polished and confident','Storytelling, expressive and vivid','Documentary narrator, steady and authoritative','Energetic, upbeat and engaging','Calm, gentle and reassuring'].map(value=>({value,label:value}))}/></label>
+              <label className="field-label">Language<AppSelect ariaLabel="Voice language" value={voiceLanguage} onChange={setVoiceLanguage} options={[{"value":"Auto-detect","label":"Auto-detect"},{"value":"English","label":"English"},{"value":"French","label":"French"},{"value":"Spanish","label":"Spanish"},{"value":"Portuguese","label":"Portuguese"},{"value":"Arabic","label":"Arabic"},{"value":"Hausa","label":"Hausa"},{"value":"Yoruba","label":"Yoruba"},{"value":"Igbo","label":"Igbo"},{"value":"Swahili","label":"Swahili"},{"value":"Hindi","label":"Hindi"},{"value":"Chinese","label":"Chinese"},{"value":"Japanese","label":"Japanese"}]}/></label>
               <label className="field-label">Accent<AppSelect ariaLabel="Voice accent" value={voiceAccent} onChange={setVoiceAccent} options={['International English','British English','American English','Australian English','Indian English','South African English','Irish English','Scottish English','New Zealand English','Canadian English','Singapore English'].map(value=>({value,label:value}))}/></label>
-              <label className="field-label">Emphasis<AppSelect ariaLabel="Voice emphasis" value={voiceEmphasis} onChange={setVoiceEmphasis} options={['Natural emphasis','Subtle emphasis','Expressive emphasis','Strong key-word emphasis'].map(value=>({value,label:value}))}/></label>
-              <label className="field-label">Pauses<AppSelect ariaLabel="Voice pauses" value={voicePauses} onChange={setVoicePauses} options={['Natural pauses','Short pauses','Long storytelling pauses','Presenter pacing'].map(value=>({value,label:value}))}/></label>
+              <label className="field-label">Emotion<AppSelect ariaLabel="Voice emotion" value={voiceEmotion} onChange={setVoiceEmotion} options={['Warm and friendly','Neutral and informative','Excited and enthusiastic','Serious and thoughtful','Hopeful and inspiring'].map(value=>({value,label:value}))}/></label>
             </div>
-            <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
-          </details>
-          <div className="studio-actions"><button className="primary" type="button" disabled={voiceBusy} onClick={generateVoice}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating AI audio…':'Generate AI voice'}</button><button className="secondary" type="button" onClick={()=>{setStudioText('');if(voiceAudioUrl)URL.revokeObjectURL(voiceAudioUrl);setVoiceAudioUrl('');}}>Clear</button></div>
+            <details className="voice-advanced"><summary>Fine-tune voice</summary>
+              <div className="studio-grid">
+                <label className="field-label">Emphasis<AppSelect ariaLabel="Voice emphasis" value={voiceEmphasis} onChange={setVoiceEmphasis} options={['Natural emphasis','Subtle emphasis','Expressive emphasis','Strong key-word emphasis'].map(value=>({value,label:value}))}/></label>
+                <label className="field-label">Pauses<AppSelect ariaLabel="Voice pauses" value={voicePauses} onChange={setVoicePauses} options={['Natural pauses','Short pauses','Long storytelling pauses','Presenter pacing'].map(value=>({value,label:value}))}/></label>
+              </div>
+              <div className="sliders"><label>Speed <strong>{voiceRate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voiceRate} onChange={event=>setVoiceRate(Number(event.target.value))}/></label><label>Pitch preference <strong>{voicePitch.toFixed(1)}</strong><input type="range" min="0.7" max="1.3" step="0.1" value={voicePitch} onChange={event=>setVoicePitch(Number(event.target.value))}/></label></div>
+            </details>
+            <div className="voice-ai-format-row"><span>Output format</span><strong>MP3 · High compatibility</strong><small>MP3 is the format currently returned by the connected voice engine.</small></div>
+            <button className="primary voice-ai-generate" type="button" disabled={voiceBusy||(!voiceChatInput.trim()&&!studioText.trim())} onClick={submitVoicePrompt}>{voiceBusy?<LoaderCircle className="spin" size={17}/>:<AudioWaveform size={17}/>} {voiceBusy?'Generating your voice…':'Generate voice'}</button>
+          </div>
           {status && <div className="status-message" role="status">{status}</div>}
-          {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
-        </section>
-        <div className="voice-workspace-grid">
+          {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
+          <details className="voice-audio-tools"><summary><AudioWaveform size={16}/> Audio trimming tools</summary>
+            <div className="voice-workspace-grid">
           {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
           <div className="card-title"><div><small>SELECTED RECORDING</small><h2>{active.file.name}</h2></div><button className="secondary small-button" type="button" onClick={()=>setPage('transcribe')}>Change file</button></div>
              {isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/> : <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>}
@@ -1871,8 +1864,9 @@ function App() {
           <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
         </section>}
         </div>
+          </details>
+        </section>
       </section>}
-
 
       {page === 'subtitles' && <section className="page-content">
         <div className="page-heading"><div className="eyebrow">SUBTITLE WORKSPACE</div><h1>Create or find subtitles.</h1><p>Make subtitles from your transcript, or find an existing subtitle file for a film or episode.</p></div>
