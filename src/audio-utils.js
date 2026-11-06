@@ -171,5 +171,5 @@ export function isValidTranscriptionCheckpoint(value, expected = {}) {
 export function isVideoMediaFile(file) {
   const type = String(file?.type || '').toLowerCase();
   const name = String(file?.name || '');
-  return type.startsWith('video/') || /\\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(name);
+  return type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(name);
 }
