@@ -376,6 +376,7 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
 }
 
 
+function safeFileBaseName(value: string, fallback = 'aurora-transcript'): string {
   const cleaned = value.trim().replace(/\\.[a-z0-9]{1,8}$/i, '').replace(/[\\/:*?"<>|\\u0000-\\u001f]/g, '-').replace(/\s+/g, ' ').replace(/[. ]+$/g, '').slice(0, 100);
   return cleaned || fallback;
 }
