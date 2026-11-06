@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import AdminPanel from './AdminPanel';
+import BugReporter from './BugReporter';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -9,7 +11,7 @@ import { toBlobURL } from '@ffmpeg/util';
 import {
   AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check,
   ShieldCheck, WandSparkles, LoaderCircle, FileText,
-  Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2, Activity,
+  Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
 
 type Recording = { id: string; name: string; transcript: string; updatedAt: number };
@@ -29,7 +31,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio'  | 'subtitles' | 'settings';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings' | 'admin';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -302,7 +304,7 @@ async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: 
       const nativePath = meta.nativePath || saved?.nativePath || undefined;
       return { ...meta, file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), nativePath } as AudioFile;
     }));
-    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','settings'];
+    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','settings','admin'];
     return { files, activeId: typeof snapshot.activeId === 'string' ? snapshot.activeId : files[0]?.id ?? null, page: pages.includes(snapshot.page) ? snapshot.page : 'home' };
   } finally { db.close(); }
 }
@@ -1105,9 +1107,6 @@ function App() {
   const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
   const [status, setStatus] = useState('');
-  const [health, setHealth] = useState<any>(null);
-  const [healthBusy, setHealthBusy] = useState(false);
-  const [healthError, setHealthError] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [savedCheckpoint, setSavedCheckpoint] = useState<{ mode: 'online' | 'offline'; completed: number; total: number } | null>(null);
   const [checkingSavedCheckpoint, setCheckingSavedCheckpoint] = useState(false);
@@ -1250,18 +1249,6 @@ function App() {
 
   useEffect(() => () => filesRef.current.forEach(item => URL.revokeObjectURL(item.url)), []);
 
-  async function runHealthCheck() {
-    setHealthBusy(true); setHealthError('');
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/health`, { cache: 'no-store', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || 'Health check returned HTTP ' + response.status + '.');
-      setHealth(payload);
-    } catch (reason) {
-      setHealth(null);
-      setHealthError(reason instanceof Error ? reason.message : 'Could not reach the AURORA service.');
-    } finally { setHealthBusy(false); }
-  }
 
   async function pickNativeAudioFiles() {
     if (!Capacitor.isNativePlatform()) { inputRef.current?.click(); return; }
@@ -1879,7 +1866,7 @@ function App() {
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
-        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
+        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2],['admin','Admin',ShieldCheck]] as const).map(([key,label,Icon]) =>
           <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
@@ -2058,9 +2045,12 @@ function App() {
         </section>
       </section>}
 
-      {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><Activity/></span><div><strong>Service health</strong><p>Check whether transcription and connected AI services are available. Provider credentials are never shown.</p>{health && <div className="health-details"><strong>{String(health.status || "unknown").toUpperCase()}</strong><span>Transcription: {health.capabilities?.transcription ? "Available" : "Unavailable"}</span><span>Primary: {health.capabilities?.primaryTranscription ? "Available" : "Unavailable"}</span><span>Backup: {health.capabilities?.backupTranscription ? "Available" : "Unavailable"}</span><span>Speech: {health.capabilities?.aiSpeech ? "Available" : "Not configured"}</span><span>Translation: {health.capabilities?.translation ? "Available" : "Not configured"}</span><small>Checked {health.checkedAt ? new Date(health.checkedAt).toLocaleString() : "just now"}</small></div>}{healthError && <p role="alert">{healthError}</p>}</div><button className="secondary small-button" type="button" disabled={healthBusy} onClick={() => void runHealthCheck()}>{healthBusy ? <LoaderCircle className="spin" size={15}/> : <Activity size={15}/>} {healthBusy ? "Checking…" : "Run check"}</button></div><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Your library stays on this device unless you export a backup.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Back up your library</strong><p>Export a JSON backup or restore one later. Importing merges saved transcripts and keeps existing entries.</p></div><div className="library-actions"><button className="secondary small-button" type="button" onClick={()=>void exportLibraryBackup().catch(reason=>setError(reason instanceof Error?reason.message:'Could not export library backup.'))}><Download size={15}/> Export backup</button><button className="secondary small-button" type="button" onClick={()=>libraryImportRef.current?.click()}><Upload size={15}/> Import backup</button><input ref={libraryImportRef} className="hidden-input" type="file" accept=".json,application/json" onChange={event=>void importLibraryBackup(event.currentTarget.files?.[0])}/></div></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><FileText/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
+      {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Administrator access</strong><p>Restricted service diagnostics and user bug reports.</p></div><button className="secondary small-button" type="button" onClick={()=>setPage('admin')}>Open admin</button></div><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Your library stays on this device unless you export a backup.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Back up your library</strong><p>Export a JSON backup or restore one later. Importing merges saved transcripts and keeps existing entries.</p></div><div className="library-actions"><button className="secondary small-button" type="button" onClick={()=>void exportLibraryBackup().catch(reason=>setError(reason instanceof Error?reason.message:'Could not export library backup.'))}><Download size={15}/> Export backup</button><button className="secondary small-button" type="button" onClick={()=>libraryImportRef.current?.click()}><Upload size={15}/> Import backup</button><input ref={libraryImportRef} className="hidden-input" type="file" accept=".json,application/json" onChange={event=>void importLibraryBackup(event.currentTarget.files?.[0])}/></div></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><FileText/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
+
+      {page === 'admin' && <AdminPanel/>}
 
       {error && <div className="error-message" role="alert"><span>{error}</span>{page === 'transcribe' && active && transcriptionFailed && <button className="secondary small-button" onClick={transcribe} disabled={busy} type="button"><WandSparkles size={15}/> Retry from saved section</button>}<button onClick={() => { setError(''); if (transcriptionFailed) setTranscriptionFailed(false); }} aria-label="Dismiss error" type="button"><X size={16}/></button></div>}
+      <BugReporter page={page}/>
       <footer className="footer"><span><AudioLines size={15}/> AURORA VoiceText</span><span><ShieldCheck size={14}/> Your voice notes, made readable</span></footer>
     </main>
   );
