@@ -1007,6 +1007,8 @@ function App() {
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
+  const [savedCheckpoint, setSavedCheckpoint] = useState<{ mode: 'online' | 'offline'; completed: number; total: number } | null>(null);
+  const [checkingSavedCheckpoint, setCheckingSavedCheckpoint] = useState(false);
   const [error, setError] = useState('');
   const [transcriptionFailed, setTranscriptionFailed] = useState(false);
   const [exportType, setExportType] = useState('docx');
@@ -1047,6 +1049,42 @@ function App() {
   const filesRef = useRef<AudioFile[]>(files);
   filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
+
+  // Surface resumable work as soon as the same recording is selected again.
+  useEffect(() => {
+    if (!active) { setSavedCheckpoint(null); setCheckingSavedCheckpoint(false); return; }
+    let cancelled = false;
+    setSavedCheckpoint(null);
+    setCheckingSavedCheckpoint(true);
+    void (async () => {
+      try {
+        const duration = active.nativeDurationMs && active.nativeDurationMs > 0
+          ? active.nativeDurationMs / 1000
+          : await getAudioDurationSeconds(active.file);
+        const fileKey = await makeAudioFileKey(active.file, active.nativePath, active.nativeSize, active.nativeFingerprint);
+        const candidates = await Promise.all((['online', 'offline'] as const).map(async mode => {
+          try {
+            const saved = await readSavedCheckpoint(fileKey + '|' + mode);
+            if (!saved || saved.mode !== mode || !Number.isFinite(saved.segmentSeconds) || saved.segmentSeconds <= saved.overlapSeconds) return null;
+            const stepSeconds = Math.max(1, saved.segmentSeconds - saved.overlapSeconds);
+            const total = Math.max(1, Math.ceil((duration - saved.overlapSeconds) / stepSeconds));
+            if (!isUsableCheckpoint(saved, fileKey, total, mode, saved.segmentSeconds, saved.overlapSeconds)) return null;
+            if (saved.nextChunk <= 0 || saved.nextChunk >= total) return null;
+            return { mode, completed: saved.nextChunk, total };
+          } catch { return null; }
+        }));
+        if (cancelled) return;
+        const resumable = candidates.filter((item): item is NonNullable<typeof item> => item !== null)
+          .sort((a, b) => (b.completed / b.total) - (a.completed / a.total))[0] ?? null;
+        setSavedCheckpoint(resumable);
+      } catch {
+        if (!cancelled) setSavedCheckpoint(null);
+      } finally {
+        if (!cancelled) setCheckingSavedCheckpoint(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [active?.id, active?.file, active?.nativePath, active?.nativeSize, active?.nativeDurationMs, active?.nativeFingerprint]);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
@@ -1606,6 +1644,8 @@ function App() {
 
               <div className="studio-actions"><button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>{busy && <button className="secondary" type="button" onClick={() => transcriptionAbortRef.current?.abort()}>Cancel safely</button>}</div>
               {status && <div className="status-message" role="status">{status}</div>}
+              {checkingSavedCheckpoint && <div className="status-message" role="status">Checking this recording for saved transcription progress…</div>}
+              {savedCheckpoint && !busy && <div className="status-message" role="status"><strong>Saved progress found:</strong> {savedCheckpoint.completed} of {savedCheckpoint.total} sections completed ({savedCheckpoint.mode} mode). Tap Transcribe to continue from the next unfinished section.</div>}
               {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
               <label className="field-label" htmlFor="transcript">Original transcript <small>{active.detectedLanguage ? 'Detected: ' + active.detectedLanguage : 'Language detection: automatic'}</small></label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Speech will appear here in its original language. Review names and wording, then edit anything AURORA missed."/>
