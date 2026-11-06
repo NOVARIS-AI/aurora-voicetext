@@ -29,7 +29,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'audio-editor' | 'subtitles' | 'settings';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio'  | 'subtitles' | 'settings';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -1598,7 +1598,7 @@ function App() {
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
-        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Studio',Mic2],['audio-editor','Audio Editor',AudioWaveform],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
+        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages]] as const).map(([key,label,Icon]) =>
           <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
@@ -1699,7 +1699,7 @@ function App() {
       </section>}
 
       {page === 'studio' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">AI VOICE STUDIO</div><h1>Give your words a voice.</h1><p>Generate downloadable AI speech, preview it, and export MP3 audio, including longer scripts processed in sections.</p></div>
+        <div className="page-heading"><div className="eyebrow">VOICE WORKSPACE</div><h1>Shape audio and give words a voice.</h1><p>Generate voiceovers, preview recordings, trim clips and export finished audio—all in one workspace.</p></div>
         <section className="card studio-card">
           <div className="studio-icon"><Volume2 size={23}/></div>
           <label className="field-label" htmlFor="voice-filename">Audio file name<input id="voice-filename" value={voiceFilename} onChange={event=>setVoiceFilename(event.target.value)} placeholder="Enter audio filename"/></label>
@@ -1727,12 +1727,8 @@ function App() {
           {status && <div className="status-message" role="status">{status}</div>}
           {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename, 'aurora-voice') + '.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
         </section>
-      </section>}
-
-
-      {page === 'audio-editor' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">AUDIO WORKSPACE</div><h1>Edit an audio section.</h1><p>Choose a recording, set the in and out points, preview the selection and export a separate clip. Your original recording stays unchanged.</p></div>
-        {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
+        <div className="voice-workspace-grid">
+          {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
           <div className="card-title"><div><small>SELECTED RECORDING</small><h2>{active.file.name}</h2></div><button className="secondary small-button" type="button" onClick={()=>setPage('transcribe')}>Change file</button></div>
           <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>
           <div className="studio-grid">
@@ -1747,7 +1743,9 @@ function App() {
           </div>
           <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
         </section>}
+        </div>
       </section>}
+
 
       {page === 'subtitles' && <section className="page-content">
         <div className="page-heading"><div className="eyebrow">SUBTITLE WORKSPACE</div><h1>Create or find subtitles.</h1><p>Make subtitles from your transcript, or find an existing subtitle file for a film or episode.</p></div>
