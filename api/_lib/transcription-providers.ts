@@ -50,9 +50,9 @@ async function requestTranscription(endpoint: string, key: string, model: string
 }
 
 /**
- * The synchronous Vercel route has a 60-second ceiling. Keep its AssemblyAI
- * attempt deliberately short; the separately hosted Worker owns the longer
- * asynchronous-style wait and provider retries for difficult/long sections.
+ * Keep every provider attempt bounded inside the Vercel function window.
+ * Groq is tried first for a quick response; AssemblyAI is the next independent
+ * provider, followed by OpenAI when configured. The Worker handles long jobs.
  */
 async function requestAssemblyAi(input: AudioInput, key: string): Promise<TranscriptionResult> {
   const bytes = Buffer.from(input.audioBase64, "base64");
@@ -79,7 +79,7 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
   const submittedPayload = await submitted.json().catch(() => ({})) as { id?: string; error?: string };
   if (!submitted.ok || !submittedPayload.id) throw new Error(submittedPayload.error || "AssemblyAI could not start transcription (HTTP " + submitted.status + ").");
 
-  const deadline = Date.now() + 22000;
+  const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     const polled = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(submittedPayload.id), {
@@ -111,10 +111,6 @@ async function requestAssemblyAi(input: AudioInput, key: string): Promise<Transc
 
 export async function transcribeWithFallback(input: AudioInput): Promise<TranscriptionResult> {
   const failures: string[] = [];
-  if (process.env.ASSEMBLYAI_API_KEY) {
-    try { return await requestAssemblyAi(input, process.env.ASSEMBLYAI_API_KEY); }
-    catch (error) { failures.push("assemblyai: " + (error instanceof Error ? error.message : "request failed")); }
-  }
   const providers = [
     { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/audio/transcriptions", model: process.env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3-turbo" },
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/audio/transcriptions", model: process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1" },
@@ -130,6 +126,12 @@ export async function transcribeWithFallback(input: AudioInput): Promise<Transcr
       failures.push(provider.name + ": " + (error instanceof Error ? error.message : "request failed"));
       if (!shouldTryNextProvider(status)) break;
     }
+  }
+  // AssemblyAI is a separate provider path, attempted after the quick OpenAI-compatible
+  // providers so a slow job cannot consume the entire synchronous function window.
+  if (process.env.ASSEMBLYAI_API_KEY) {
+    try { return await requestAssemblyAi(input, process.env.ASSEMBLYAI_API_KEY); }
+    catch (error) { failures.push("assemblyai: " + (error instanceof Error ? error.message : "request failed")); }
   }
   throw Object.assign(new Error("Primary transcription window ended or all primary providers failed. " + failures.join(" | ").slice(0, 500)), { status: 503, code: "PRIMARY_WINDOW_EXHAUSTED" });
 }
