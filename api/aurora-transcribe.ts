@@ -3,7 +3,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { transcribeWithFallback } from "./_lib/transcription-providers.js";
 
 type Job = {
-  id: string; original_filename: string; mime_type: string; size_bytes: number;
+  id: string; owner_id: string; original_filename: string; mime_type: string; size_bytes: number;
   duration_seconds: number | null; storage_path: string; status: string;
   total_chunks: number; completed_chunks: number; transcript: string;
   error_message: string | null; created_at: string; updated_at: string; completed_at: string | null;
@@ -33,16 +33,16 @@ function dbConfig() {
 function headers(key: string, extra: Record<string,string> = {}) {
   return { apikey: key, Authorization: "Bearer " + key, "Content-Type": "application/json", ...extra };
 }
-async function readJob(id: string): Promise<Job | null> {
+async function readJob(id: string, ownerId: string): Promise<Job | null> {
   const { url, key } = dbConfig();
-  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&select=*", { headers: headers(key) });
+  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId) + "&select=*", { headers: headers(key) });
   if (!response.ok) throw new Error("Could not read the saved transcription job.");
   const rows = await response.json() as Job[];
   return rows[0] || null;
 }
-async function updateJob(id: string, patch: Record<string, unknown>): Promise<Job> {
+async function updateJob(id: string, ownerId: string, patch: Record<string, unknown>): Promise<Job> {
   const { url, key } = dbConfig();
-  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id), {
+  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId), {
     method: "PATCH", headers: headers(key, { Prefer: "return=representation" }), body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
   });
   if (!response.ok) throw new Error("Could not save transcription job progress.");
@@ -64,11 +64,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const input = (req.body || {}) as Body;
   const action = input.action || "transcribe";
-  const requestId = typeof (req.query.requestId || input.requestId) === "string" ? String(req.query.requestId || input.requestId) : "";
+  const requestId = typeof (req.query.requestId || input.requestId) === "string" ? String(req.query.requestId || input.requestId) : "";\n  const ownerId = typeof input.ownerId === "string" ? input.ownerId : (typeof req.query.ownerId === "string" ? req.query.ownerId : "");\n  if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
   if (req.method === "GET") {
     if (!/^[0-9a-f-]{36}$/i.test(requestId)) return res.status(400).json({ error: "A valid requestId is required." });
     try {
-      const job = await readJob(requestId);
+      const job = await readJob(requestId, ownerId);
       return job ? res.status(200).json(publicJob(job)) : res.status(404).json({ error: "Transcription job not found." });
     } catch (error) { return res.status(503).json({ error: error instanceof Error ? error.message : "Job status is unavailable." }); }
   }
@@ -76,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (action === "create") {
     const totalChunks = Number(input.totalChunks);
     const sizeBytes = Number(input.sizeBytes);
-    const filename = String(input.filename || "recording").split(/[\\/]/).pop()!.slice(0, 180);
+    const ownerId = String(input.ownerId || "");\n    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });\n    const filename = String(input.filename || "recording").split(/[\\/]/).pop()!.slice(0, 180);
     const mimeType = String(input.mimeType || "audio/webm").toLowerCase();
     if (!Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
       return res.status(400).json({ error: "A valid recording size and section count are required." });
@@ -88,20 +88,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const storagePath = "aurora-jobs/" + id;
       const response = await fetch(url + "/rest/v1/voicetext_recordings", {
         method: "POST", headers: headers(key, { Prefer: "return=representation,resolution=ignore-duplicates" }),
-        body: JSON.stringify({ id, original_filename: filename, mime_type: mimeType, size_bytes: sizeBytes,
+        body: JSON.stringify({ id, owner_id: ownerId, original_filename: filename, mime_type: mimeType, size_bytes: sizeBytes,
           duration_seconds: Number.isFinite(input.durationSeconds) ? Math.max(0, Number(input.durationSeconds)) : null,
           storage_path: storagePath, status: "created", total_chunks: totalChunks, completed_chunks: 0, transcript: "" }),
       });
       if (!response.ok) throw new Error("Could not create a persistent transcription job. Confirm the VoiceText recordings table exists in Supabase.");
       const rows = await response.json() as Job[];
-      const job = rows[0] || await readJob(id);
+      const job = rows[0] || await readJob(id, ownerId);
       if (!job) throw new Error("The transcription job was not returned by Supabase.");
       return res.status(201).json(publicJob(job));
     } catch (error) { return res.status(503).json({ error: error instanceof Error ? error.message : "Could not create a transcription job." }); }
   }
 
   if (action === "process") {
-    const id = String(input.requestId || "");
+    const id = String(input.requestId || "");\n    const ownerId = String(input.ownerId || "");\n    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
     const chunkNumber = Number(input.chunkNumber), totalChunks = Number(input.totalChunks);
     const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
     const mimeType = String(input.mimeType || "").toLowerCase();
@@ -113,7 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!supported.has(mimeType)) return res.status(415).json({ error: "Unsupported audio section format." });
     try {
-      const job = await readJob(id);
+      const job = await readJob(id, ownerId);
       if (!job) return res.status(404).json({ error: "Transcription job not found." });
       if (job.status === "completed") return res.status(200).json(publicJob(job));
       if (job.total_chunks !== totalChunks) return res.status(409).json({ error: "Section count does not match the saved job." });
@@ -131,7 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = await transcribeWithFallback({ audioBase64, mimeType, languageHint });
       const transcript = [job.transcript.trim(), result.text.trim()].filter(Boolean).join(" ");
       const done = chunkNumber === totalChunks;
-      const updated = await updateJob(id, { status: done ? "completed" : "processing", completed_chunks: chunkNumber,
+      const updated = await updateJob(id, ownerId, { status: done ? "completed" : "processing", completed_chunks: chunkNumber,
         transcript, error_message: null, completed_at: done ? new Date().toISOString() : null });
       return res.status(200).json({ ...publicJob(updated), language: result.language || null, provider: result.provider });
     } catch (error) {
