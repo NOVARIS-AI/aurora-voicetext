@@ -8,6 +8,9 @@ const providers = await readFile(new URL("../api/_lib/transcription-providers.ts
 test("AURORA VoiceText bridge is server-authenticated and never exposes provider keys", () => {
   assert.match(endpoint, /AURORA_PLUGIN_TOKEN/);
   assert.match(endpoint, /timingSafeEqual/);
+  assert.match(endpoint, /owner_id=eq/);
+  assert.match(endpoint, /ownerId/);
+  assert.match(endpoint, /verified AURORA account owner/);
   assert.match(endpoint, /401/);
   assert.doesNotMatch(endpoint, /GROQ_API_KEY|OPENAI_API_KEY|ASSEMBLYAI_API_KEY/);
 });
