@@ -1857,6 +1857,7 @@ function App() {
 
   return (
     <main className="app-shell">
+      <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
       <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} type="button" aria-label="AURORA VoiceText home">
           <span className="brand-mark"><AudioLines size={24} /></span>
@@ -1894,7 +1895,7 @@ function App() {
           <section className="card">
             <div className="card-title"><div><small>STEP 01</small><h2>Your recordings</h2></div><span className="count">{files.length}</span></div>
             <button className="upload-box" type="button" onClick={() => void pickNativeAudioFiles()}><span className="upload-symbol"><Upload/></span><strong>Choose audio files</strong><span>Browse your phone storage</span><small>OPUS · OGG · MP3 · M4A · WAV · AAC</small></button>
-            <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+            {/* The audio picker stays mounted across pages so the Home shortcut can open it immediately. */}
              <input ref={videoInputRef} className="hidden-input" type="file" accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
              <button className="text-button" type="button" onClick={() => videoInputRef.current?.click()}><Plus size={16}/> Import video</button>
             <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round((item.nativeSize ?? item.file.size) / 1024))} KB{item.nativeDurationMs ? ' · ' + Math.floor(item.nativeDurationMs / 60000) + ':' + String(Math.floor((item.nativeDurationMs % 60000) / 1000)).padStart(2, '0') : ''}{item.nativeAudioInfo?.sampleRate ? ' · ' + Math.round(item.nativeAudioInfo.sampleRate / 1000) + ' kHz' : ''} · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
