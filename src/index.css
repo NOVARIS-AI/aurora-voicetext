@@ -467,3 +467,5 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .voice-auto-generate-toggle span{display:grid;gap:3px}
 .voice-auto-generate-toggle strong{color:#d8f7ff;font-size:12px}
 .voice-auto-generate-toggle small{color:#89a9c1;font-size:10px;line-height:1.4}
+
+.global-activity{position:sticky;top:64px;z-index:9;display:flex;align-items:center;gap:11px;margin:4px 0 14px;padding:11px 14px;border:1px solid rgba(77,224,231,.24);border-radius:13px;color:#a7e8ed;background:rgba(12,34,46,.96);box-shadow:0 8px 24px rgba(0,0,0,.18);backdrop-filter:blur(14px)}.global-activity>svg{flex:0 0 auto;color:#69dce5}.global-activity span{display:flex;flex-direction:column;gap:3px}.global-activity strong{font-size:11px}.global-activity small{color:#91a9bc;font-size:10px}.offline-setup-panel{margin-top:12px;padding:12px;border:1px solid rgba(145,171,216,.12);border-radius:12px;background:rgba(255,255,255,.018)}
