@@ -1133,7 +1133,9 @@ function App() {
   const [transcriptionLanguage, setTranscriptionLanguage] = useState('nigerian-english-pidgin');
   const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState(''); // Transcribe workspace only
+  const [voiceStatus, setVoiceStatus] = useState('');
+  const [editorStatus, setEditorStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [savedCheckpoint, setSavedCheckpoint] = useState<{ mode: 'online' | 'offline'; completed: number; total: number } | null>(null);
   const [checkingSavedCheckpoint, setCheckingSavedCheckpoint] = useState(false);
@@ -1497,7 +1499,7 @@ function App() {
   async function sendPreviewMessage() {
     const prompt = previewInput.trim();
     if (!prompt || previewBusy) return;
-    if (!active?.transcript.trim()) { setError('Choose a transcript in Transcribe before using AI Preview.'); return; }
+    if (!active?.transcript.trim()) { setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'assistant', text: 'Choose a transcript in Transcribe before using AI Preview.' }]); return; }
     const userMessage: PreviewMessage = { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'user', text: prompt };
     setPreviewMessages(current => [...current, userMessage]); setPreviewInput(''); setPreviewBusy(true); setError('');
     try {
@@ -1768,7 +1770,7 @@ function App() {
     setVoiceChatInput('');
     setVoiceMentionOpen(false);
     setVoiceChatBusy(true);
-    setError('');
+    setVoiceStatus('');
     if (found) setVoiceFilename(safeFileBaseName(found.name, 'aurora-voice'));
     try {
       const { data } = await requestFeature('/api/voice-chat', { messages: history });
@@ -1780,11 +1782,11 @@ function App() {
         setVoiceChatBusy(false);
         await generateVoice(reply);
       } else {
-        setStatus('AURORA replied. Turn on “Generate spoken audio” whenever you want a voice version.');
+        setVoiceStatus('AURORA replied. Turn on “Generate spoken audio” whenever you want a voice version.');
       }
     } catch (reason) {
       const messageText = reason instanceof Error ? reason.message : 'AURORA could not respond. Please try again.';
-      setError(messageText);
+      setVoiceStatus(messageText);
       setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:messageText}]);
     } finally {
       setVoiceChatBusy(false);
@@ -1794,27 +1796,27 @@ function App() {
   function startVoiceDictation() {
     const w = window as Window & { SpeechRecognition?: any; webkitSpeechRecognition?: any };
     const Recognition = w.SpeechRecognition || w.webkitSpeechRecognition;
-    if (!Recognition) { setError('Voice input is not supported here. You can still type or attach an audio recording.'); return; }
+    if (!Recognition) { setVoiceStatus('Voice input is not supported here. You can still type or attach an audio recording.'); return; }
     const recognition = new Recognition();
     recognition.lang = 'en-NG';
     recognition.onresult = (event: any) => {
       const spoken = event.results?.[0]?.[0]?.transcript || '';
       if (spoken) setVoiceChatInput(value => value ? value + ' ' + spoken : spoken);
     };
-    recognition.onerror = () => setError('Could not capture voice input. Please try again.');
+    recognition.onerror = () => setVoiceStatus('Could not capture voice input. Please try again.');
     recognition.start();
   }
 
   async function generateVoice(sourceText: string = studioText) {
     const scriptText = sourceText.trim();
-    if (!scriptText) { setError('Write a message or choose a saved transcript first.'); return; }
+    if (!scriptText) { setVoiceStatus('Write a message or choose a saved transcript first.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
-    setVoiceAudioUrl(''); setVoiceBusy(true); setError(''); setStatus('Preparing your voice…');
+    setVoiceAudioUrl(''); setVoiceBusy(true); setVoiceStatus('Preparing your voice…');
     try {
       const chunks = splitLongText(scriptText, 3500);
       const audioParts: Blob[] = [];
       for (let index = 0; index < chunks.length; index++) {
-        setStatus(chunks.length > 1 ? 'Creating audio section ' + (index + 1) + ' of ' + chunks.length + '…' : 'Creating your audio…');
+        setVoiceStatus(chunks.length > 1 ? 'Creating audio section ' + (index + 1) + ' of ' + chunks.length + '…' : 'Creating your audio…');
         const { response } = await requestFeature('/api/tts', {
           text: chunks[index], voice: voiceName,
           style: voiceStyle + '. Accent / pronunciation preference: ' + voiceAccent + '. Emphasis: ' + voiceEmphasis + '. Pauses: ' + voicePauses,
@@ -1826,18 +1828,17 @@ function App() {
       }
       const finalAudio = combineMp3Chunks(audioParts);
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
-      setStatus('Your voice audio is ready. Preview it or download the MP3.');
+      setVoiceStatus('Your voice audio is ready. Preview it or download the MP3.');
       setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:'Your voice is ready. You can preview it or download the MP3 below.'}]);
     } catch (reason) {
-      setError(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
-      setStatus('');
+      setVoiceStatus(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
       setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:reason instanceof Error ? 'I could not generate that voice: ' + reason.message : 'Voice generation failed. Please try again.'}]);
     } finally { setVoiceBusy(false); }
   }
 
   async function searchSubtitles() {
-    if (subtitleQuery.trim().length < 2) { setError('Enter a film or episode title first.'); return; }
-    setSubtitleBusy(true); setSubtitleStatus('Searching for matching subtitles…'); setSubtitleResults([]); setError('');
+    if (subtitleQuery.trim().length < 2) { setSubtitleStatus('Enter a film or episode title first.'); return; }
+    setSubtitleBusy(true); setSubtitleStatus('Searching for matching subtitles…'); setSubtitleResults([]);
     try {
       const { data } = await requestFeature('/api/subtitles', { query: subtitleQuery.trim(), languages: subtitleLanguage, type: subtitleType });
       setSubtitleResults(Array.isArray(data?.results) ? data.results : []);
@@ -1847,7 +1848,7 @@ function App() {
   }
 
   async function downloadSubtitle(fileId: number, translate = false, releaseName = 'subtitle') {
-    setSubtitleBusy(true); setError(''); setSubtitleStatus(translate ? 'Downloading and translating subtitle…' : 'Downloading subtitle…');
+    setSubtitleBusy(true); setSubtitleStatus(translate ? 'Downloading and translating subtitle…' : 'Downloading subtitle…');
     try {
       const { response } = await requestFeature('/api/subtitles-download', { fileId }, true);
       const original = await response.text();
@@ -1902,7 +1903,7 @@ function App() {
       // Preserve any words that have no timing metadata by replacing only the edited segment.
       transcript = active.transcript.replace(previousText, value);
     } else {
-      setStatus('Segment timing was updated, but the full transcript was preserved because this segment could not be matched safely.');
+      setEditorStatus('Segment timing was updated, but the full transcript was preserved because this segment could not be matched safely.');
     }
     setFiles(current => current.map(item => item.id === active.id ? { ...item, timedSegments: segments, transcript } : item));
   }
@@ -2075,10 +2076,11 @@ function App() {
             <div className="voice-ai-format-row"><span>Output format</span><strong>MP3 · High compatibility</strong><small>MP3 is the format currently returned by the connected voice engine.</small></div>
             <button className="primary voice-ai-generate" type="button" disabled={voiceBusy||voiceChatBusy||!voiceChatInput.trim()} onClick={submitVoicePrompt}>{voiceChatBusy?<LoaderCircle className="spin" size={17}/>:<AudioLines size={17}/>} {voiceChatBusy?'AURORA is thinking…':'Send message'}</button>
           </div>
-          {status && <div className="status-message" role="status">{status}</div>}
+          {voiceStatus && <div className="status-message" role="status">{voiceStatus}</div>}
           {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
           <details className="voice-audio-tools"><summary><AudioWaveform size={16}/> Audio trimming tools</summary>
-            <div className="voice-workspace-grid">
+            {editorStatus && <div className="status-message" role="status">{editorStatus}</div>}
+          <div className="voice-workspace-grid">
           {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
           <div className="card-title"><div><small>SELECTED RECORDING</small><h2>{active.file.name}</h2></div><button className="secondary small-button" type="button" onClick={()=>setPage('transcribe')}>Change file</button></div>
              {isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/> : <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onLoadedMetadata={event=>{const duration=event.currentTarget.duration||0;setEditorDuration(duration);setEditorStart(0);setEditorEnd(duration);}} onTimeUpdate={event=>{const current=event.currentTarget.currentTime;setAudioPlayhead(current);if(editorEnd>0&&current>=editorEnd){event.currentTarget.pause();event.currentTarget.currentTime=editorStart;}}}/>}
@@ -2090,7 +2092,7 @@ function App() {
           <div className="studio-actions">
             <button className="secondary" type="button" disabled={!editorDuration} onClick={()=>{if(audioRef.current){audioRef.current.currentTime=editorStart;void audioRef.current.play();}}}>Preview selection</button>
             <button className="secondary" type="button" disabled={!editorDuration} onClick={()=>{setEditorStart(0);setEditorEnd(editorDuration);if(audioRef.current)audioRef.current.currentTime=0;}}>Reset selection</button>
-            <button className="primary" type="button" disabled={editorBusy||!editorDuration||editorEnd<=editorStart} onClick={async()=>{setEditorBusy(true);setError('');try{let wavBase64:string;if(active.nativePath){const result=await nativeAudioFiles.decodeSegment({path:active.nativePath,startSeconds:editorStart,durationSeconds:editorEnd-editorStart});wavBase64=result.wavBase64;}else{const context=new AudioContext();try{const decoded=await context.decodeAudioData(await active.file.arrayBuffer());const start=Math.floor(editorStart*decoded.sampleRate);const end=Math.min(decoded.length,Math.floor(editorEnd*decoded.sampleRate));if(end<=start)throw new Error('Choose a valid audio range.');const channels=decoded.numberOfChannels;const length=end-start;const buffer=new ArrayBuffer(44+length*channels*2);const view=new DataView(buffer);const write=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)view.setUint8(offset+i,value.charCodeAt(i));};write(0,'RIFF');view.setUint32(4,36+length*channels*2,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,decoded.sampleRate,true);view.setUint32(28,decoded.sampleRate*channels*2,true);view.setUint16(32,channels*2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,length*channels*2,true);let offset=44;for(let i=0;i<length;i++)for(let channel=0;channel<channels;channel++){const sample=Math.max(-1,Math.min(1,decoded.getChannelData(channel)[start+i]));view.setInt16(offset,sample<0?sample*32768:sample*32767,true);offset+=2;}const bytes=new Uint8Array(buffer);let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));wavBase64=btoa(binary);}finally{await context.close();}}const binary=atob(wavBase64);const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);await downloadFile(safeFileBaseName(active.file.name.replace(/\.[^.]+$/,'')+'-clip','aurora-clip')+'.wav',new Blob([bytes],{type:'audio/wav'}),'audio/wav');setStatus('Trimmed audio clip exported. Your original file was not changed.');}catch(reason){setError(reason instanceof Error?reason.message:'Could not export this audio section.');}finally{setEditorBusy(false);}}}>{editorBusy?<LoaderCircle className="spin" size={16}/>:<Download size={16}/>} {editorBusy?'Preparing clip…':'Export selected clip (WAV)'}</button>
+            <button className="primary" type="button" disabled={editorBusy||!editorDuration||editorEnd<=editorStart} onClick={async()=>{setEditorBusy(true);setEditorStatus('');try{let wavBase64:string;if(active.nativePath){const result=await nativeAudioFiles.decodeSegment({path:active.nativePath,startSeconds:editorStart,durationSeconds:editorEnd-editorStart});wavBase64=result.wavBase64;}else{const context=new AudioContext();try{const decoded=await context.decodeAudioData(await active.file.arrayBuffer());const start=Math.floor(editorStart*decoded.sampleRate);const end=Math.min(decoded.length,Math.floor(editorEnd*decoded.sampleRate));if(end<=start)throw new Error('Choose a valid audio range.');const channels=decoded.numberOfChannels;const length=end-start;const buffer=new ArrayBuffer(44+length*channels*2);const view=new DataView(buffer);const write=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)view.setUint8(offset+i,value.charCodeAt(i));};write(0,'RIFF');view.setUint32(4,36+length*channels*2,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,decoded.sampleRate,true);view.setUint32(28,decoded.sampleRate*channels*2,true);view.setUint16(32,channels*2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,length*channels*2,true);let offset=44;for(let i=0;i<length;i++)for(let channel=0;channel<channels;channel++){const sample=Math.max(-1,Math.min(1,decoded.getChannelData(channel)[start+i]));view.setInt16(offset,sample<0?sample*32768:sample*32767,true);offset+=2;}const bytes=new Uint8Array(buffer);let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));wavBase64=btoa(binary);}finally{await context.close();}}const binary=atob(wavBase64);const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);await downloadFile(safeFileBaseName(active.file.name.replace(/\.[^.]+$/,'')+'-clip','aurora-clip')+'.wav',new Blob([bytes],{type:'audio/wav'}),'audio/wav');setEditorStatus('Trimmed audio clip exported. Your original file was not changed.');}catch(reason){setEditorStatus(reason instanceof Error?reason.message:'Could not export this audio section.');}finally{setEditorBusy(false);}}}>{editorBusy?<LoaderCircle className="spin" size={16}/>:<Download size={16}/>} {editorBusy?'Preparing clip…':'Export selected clip (WAV)'}</button>
           </div>
           <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
         </section>}
