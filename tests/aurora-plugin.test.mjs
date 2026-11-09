@@ -13,7 +13,7 @@ test("AURORA VoiceText bridge is server-authenticated and never exposes provider
 });
 
 test("bridge validates bounded audio and delegates to VoiceText's existing provider chain", () => {
-  assert.match(endpoint, /1800000/);
+  assert.match(endpoint, /4000000/);
   assert.match(endpoint, /audioBase64/);
   assert.match(endpoint, /audio\/mp4/);
   assert.match(endpoint, /transcribeWithFallback/);
