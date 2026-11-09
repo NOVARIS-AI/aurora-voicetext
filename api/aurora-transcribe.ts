@@ -11,7 +11,7 @@ type Body = {
 
 export const config = {
   maxDuration: 60,
-  api: { bodyParser: { sizeLimit: "2mb" } },
+  api: { bodyParser: { sizeLimit: "4.5mb" } },
 };
 
 function authorised(req: VercelRequest): boolean {
@@ -36,9 +36,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const input = (req.body || {}) as Body;
   const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
-  if (!audioBase64 || audioBase64.length > 1800000 ||
+  if (!audioBase64 || audioBase64.length > 4000000 ||
       !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64) || audioBase64.length % 4 !== 0) {
-    return res.status(audioBase64.length > 1800000 ? 413 : 400).json({ error: "Provide a valid audio section within the 1.8 MB encoded limit." });
+    return res.status(audioBase64.length > 4000000 ? 413 : 400).json({ error: "Provide a valid audio section up to approximately 3 MB. The hosting request-size limit prevents unlimited single-request uploads." });
   }
   const mimeType = typeof input.mimeType === "string" ? input.mimeType.toLowerCase() : "";
   const supported = new Set(["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/ogg", "audio/mp4", "audio/aac", "audio/webm"]);
