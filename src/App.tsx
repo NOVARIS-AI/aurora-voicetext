@@ -187,6 +187,29 @@ function splitLongText(text: string, max = 22000): string[] {
   if (remaining) chunks.push(remaining);
   return chunks;
 }
+ 
+function normalizeExportParagraphs(value: string): string {
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!normalized) return '';
+  const blocks = normalized.split(/\n\s*\n/).map(block => block.split('\n').map(line => line.trim()).filter(Boolean).join(' ')).filter(Boolean);
+  if (blocks.length === 1 && !normalized.includes('\n')) {
+    return normalized.split(/(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map(part => part.trim()).filter(Boolean).join('\n\n');
+  }
+  return blocks.join('\n\n');
+}
+
+async function polishExportTranscript(value: string, language: string): Promise<string> {
+  const chunks = splitLongText(value, 22000);
+  const polished: string[] = [];
+  for (const chunk of chunks) {
+    const { data } = await requestFeature('/api/assist', { text: chunk, language });
+    const result = typeof data?.text === 'string' ? data.text.trim() : '';
+    if (!result) throw new Error('AI proofreading returned an empty result. Your original transcript has not been changed.');
+    polished.push(result);
+  }
+  return normalizeExportParagraphs(polished.join('\n\n'));
+}
+
 
 function splitSubtitleDocument(text: string, max = 18000): string[] {
   const normalized = text.replace(/\r\n/g, '\n').trim();
@@ -1595,16 +1618,32 @@ function App() {
     const attribution = 'Transcribed by AURORA VoiceText';
     const templateLabel = exportTemplate === 'meeting' ? 'MEETING TRANSCRIPT' : exportTemplate === 'study' ? 'STUDY NOTES' : 'TRANSCRIPT';
     const templateSubtitle = exportTemplate === 'meeting' ? 'Meeting transcript' : exportTemplate === 'study' ? 'Study notes' : '';
+    const isSubtitleExport = exportType === 'srt' || exportType === 'vtt';
+    let exportText = text;
+    if (!isSubtitleExport) {
+      setError('');
+      setStatus('AURORA AI is correcting wording and arranging clean paragraphs before export…');
+      try {
+        exportText = await polishExportTranscript(text, transcriptionLanguage);
+        if (!exportText.trim()) throw new Error('AI proofreading returned an empty result.');
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : 'AI proofreading failed. Please try again.');
+        setStatus('Export stopped so the original transcript is not silently exported without proofreading.');
+        return;
+      }
+    }
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
     const timestampsCoverTranscript = Boolean(timedSegments?.length) &&
       normalizeTranscriptForCompare(segmentTranscript) === normalizeTranscriptForCompare(text);
-    const timestamped = includeTimestamps && timestampsCoverTranscript
-      ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n')
-      : text;
+    const polishedMatchesOriginal = normalizeTranscriptForCompare(exportText) === normalizeTranscriptForCompare(text);
+    const canUseTimestamps = includeTimestamps && timestampsCoverTranscript && polishedMatchesOriginal;
+    const timestamped = canUseTimestamps
+      ? timedSegments!.map(segment => '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ' + segment.text).join('\n\n')
+      : exportText;
     const transcriptDocument = documentTitle + '\n' + (templateSubtitle ? templateSubtitle + '\n' : '') + attribution + '\n\n' + timestamped;
     if (exportType === 'docx') {
       try {
-        const bodyParagraphs = includeTimestamps && timestampsCoverTranscript
+        const bodyParagraphs = canUseTimestamps
           ? timedSegments!.filter(segment => segment.text.trim()).map(segment => new Paragraph({
               children: [
                 new TextRun({ text: '[' + new Date(segment.start * 1000).toISOString().slice(11,19) + '] ', bold: true, color: '167D91', size: 20 }),
@@ -1613,9 +1652,9 @@ function App() {
               spacing: { before: 40, after: 180, line: 300 },
               indent: { left: 120 },
             }))
-          : text.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').split('\\n').map(line => new Paragraph({
-              children: [new TextRun({ text: line.trim() || ' ', font: 'Aptos', size: 22 })],
-              spacing: { before: 20, after: line.trim() ? 120 : 60, line: 320 },
+          : normalizeExportParagraphs(exportText).split('\n\n').map(paragraph => new Paragraph({
+              children: [new TextRun({ text: paragraph, font: 'Aptos', size: 22 })],
+              spacing: { before: 40, after: 220, line: 340 },
               alignment: 'left',
             }));
         const doc = new Document({
@@ -1641,9 +1680,7 @@ function App() {
         const blob = await Packer.toBlob(doc);
         await downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
-        setStatus(includeTimestamps && timedSegments?.length && !timestampsCoverTranscript
-          ? 'DOCX exported with the complete transcript. Timestamps were omitted because the timed segments did not cover all edited text.'
-          : 'DOCX document prepared with the complete transcript.');
+        setStatus(canUseTimestamps ? 'AI-proofread DOCX exported with matching timestamps.' : 'AI-proofread DOCX exported with clean paragraphs and spacing.');
       } catch (error) { setError(error instanceof Error ? error.message : 'DOCX export failed.'); }
       return;
     }
@@ -1663,13 +1700,17 @@ function App() {
         if (templateSubtitle) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(11); pdf.setTextColor(71, 85, 105); pdf.text(templateSubtitle, margin, y); y += 8; }
         pdf.setFontSize(9); pdf.setTextColor(100, 116, 139); pdf.text(attribution, margin, y); y += 10;
         pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(25, 35, 50);
-        const bodyLines = pdf.splitTextToSize(timestamped, pageWidth - margin * 2);
-        for (const line of bodyLines) {
-          if (y > pageHeight - margin) { pdf.addPage(); y = margin; }
-          pdf.text(line, margin, y); y += 5.2;
+        const bodyParagraphs = timestamped.split(/\n\s*\n/).map(part => part.trim()).filter(Boolean);
+        for (const paragraph of bodyParagraphs) {
+          const bodyLines = pdf.splitTextToSize(paragraph, pageWidth - margin * 2);
+          for (const line of bodyLines) {
+            if (y > pageHeight - margin) { pdf.addPage(); y = margin; }
+            pdf.text(line, margin, y); y += 5.6;
+          }
+          y += 3.2;
         }
         await downloadFile(fileBase + '.pdf', pdf.output('blob'), 'application/pdf');
-        setStatus('PDF created. Choose where to save or share it.');
+        setStatus('AI-proofread PDF created with clean paragraphs. Choose where to save or share it.');
         return;
       }
       const popup = window.open('', '_blank');
@@ -1693,9 +1734,8 @@ function App() {
     };
     const selected = extensions[exportType] ?? extensions.txt;
     await downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
-    if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitle timing from the transcription engine.' : 'The timing data did not cover all transcript text; exported estimated timings so no words are omitted.');
-    else if (includeTimestamps && timedSegments?.length && !timestampsCoverTranscript) setStatus('Exported the complete transcript without timestamps because the timing data did not cover all edited text.');
-    else if (includeTimestamps && timestampsCoverTranscript) setStatus('Exported the complete transcript with timestamps.');
+    if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitles. Text was left unchanged to protect subtitle timing.' : 'Exported estimated subtitle timings. Text was left unchanged to protect subtitle formatting.');
+    else setStatus('AI-proofread export created with corrected wording and clean paragraphs.');
     setError('');
   }
 
