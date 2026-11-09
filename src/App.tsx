@@ -1127,6 +1127,7 @@ function App() {
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const [library, setLibrary] = useState<Recording[]>(readLibrary);
   const [busy, setBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const [mode, setMode] = useState<TranscriptionMode>('auto');
   const [transcriptionLanguage, setTranscriptionLanguage] = useState('nigerian-english-pidgin');
@@ -1611,6 +1612,12 @@ function App() {
     });
   }
 
+  async function runExportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
+    setExportBusy(true);
+    try { await exportTranscript(text, baseName, timedSegments); }
+    finally { setExportBusy(false); }
+  }
+
   async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
     const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
@@ -1627,9 +1634,10 @@ function App() {
         exportText = await polishExportTranscript(text, transcriptionLanguage);
         if (!exportText.trim()) throw new Error('AI proofreading returned an empty result.');
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : 'AI proofreading failed. Please try again.');
-        setStatus('Export stopped so the original transcript is not silently exported without proofreading.');
-        return;
+        const detail = reason instanceof Error ? reason.message : 'AI proofreading is unavailable.';
+        exportText = normalizeExportParagraphs(text);
+        setError('');
+        setStatus('AI proofreading is unavailable (' + detail.slice(0, 180) + '). Exporting your original transcript with clean paragraph formatting instead.');
       }
     }
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
@@ -1916,6 +1924,11 @@ function App() {
         )}
       </nav>
 
+      {(busy || exportBusy || offlinePrepBusy || voiceBusy || voiceChatBusy || editorBusy || subtitleBusy || previewBusy) && <div className="global-activity" role="status" aria-live="polite">
+        <LoaderCircle className="spin" size={16}/>
+        <span><strong>{busy ? 'Transcription in progress' : exportBusy ? 'Preparing your export' : offlinePrepBusy ? 'Preparing offline tools' : voiceBusy ? 'Generating voice audio' : voiceChatBusy ? 'Voice workspace is working' : editorBusy ? 'Processing audio' : subtitleBusy ? 'Processing subtitles' : 'Working on your transcript'}</strong><small>{busy && progress.total > 0 ? progress.completed + ' of ' + progress.total + ' sections complete' : 'You can see this activity while moving between pages.'}</small></span>
+      </div>}
+
       {page === 'home' && <section className="welcome">
         <div className="eyebrow"><Sparkles size={14}/> YOUR PERSONAL VOICE NOTE WORKSPACE</div>
         <h1>Turn voice notes<br/><span>into clear text.</span></h1>
@@ -1947,7 +1960,7 @@ function App() {
 
           </section>
           <section className="card">
-            <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">AUTO LANGUAGE</span></div>
+            <div className="card-title"><div><small>STEP 02</small><h2>Transcript editor</h2></div><span className="language-tag">LANGUAGE PROFILE</span></div>
             {active ? <>
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
 {isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/> :               <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>}
@@ -1969,15 +1982,17 @@ function App() {
                 <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Keep audio on this device</small></button>
                 <button className={mode === 'online' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('online'); setError(''); }}><span>☁️</span><strong>Online</strong><small>Use online processing</small></button>
               </div>
-              <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Setting up…' : 'Prepare for offline use'}</button></div>
-              <p className="helper-text">First-time setup needs internet. Tap once to download and install the speech model and offline audio tools; after setup succeeds, Offline mode can transcribe without data. Keep at least 200 MB free.</p>
-              {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
+              {mode === 'offline' && <div className="offline-setup-panel">
+                <div className="engine-setup-actions"><button className="secondary full-button" type="button" disabled={busy || offlinePrepBusy} onClick={prepareOfflineEngine}>{offlinePrepBusy ? <LoaderCircle className="spin" size={16}/> : <Download size={16}/>} {offlinePrepBusy ? 'Setting up…' : 'Prepare for offline use'}</button></div>
+                <p className="helper-text">One-time download. After setup, offline transcription works without mobile data. Keep at least 200 MB free.</p>
+                {offlinePrepStatus && <div className="status-message" role="status">{offlinePrepStatus}</div>}
+              </div>}
 
               <div className="studio-actions"><button className="primary full-button" disabled={busy} onClick={transcribe} type="button">{busy ? <LoaderCircle className="spin" size={17}/> : <WandSparkles size={17}/>} {busy ? 'Working…' : mode === 'auto' ? 'Transcribe automatically' : mode === 'online' ? 'Transcribe online' : 'Transcribe offline'}</button>{busy && <button className="secondary" type="button" onClick={() => transcriptionAbortRef.current?.abort()}>Cancel safely</button>}</div>
               {status && <div className="status-message" role="status">{status}</div>}
               {checkingSavedCheckpoint && <div className="status-message" role="status">Checking this recording for saved transcription progress…</div>}
               {savedCheckpoint && !busy && <div className="status-message" role="status"><strong>Saved progress found:</strong> {savedCheckpoint.completed} of {savedCheckpoint.total} sections completed ({savedCheckpoint.mode} mode). Tap Transcribe to continue from the next unfinished section.</div>}
-              {progress.total > 0 && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
+              {progress.total > 0 && (busy || progress.completed < progress.total) && <div className="progress-wrap" aria-label={'Transcription progress: ' + progress.completed + ' of ' + progress.total + ' sections'}><div className="progress-meta"><span>Section progress</span><strong>{Math.round((progress.completed / progress.total) * 100)}%</strong></div><div className="progress-track"><span style={{ width: (progress.completed / progress.total) * 100 + '%' }} /></div><small>{progress.completed} of {progress.total} sections completed · completed sections are saved on this device; reselect the same recording to resume</small></div>}
               <label className="field-label" htmlFor="transcript">Original transcript <small>{active.detectedLanguage ? 'Detected: ' + active.detectedLanguage : 'Language detection: automatic'}</small></label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Speech will appear here in its original language. Review names and wording, then edit anything AURORA missed."/>
               
@@ -1990,7 +2005,7 @@ function App() {
                   <label className="field-label" htmlFor="export-type">File format<AppSelect ariaLabel="Export file format" value={exportType} onChange={setExportType} options={[{group:'Documents',value:'docx',label:'Word document (.docx)'},{group:'Documents',value:'pdf',label:'PDF document (.pdf)'},{group:'Documents',value:'rtf',label:'Rich text (.rtf)'},{group:'Documents',value:'html',label:'Web document (.html)'},{group:'Documents',value:'md',label:'Markdown (.md)'},{group:'Documents',value:'txt',label:'Plain text (.txt)'},{group:'Subtitles',value:'srt',label:'SubRip subtitles (.srt)'},{group:'Subtitles',value:'vtt',label:'Web subtitles (.vtt)'}]}/></label>
                 </div>
                 <label className="export-option"><input type="checkbox" checked={includeTimestamps} onChange={event=>setIncludeTimestamps(event.target.checked)}/> Include timestamps when available</label>
-                <div className="export-actions"><button className="primary" type="button" onClick={() => exportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
+                <div className="export-actions"><button className="primary" type="button" onClick={() => runExportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
               </section>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
@@ -2000,7 +2015,7 @@ function App() {
       {page === 'library' && <section className="page-content">
         <div className="page-heading"><div className="eyebrow">YOUR NOTES</div><h1>Transcript library</h1><p>Saved text stays in this browser on this device. Audio files themselves are not stored here.</p></div>
         <div className="library-toolbar"><label className="search-box"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search saved transcripts"/></label><span className="count">{filteredLibrary.length} saved</span></div>
-        {filteredLibrary.length ? <div className="library-grid">{filteredLibrary.map(item => <article className="library-card" key={item.id}><div className="library-card-head"><span className="library-icon"><FileText size={18}/></span><button className="icon-button" aria-label="Delete saved transcript" onClick={() => setLibrary(current => current.filter(entry => entry.id !== item.id))} type="button"><Trash2 size={16}/></button></div><h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}</small><p>{item.transcript.slice(0, 240)}{item.transcript.length > 240 ? '…' : ''}</p><div className="library-actions"><button className="secondary small-button" onClick={() => {setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={15}/> Read aloud</button><button className="secondary small-button" onClick={() => exportTranscript(item.transcript, item.name.replace(/\.[^.]+$/, '') || 'transcript')} type="button"><Download size={15}/> Export</button><button className="text-button" onClick={() => copyText(item.transcript)} type="button"><Copy size={15}/> Copy</button></div></article>)}</div> : <div className="empty-state library-empty"><BookOpen size={32}/><strong>Your library is empty</strong><span>Transcribe or paste a voice note, then tap Save to library.</span><button className="primary" onClick={() => setPage('transcribe')} type="button">Go to transcribe</button></div>}
+        {filteredLibrary.length ? <div className="library-grid">{filteredLibrary.map(item => <article className="library-card" key={item.id}><div className="library-card-head"><span className="library-icon"><FileText size={18}/></span><button className="icon-button" aria-label="Delete saved transcript" onClick={() => setLibrary(current => current.filter(entry => entry.id !== item.id))} type="button"><Trash2 size={16}/></button></div><h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}</small><p>{item.transcript.slice(0, 240)}{item.transcript.length > 240 ? '…' : ''}</p><div className="library-actions"><button className="secondary small-button" onClick={() => {setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={15}/> Read aloud</button><button className="secondary small-button" onClick={() => runExportTranscript(item.transcript, item.name.replace(/\.[^.]+$/, '') || 'transcript')} type="button"><Download size={15}/> Export</button><button className="text-button" onClick={() => copyText(item.transcript)} type="button"><Copy size={15}/> Copy</button></div></article>)}</div> : <div className="empty-state library-empty"><BookOpen size={32}/><strong>Your library is empty</strong><span>Transcribe or paste a voice note, then tap Save to library.</span><button className="primary" onClick={() => setPage('transcribe')} type="button">Go to transcribe</button></div>}
       </section>}
 
       {page === 'preview' && <section className="page-content">
