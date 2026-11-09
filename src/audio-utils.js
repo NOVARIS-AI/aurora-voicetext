@@ -1,3 +1,17 @@
+/** Returns a speech-model prompt that favours Nigerian speech without translating or standardising it. */
+export function getTranscriptionLanguageHint(profile = 'nigerian-english-pidgin') {
+  const hints = {
+    'nigerian-english-pidgin': 'Nigerian English and Nigerian Pidgin may be mixed. Preserve Pidgin grammar, local expressions, names, places and code-switching exactly as spoken. Do not convert Pidgin into Standard English or translate.',
+    'nigerian-english': 'Nigerian English. Preserve Nigerian names, places, local expressions and pronunciation-based wording; do not rewrite the speaker into another dialect.',
+    'nigerian-pidgin': 'Nigerian Pidgin. Preserve Pidgin vocabulary, grammar, particles and code-switching exactly as spoken. Do not translate into Standard English.',
+    yoruba: 'Yoruba as spoken in Nigeria. Preserve Yoruba words and names; do not translate.',
+    igbo: 'Igbo as spoken in Nigeria. Preserve Igbo words and names; do not translate.',
+    hausa: 'Hausa as spoken in Nigeria. Preserve Hausa words and names; do not translate.',
+    auto: '',
+  };
+  return hints[profile] ?? hints.auto;
+}
+
 export function mergeTranscriptParts(parts) {
   const merged = [];
   for (const part of parts) {
