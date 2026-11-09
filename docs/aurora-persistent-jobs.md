@@ -60,3 +60,12 @@ The response includes the saved transcript, status, completed/total sections, pr
 - The API persists progress and results, but it does not run a background worker after the caller disconnects. AURORA must continue sending sections while it is active, then can resume later from the saved checkpoint.
 - Apply the Supabase migration `202611090001_persistent_aurora_transcription_jobs.sql` before using persistent jobs.
 - The job API is protected by the server-side AURORA integration token; do not expose it to end users.
+
+
+## Account verification and server configuration
+
+Durable job actions (create, process, and status) must include the signed-in user's Supabase access token in the `X-AURORA-USER-TOKEN` header as well as the private server-to-server `Authorization: Bearer` token. VoiceText validates the user token against the shared Supabase Auth service and derives the owner UUID; it does not trust a client-supplied owner ID.
+
+On the VoiceText Vercel project, configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and optionally `SUPABASE_RECORDINGS_BUCKET=voicetext-recordings`. The service-role key is server-only and must never be exposed to Main AURORA's client or any VITE_ variable. Apply `supabase/migrations/202611090001_persistent_aurora_transcription_jobs.sql` in the shared Supabase SQL Editor.
+
+On the Main AURORA Vercel project, configure server-side `SUPABASE_URL` and `SUPABASE_ANON_KEY`, or ensure its existing `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` variables are present for the API route. Main AURORA validates the caller's session before forwarding it to VoiceText.
