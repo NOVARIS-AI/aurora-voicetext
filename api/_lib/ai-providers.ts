@@ -134,7 +134,7 @@ export async function searchSubtitles(input: SubtitleSearchRequest) {
 export async function polishTranscriptWithFallback(input: { text: string; language?: string }): Promise<{ text: string; provider: string }> {
   const providers = [
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile" },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant" },
   ].filter(p => Boolean(p.key));
   const failures: string[] = [];
   const languageGuidance = input.language === "nigerian-english-pidgin"
