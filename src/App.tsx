@@ -5,7 +5,7 @@ import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, getTranscriptionLanguageHint, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
@@ -912,6 +912,7 @@ async function transcribeOpusInSegments(
   onTimedParts: (segments: TimedSegment[]) => void,
   onStatus: (message: string) => void,
   onLanguage: (language: string) => void,
+  languageHint: string,
   durationOverrideSeconds?: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
@@ -968,6 +969,7 @@ async function transcribeOpusInSegments(
         mimeType: 'audio/mpeg',
         chunkNumber: prepared.index + 1,
         totalChunks: totalParts,
+        languageHint,
         detectLanguage: true,
         speakerLabels: true,
       });
@@ -1104,6 +1106,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const [mode, setMode] = useState<TranscriptionMode>('auto');
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState('nigerian-english-pidgin');
   const [offlinePrepBusy, setOfflinePrepBusy] = useState(false);
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
   const [status, setStatus] = useState('');
@@ -1426,6 +1429,7 @@ function App() {
             onTimedParts,
             setStatus,
             language => setFiles(current => current.map(item => item.id === selected.id ? { ...item, detectedLanguage: language } : item)),
+            getTranscriptionLanguageHint(transcriptionLanguage),
             selected.nativeDurationMs && selected.nativeDurationMs > 0 ? selected.nativeDurationMs / 1000 : undefined,
             controller.signal,
           );
@@ -1609,9 +1613,9 @@ function App() {
               spacing: { before: 40, after: 180, line: 300 },
               indent: { left: 120 },
             }))
-          : text.replace(/\\r\\n/g, '\\n').split(/\\n\\s*\\n/).map(block => block.trim()).filter(Boolean).map(block => new Paragraph({
-              children: [new TextRun({ text: block.replace(/\\n+/g, ' ').replace(/\\s+/g, ' '), font: 'Aptos', size: 22 })],
-              spacing: { before: 40, after: 220, line: 320 },
+          : text.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').split('\\n').map(line => new Paragraph({
+              children: [new TextRun({ text: line.trim() || ' ', font: 'Aptos', size: 22 })],
+              spacing: { before: 20, after: line.trim() ? 120 : 60, line: 320 },
               alignment: 'left',
             }));
         const doc = new Document({
@@ -1908,6 +1912,18 @@ function App() {
               <div className="active-file"><FileAudio size={16}/><span>{active.file.name}</span></div>
 {isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/> :               <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event => setAudioPlayhead(event.currentTarget.currentTime)}/>}
 
+              <label className="field-label" htmlFor="transcription-language">Speech and language focus
+                <AppSelect ariaLabel="Speech and language focus" value={transcriptionLanguage} onChange={setTranscriptionLanguage} options={[
+                  {group:'Nigeria',value:'nigerian-english-pidgin',label:'Nigerian English + Pidgin (recommended)'},
+                  {group:'Nigeria',value:'nigerian-english',label:'Nigerian English'},
+                  {group:'Nigeria',value:'nigerian-pidgin',label:'Nigerian Pidgin'},
+                  {group:'Nigerian languages',value:'yoruba',label:'Yoruba'},
+                  {group:'Nigerian languages',value:'igbo',label:'Igbo'},
+                  {group:'Nigerian languages',value:'hausa',label:'Hausa'},
+                  {group:'Other',value:'auto',label:'Automatic language detection'},
+                ]}/>
+              </label>
+              <p className="helper-text">This guides online transcription to preserve local words, names and code-switching. Recognition accuracy still depends on the recording and speech model.</p>
               <div className="mode-switch" role="group" aria-label="Transcription mode">
                 <button className={mode === 'auto' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('auto'); setError(''); }}><Sparkles size={17}/><strong>Auto</strong><small>Recommended</small></button>
                 <button className={mode === 'offline' ? 'mode-option selected' : 'mode-option'} type="button" disabled={busy} onClick={() => { setMode('offline'); setError(''); }}><ShieldCheck size={17}/><strong>Offline</strong><small>Keep audio on this device</small></button>
