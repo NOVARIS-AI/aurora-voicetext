@@ -191,7 +191,7 @@ function splitLongText(text: string, max = 22000): string[] {
 function normalizeExportParagraphs(value: string): string {
   const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (!normalized) return '';
-  const blocks = normalized.split(/\n\s*\n/).map(block => block.split('\n').map(line => line.trim()).filter(Boolean).join(' ')).filter(Boolean);
+  const blocks = normalized.split(/\n+/).map(line => line.trim()).filter(Boolean);
   if (blocks.length === 1 && !normalized.includes('\n')) {
     return normalized.split(/(?<=[.!?])\s+(?=[A-Z0-9“"'(])/).map(part => part.trim()).filter(Boolean).join('\n\n');
   }
