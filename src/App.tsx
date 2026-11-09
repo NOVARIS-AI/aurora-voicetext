@@ -1627,6 +1627,7 @@ function App() {
     const templateSubtitle = exportTemplate === 'meeting' ? 'Meeting transcript' : exportTemplate === 'study' ? 'Study notes' : '';
     const isSubtitleExport = exportType === 'srt' || exportType === 'vtt';
     let exportText = text;
+    let aiFallbackNotice = '';
     if (!isSubtitleExport) {
       setError('');
       setStatus('AURORA AI is correcting wording and arranging clean paragraphs before export…');
@@ -1637,7 +1638,7 @@ function App() {
         const detail = reason instanceof Error ? reason.message : 'AI proofreading is unavailable.';
         exportText = normalizeExportParagraphs(text);
         setError('');
-        setStatus('AI proofreading is unavailable (' + detail.slice(0, 180) + '). Exporting your original transcript with clean paragraph formatting instead.');
+        aiFallbackNotice = 'AI proofreading unavailable (' + detail.slice(0, 140) + '). Original transcript exported with clean formatting.';
       }
     }
     const segmentTranscript = timedSegments?.length ? timedSegments.map(segment => segment.text).join(' ') : '';
