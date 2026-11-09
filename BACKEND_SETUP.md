@@ -54,6 +54,19 @@ The deploy workflow transfers the provider secrets to Cloudflare Worker secrets 
 
 After the GitHub Actions secrets are added, run **Deploy AURORA VoiceText backup worker** from Actions → Workflows → Run workflow, or merge a change under `backup-worker/` into `main`. The workflow deploys `backup-worker/` independently of Vercel. It skips deployment when Cloudflare credentials are absent. Add the deployed Worker origin (without a trailing slash) as the GitHub Actions repository variable `BACKUP_API_BASE_URL`; the APK build injects it as `VITE_BACKUP_API_BASE_URL`.
 
+## Durable AURORA transcription jobs
+
+The AURORA server-to-server endpoint stores completed audio sections and transcript checkpoints in the shared Supabase project. Configure these additional VoiceText Vercel variables:
+
+- `SUPABASE_URL` — the shared Supabase project URL.
+- `SUPABASE_ANON_KEY` — the project's public anon/publishable key, used only to verify the forwarded signed-in user token.
+- `SUPABASE_SERVICE_ROLE_KEY` — the private service-role key used by this server to write job rows and private Storage objects. Never expose it to the browser, APK, or any `VITE_` variable.
+- `SUPABASE_RECORDINGS_BUCKET=voicetext-recordings` — optional; this is the default private bucket name.
+
+Apply `supabase/migrations/202611090001_persistent_aurora_transcription_jobs.sql` in the shared Supabase SQL Editor. The migration creates the job table and private recording bucket. Job create/process/status actions also require the server-to-server integration token and the `X-AURORA-USER-TOKEN` forwarded by the main AURORA server. VoiceText validates that token against Supabase Auth and scopes every job lookup/update to the verified account.
+
+This is durable checkpoint storage and resumability. The current caller still sends sections while the app is active; it is not an autonomous background worker after the app closes.
+
 ## Important limits
 
 - No real provider keys are committed in this repository.
