@@ -66,7 +66,7 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
 export async function translateWithFallback(input: TranslationRequest): Promise<{ text: string; provider: string }> {
   const providers = [
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile" },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant" },
   ].filter(p => Boolean(p.key));
   const failures: string[] = [];
   for (const provider of providers) {
