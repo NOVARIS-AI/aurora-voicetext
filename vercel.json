@@ -2,6 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/supabase-health", "destination": "/api/health?scope=supabase" }
+  ],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 60
