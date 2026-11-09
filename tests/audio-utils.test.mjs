@@ -161,3 +161,12 @@ test('recognizes supported video containers by MIME type or filename', () => {
   assert.equal(isVideoMediaFile({ name: 'voice.mp3', type: 'audio/mpeg' }), false);
   assert.equal(isVideoMediaFile({ name: 'document.pdf', type: 'application/pdf' }), false);
 });
+
+\ntest('provides Nigerian English and Pidgin transcription guidance without translating', async () => {
+  const { getTranscriptionLanguageHint } = await import('../src/audio-utils.js');
+  const mixed = getTranscriptionLanguageHint('nigerian-english-pidgin');
+  assert.match(mixed, /Nigerian English and Nigerian Pidgin/);
+  assert.match(mixed, /Do not convert Pidgin into Standard English/);
+  assert.equal(getTranscriptionLanguageHint('auto'), '');
+  assert.match(getTranscriptionLanguageHint('yoruba'), /Yoruba as spoken in Nigeria/);
+});
