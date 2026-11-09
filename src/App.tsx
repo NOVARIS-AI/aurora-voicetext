@@ -1634,6 +1634,7 @@ function App() {
       try {
         exportText = await polishExportTranscript(text, transcriptionLanguage);
         if (!exportText.trim()) throw new Error('AI proofreading returned an empty result.');
+        aiProofread = true;
       } catch (reason) {
         const detail = reason instanceof Error ? reason.message : 'AI proofreading is unavailable.';
         exportText = normalizeExportParagraphs(text);
@@ -1689,7 +1690,7 @@ function App() {
         const blob = await Packer.toBlob(doc);
         await downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
-        setStatus(canUseTimestamps ? 'AI-proofread DOCX exported with matching timestamps.' : 'AI-proofread DOCX exported with clean paragraphs and spacing.');
+        setStatus(canUseTimestamps ? 'DOCX exported with matching timestamps.' : aiProofread ? 'AI-proofread DOCX exported with clean paragraphs and spacing.' : 'AI proofreading was unavailable; original transcript exported with clean paragraphs.');
       } catch (error) { setError(error instanceof Error ? error.message : 'DOCX export failed.'); }
       return;
     }
@@ -1719,7 +1720,7 @@ function App() {
           y += 3.2;
         }
         await downloadFile(fileBase + '.pdf', pdf.output('blob'), 'application/pdf');
-        setStatus('AI-proofread PDF created with clean paragraphs. Choose where to save or share it.');
+        setStatus((aiProofread ? 'AI-proofread PDF' : 'PDF (original wording)') + ' created with clean paragraphs. Choose where to save or share it.');
         return;
       }
       const popup = window.open('', '_blank');
@@ -1744,7 +1745,7 @@ function App() {
     const selected = extensions[exportType] ?? extensions.txt;
     await downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
     if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitles. Text was left unchanged to protect subtitle timing.' : 'Exported estimated subtitle timings. Text was left unchanged to protect subtitle formatting.');
-    else setStatus('AI-proofread export created with corrected wording and clean paragraphs.');
+    else setStatus(aiProofread ? 'AI-proofread export created with corrected wording and clean paragraphs.' : 'AI proofreading was unavailable; original transcript exported with clean paragraphs.');
     setError('');
   }
 
@@ -1925,9 +1926,9 @@ function App() {
         )}
       </nav>
 
-      {(busy || exportBusy || offlinePrepBusy || voiceBusy || voiceChatBusy || editorBusy || subtitleBusy || previewBusy) && <div className="global-activity" role="status" aria-live="polite">
-        <LoaderCircle className="spin" size={16}/>
-        <span><strong>{busy ? 'Transcription in progress' : exportBusy ? 'Preparing your export' : offlinePrepBusy ? 'Preparing offline tools' : voiceBusy ? 'Generating voice audio' : voiceChatBusy ? 'Voice workspace is working' : editorBusy ? 'Processing audio' : subtitleBusy ? 'Processing subtitles' : 'Working on your transcript'}</strong><small>{busy && progress.total > 0 ? progress.completed + ' of ' + progress.total + ' sections complete' : 'You can see this activity while moving between pages.'}</small></span>
+      {(busy || exportBusy || offlinePrepBusy || voiceBusy || voiceChatBusy || editorBusy || subtitleBusy || previewBusy || Boolean(status)) && <div className="global-activity" role="status" aria-live="polite">
+        {(busy || exportBusy || offlinePrepBusy || voiceBusy || voiceChatBusy || editorBusy || subtitleBusy || previewBusy) ? <LoaderCircle className="spin" size={16}/> : <Sparkles size={16}/>}
+        <span><strong>{busy ? 'Transcription in progress' : exportBusy ? 'Preparing your export' : offlinePrepBusy ? 'Preparing offline tools' : voiceBusy ? 'Generating voice audio' : voiceChatBusy ? 'Voice workspace is working' : editorBusy ? 'Processing audio' : subtitleBusy ? 'Processing subtitles' : previewBusy ? 'Working on your transcript' : 'AURORA update'}</strong><small>{status || (busy && progress.total > 0 ? progress.completed + ' of ' + progress.total + ' sections complete' : 'Your activity is visible across every page.')}{busy && progress.total > 0 ? ' · ' + progress.completed + ' of ' + progress.total + ' sections' : ''}</small></span>
       </div>}
 
       {page === 'home' && <section className="welcome">
