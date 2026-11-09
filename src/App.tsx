@@ -1922,14 +1922,11 @@ function App() {
 
       <nav className="main-nav" aria-label="Main navigation">
         {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
-          <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); setError(''); }}><Icon size={16}/><span>{label}</span></button>
+          <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
 
-      {(busy || exportBusy || offlinePrepBusy || voiceBusy || voiceChatBusy || editorBusy || subtitleBusy || previewBusy || Boolean(status)) && <div className="global-activity" role="status" aria-live="polite">
-        {(busy || exportBusy || offlinePrepBusy || voiceBusy || voiceChatBusy || editorBusy || subtitleBusy || previewBusy) ? <LoaderCircle className="spin" size={16}/> : <Sparkles size={16}/>}
-        <span><strong>{busy ? 'Transcription in progress' : exportBusy ? 'Preparing your export' : offlinePrepBusy ? 'Preparing offline tools' : voiceBusy ? 'Generating voice audio' : voiceChatBusy ? 'Voice workspace is working' : editorBusy ? 'Processing audio' : subtitleBusy ? 'Processing subtitles' : previewBusy ? 'Working on your transcript' : 'AURORA update'}</strong><small>{status || (busy && progress.total > 0 ? progress.completed + ' of ' + progress.total + ' sections complete' : 'Your activity is visible across every page.')}{busy && progress.total > 0 ? ' · ' + progress.completed + ' of ' + progress.total + ' sections' : ''}</small></span>
-      </div>}
+
 
       {page === 'home' && <section className="welcome">
         <div className="eyebrow"><Sparkles size={14}/> YOUR PERSONAL VOICE NOTE WORKSPACE</div>
@@ -2123,7 +2120,7 @@ function App() {
 
       {page === 'admin' && <AdminPanel/>}
 
-      {error && <div className="error-message" role="alert"><span>{error}</span>{page === 'transcribe' && active && transcriptionFailed && <button className="secondary small-button" onClick={transcribe} disabled={busy} type="button"><WandSparkles size={15}/> Retry from saved section</button>}<button onClick={() => { setError(''); if (transcriptionFailed) setTranscriptionFailed(false); }} aria-label="Dismiss error" type="button"><X size={16}/></button></div>}
+      {page === 'transcribe' && error && <div className="error-message" role="alert"><span>{error}</span>{page === 'transcribe' && active && transcriptionFailed && <button className="secondary small-button" onClick={transcribe} disabled={busy} type="button"><WandSparkles size={15}/> Retry from saved section</button>}<button onClick={() => { setError(''); if (transcriptionFailed) setTranscriptionFailed(false); }} aria-label="Dismiss error" type="button"><X size={16}/></button></div>}
       <BugReporter page={page}/>
       <footer className="footer"><span><AudioLines size={15}/> AURORA VoiceText</span><span><ShieldCheck size={14}/> Your voice notes, made readable</span></footer>
     </main>
