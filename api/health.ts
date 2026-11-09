@@ -10,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bucket = process.env.SUPABASE_RECORDINGS_BUCKET || "voicetext-recordings";
     if (!url || !key) return res.status(503).json({ ok: false, configured: false, error: "Supabase server environment variables are missing." });
     try {
-      const response = await fetch(url.replace(/\\/$/, "") + "/storage/v1/bucket/", {
+      const response = await fetch(url.replace(/\/$/, "") + "/storage/v1/bucket/", {
         method: "GET",
         headers: { apikey: key, Authorization: "Bearer " + key },
       });
