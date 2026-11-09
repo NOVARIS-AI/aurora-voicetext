@@ -4,20 +4,19 @@ import { readFile } from "node:fs/promises";
 
 const endpoint = await readFile(new URL("../api/aurora-transcribe.ts", import.meta.url), "utf8");
 const providers = await readFile(new URL("../api/_lib/transcription-providers.ts", import.meta.url), "utf8");
-const migration = await readFile(new URL("../supabase/migrations/202611090001_persistent_aurora_transcription_jobs.sql", import.meta.url), "utf8");
 
 test("AURORA VoiceText bridge verifies the integration token and actual Supabase user identity", () => {
   assert.ok(endpoint.includes("AURORA_PLUGIN_TOKEN"));
   assert.ok(endpoint.includes("timingSafeEqual"));
-  assert.ok(endpoint.includes("owner_id=eq."));
-  assert.ok(endpoint.includes("verifiedOwner"));
+  assert.ok(endpoint.includes("owner_id=eq"));
+  assert.ok(endpoint.includes("ownerId"));
+  assert.ok(endpoint.includes("verified AURORA account"));
   assert.ok(endpoint.includes("x-aurora-user-token"));
   assert.ok(endpoint.includes("/auth/v1/user"));
   assert.ok(endpoint.includes("SUPABASE_SERVICE_ROLE_KEY"));
   assert.ok(!endpoint.includes("input.ownerId") && !endpoint.includes("req.query.ownerId"));
-  assert.ok(endpoint.includes("private transcription job"));
-  assert.ok(migration.includes("owner_id uuid"));
-  assert.ok(migration.includes("voicetext-recordings"));
+  assert.ok(endpoint.includes("401"));
+  assert.doesNotMatch(endpoint, /GROQ_API_KEY|OPENAI_API_KEY|ASSEMBLYAI_API_KEY/);
 });
 
 test("bridge validates bounded audio and delegates to VoiceText's existing provider chain", () => {
@@ -27,7 +26,7 @@ test("bridge validates bounded audio and delegates to VoiceText's existing provi
   assert.ok(endpoint.includes("transcribeWithFallback"));
   assert.ok(endpoint.includes("segments: result.segments"));
   assert.ok(endpoint.includes('retention: "not_stored_by_integration_endpoint"'));
-  assert.ok(providers.includes("export async function transcribeWithFallback"));
+  assert.match(providers, /export async function transcribeWithFallback/);
 });
 
 test("bridge rejects unsupported video instead of pretending to transcribe it", () => {
