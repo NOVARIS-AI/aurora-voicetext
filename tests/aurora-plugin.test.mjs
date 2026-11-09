@@ -10,7 +10,7 @@ test("AURORA VoiceText bridge verifies the integration token and actual Supabase
   assert.match(endpoint, /timingSafeEqual/);
   assert.match(endpoint, /owner_id=eq/);
   assert.match(endpoint, /ownerId/);
-  assert.match(endpoint, /verified AURORA account/);
+  assert.match(endpoint, /private transcription job/);
   assert.match(endpoint, /x-aurora-user-token/);
   assert.match(endpoint, /auth\\/v1\\/user/);
   assert.match(endpoint, /SUPABASE_SERVICE_ROLE_KEY/);
