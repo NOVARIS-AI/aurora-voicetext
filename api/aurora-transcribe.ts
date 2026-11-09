@@ -64,7 +64,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const input = (req.body || {}) as Body;
   const action = input.action || "transcribe";
-  const requestId = typeof (req.query.requestId || input.requestId) === "string" ? String(req.query.requestId || input.requestId) : "";\n  const ownerId = typeof input.ownerId === "string" ? input.ownerId : (typeof req.query.ownerId === "string" ? req.query.ownerId : "");\n  if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
+  const requestId = typeof (req.query.requestId || input.requestId) === "string" ? String(req.query.requestId || input.requestId) : "";
+  const ownerId = typeof input.ownerId === "string" ? input.ownerId : (typeof req.query.ownerId === "string" ? req.query.ownerId : "");
+  if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
   if (req.method === "GET") {
     if (!/^[0-9a-f-]{36}$/i.test(requestId)) return res.status(400).json({ error: "A valid requestId is required." });
     try {
@@ -76,7 +78,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (action === "create") {
     const totalChunks = Number(input.totalChunks);
     const sizeBytes = Number(input.sizeBytes);
-    const ownerId = String(input.ownerId || "");\n    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });\n    const filename = String(input.filename || "recording").split(/[\\/]/).pop()!.slice(0, 180);
+    const ownerId = String(input.ownerId || "");
+    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
+    const filename = String(input.filename || "recording").split(/[\\/]/).pop()!.slice(0, 180);
     const mimeType = String(input.mimeType || "audio/webm").toLowerCase();
     if (!Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
       return res.status(400).json({ error: "A valid recording size and section count are required." });
@@ -101,7 +105,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (action === "process") {
-    const id = String(input.requestId || "");\n    const ownerId = String(input.ownerId || "");\n    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
+    const id = String(input.requestId || "");
+    const ownerId = String(input.ownerId || "");
+    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
     const chunkNumber = Number(input.chunkNumber), totalChunks = Number(input.totalChunks);
     const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
     const mimeType = String(input.mimeType || "").toLowerCase();
