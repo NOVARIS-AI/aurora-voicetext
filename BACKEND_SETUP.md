@@ -121,3 +121,16 @@ After the workflow succeeds, the Pages site will be available at `https://aurora
 2. Open `/api/health`; it should return the same provider-status JSON as the Worker health endpoint.
 3. Test a short transcription, transcript polish, translation, speech generation, subtitle search, and subtitle download where provider credentials permit.
 4. Only after those checks pass, update canonical metadata, sitemap, robots, Google Search Console verification, and the Android API origin.
+
+
+
+## Main AURORA Assistant integration
+
+The main AURORA Assistant can send an explicitly selected audio file through its own server-side proxy to this app. VoiceText remains the transcription owner and uses the existing `transcribeWithFallback` provider chain.
+
+- `POST /api/aurora-transcribe` — private server-to-server endpoint for the main AURORA backend. Requires `Authorization: Bearer <AURORA_PLUGIN_TOKEN>`; accepts bounded base64 audio JSON and returns transcript text, language, available timestamp/speaker segments and provider metadata. It does not store the upload or transcript.
+- Set `AURORA_PLUGIN_TOKEN` in the VoiceText Vercel project's server environment.
+- Set `VOICETEXT_PLUGIN_TOKEN` in the main AURORA Vercel project's server environment to the exact same secret. Set `VOICETEXT_API_URL` to the VoiceText production origin. Never expose either token through a `VITE_` variable or mobile app bundle.
+- Redeploy both projects after configuring the variables. A live integration test requires both secrets and at least one working transcription provider.
+
+The first bridge version accepts audio only and has a 1.2 MB file-selection limit in the main AURORA UI. Video extraction and larger resumable jobs are future work.
