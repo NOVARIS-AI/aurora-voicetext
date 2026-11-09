@@ -1,8 +1,9 @@
--- Durable, private storage for AURORA VoiceText transcription jobs.\nalter table public.voicetext_recordings add column if not exists owner_id uuid references auth.users(id) on delete cascade;\ncreate index if not exists voicetext_recordings_owner_updated_idx on public.voicetext_recordings(owner_id, updated_at desc);
+-- Durable, private storage for AURORA VoiceText transcription jobs.
 create extension if not exists pgcrypto;
 
-create table if not exists public.voicetext_recordings (\n  owner_id uuid references auth.users(id) on delete cascade,
+create table if not exists public.voicetext_recordings (
   id uuid primary key default gen_random_uuid(),
+  owner_id uuid references auth.users(id) on delete cascade,
   original_filename text not null,
   mime_type text not null,
   size_bytes bigint not null check (size_bytes >= 0),
@@ -19,8 +20,13 @@ create table if not exists public.voicetext_recordings (\n  owner_id uuid refere
   completed_at timestamptz
 );
 
+-- Safe for projects where the original table was already created.
+alter table public.voicetext_recordings
+  add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 create index if not exists voicetext_recordings_status_created_idx
   on public.voicetext_recordings (status, created_at desc);
+create index if not exists voicetext_recordings_owner_updated_idx
+  on public.voicetext_recordings (owner_id, updated_at desc);
 
 alter table public.voicetext_recordings enable row level security;
 
