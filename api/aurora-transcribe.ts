@@ -13,29 +13,40 @@ type Body = {
   audioBase64?: string; mimeType?: string; languageHint?: string; requestId?: string;
   filename?: string; sizeBytes?: number; durationSeconds?: number; totalChunks?: number; chunkNumber?: number;
 };
-
 export const config = { maxDuration: 60, api: { bodyParser: { sizeLimit: "4.5mb" } } };
 
-function authorised(req: VercelRequest): boolean {
+function integrationAuthorised(req: VercelRequest): boolean {
   const expected = process.env.AURORA_PLUGIN_TOKEN || "";
-  const supplied = typeof req.headers.authorization === "string" ? req.headers.authorization.replace(/^Bearer\\s+/i, "") : "";
+  const supplied = typeof req.headers.authorization === "string" ? req.headers.authorization.replace(/^Bearer\s+/i, "") : "";
   if (!expected || !supplied) return false;
   const left = Buffer.from(expected), right = Buffer.from(supplied);
   return left.length === right.length && timingSafeEqual(left, right);
 }
 function dbConfig() {
-  const url = process.env.SUPABASE_URL?.replace(/\\/$/, "");
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const bucket = process.env.SUPABASE_RECORDINGS_BUCKET || "voicetext-recordings";
-  if (!url || !key) throw new Error("Persistent VoiceText jobs are not configured. Check the Supabase server environment.");
+  if (!url || !key) throw new Error("Persistent VoiceText jobs are not configured. Add the Supabase server URL and service-role key.");
   return { url, key, bucket };
 }
-function headers(key: string, extra: Record<string,string> = {}) {
+function dbHeaders(key: string, extra: Record<string,string> = {}) {
   return { apikey: key, Authorization: "Bearer " + key, "Content-Type": "application/json", ...extra };
+}
+async function verifiedOwner(req: VercelRequest): Promise<string | null> {
+  const userToken = typeof req.headers["x-aurora-user-token"] === "string" ? req.headers["x-aurora-user-token"] : "";
+  if (!userToken || userToken.length > 8192) return null;
+  const { url, key } = dbConfig();
+  const response = await fetch(url + "/auth/v1/user", {
+    headers: { apikey: process.env.SUPABASE_ANON_KEY || key, Authorization: "Bearer " + userToken },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) return null;
+  const user = await response.json() as { id?: string };
+  return typeof user.id === "string" && /^[0-9a-f-]{36}$/i.test(user.id) ? user.id : null;
 }
 async function readJob(id: string, ownerId: string): Promise<Job | null> {
   const { url, key } = dbConfig();
-  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId) + "&select=*", { headers: headers(key) });
+  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId) + "&select=*", { headers: dbHeaders(key), signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error("Could not read the saved transcription job.");
   const rows = await response.json() as Job[];
   return rows[0] || null;
@@ -43,7 +54,8 @@ async function readJob(id: string, ownerId: string): Promise<Job | null> {
 async function updateJob(id: string, ownerId: string, patch: Record<string, unknown>): Promise<Job> {
   const { url, key } = dbConfig();
   const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId), {
-    method: "PATCH", headers: headers(key, { Prefer: "return=representation" }), body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+    method: "PATCH", headers: dbHeaders(key, { Prefer: "return=representation" }), body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+    signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) throw new Error("Could not save transcription job progress.");
   const rows = await response.json() as Job[];
@@ -60,14 +72,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   if (!["GET", "POST"].includes(req.method || "")) { res.setHeader("Allow", "GET, POST"); return res.status(405).json({ error: "Method not allowed." }); }
-  if (!authorised(req)) return res.status(401).json({ error: "AURORA integration authentication failed." });
+  if (!integrationAuthorised(req)) return res.status(401).json({ error: "AURORA integration authentication failed." });
 
   const input = (req.body || {}) as Body;
-  const action = input.action || "transcribe";
+  const action = req.method === "GET" ? "status" : (input.action || "transcribe");
   const requestId = typeof (req.query.requestId || input.requestId) === "string" ? String(req.query.requestId || input.requestId) : "";
-  const ownerId = typeof input.ownerId === "string" ? input.ownerId : (typeof req.query.ownerId === "string" ? req.query.ownerId : "");
-  if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
-  if (req.method === "GET") {
+  if (action === "transcribe") {
+    const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
+    const mimeType = String(input.mimeType || "").toLowerCase();
+    const supported = new Set(["audio/wav","audio/x-wav","audio/mpeg","audio/mp3","audio/ogg","audio/mp4","audio/aac","audio/webm"]);
+    if (!audioBase64 || audioBase64.length > 4000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64) || audioBase64.length % 4 !== 0) return res.status(audioBase64.length > 4000000 ? 413 : 400).json({ error: "Provide a valid audio section up to approximately 3 MB." });
+    if (!supported.has(mimeType)) return res.status(415).json({ error: "VoiceText accepts audio files only. Convert video to audio first." });
+    try {
+      const result = await transcribeWithFallback({ audioBase64, mimeType, languageHint: typeof input.languageHint === "string" ? input.languageHint.slice(0, 120) : undefined });
+      return res.status(200).json({ requestId: input.requestId, text: result.text, language: result.language || null, segments: result.segments || [], provider: result.provider, completedAt: new Date().toISOString(), retention: "not_stored_by_integration_endpoint" });
+    } catch (error) {
+      const status = Number((error as { status?: number })?.status);
+      return res.status(status >= 400 && status < 500 ? status : 503).json({ error: error instanceof Error ? error.message.slice(0, 420) : "Transcription is temporarily unavailable.", retryable: status === 429 || status >= 500 || !status });
+    }
+  }
+
+  let ownerId: string | null;
+  try { ownerId = await verifiedOwner(req); }
+  catch { return res.status(503).json({ error: "Account verification is temporarily unavailable. Your recording was not changed." }); }
+  if (!ownerId) return res.status(401).json({ error: "Sign in to AURORA to create or resume a private transcription job." });
+
+  if (action === "status" || req.method === "GET") {
     if (!/^[0-9a-f-]{36}$/i.test(requestId)) return res.status(400).json({ error: "A valid requestId is required." });
     try {
       const job = await readJob(requestId, ownerId);
@@ -76,25 +106,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (action === "create") {
-    const totalChunks = Number(input.totalChunks);
-    const sizeBytes = Number(input.sizeBytes);
-    const ownerId = String(input.ownerId || "");
-    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
+    const totalChunks = Number(input.totalChunks), sizeBytes = Number(input.sizeBytes);
     const filename = String(input.filename || "recording").split(/[\\/]/).pop()!.slice(0, 180);
     const mimeType = String(input.mimeType || "audio/webm").toLowerCase();
-    if (!Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
-      return res.status(400).json({ error: "A valid recording size and section count are required." });
-    }
-    if (!/^audio\\/[a-z0-9.+-]+$/.test(mimeType)) return res.status(415).json({ error: "A supported audio MIME type is required." });
+    if (!Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) return res.status(400).json({ error: "A valid recording size and section count are required." });
+    if (!/^audio\/[a-z0-9.+-]+$/.test(mimeType)) return res.status(415).json({ error: "A supported audio MIME type is required." });
     try {
       const { url, key } = dbConfig();
       const id = /^[0-9a-f-]{36}$/i.test(input.requestId || "") ? input.requestId! : randomUUID();
       const storagePath = "aurora-jobs/" + id;
       const response = await fetch(url + "/rest/v1/voicetext_recordings", {
-        method: "POST", headers: headers(key, { Prefer: "return=representation,resolution=ignore-duplicates" }),
+        method: "POST", headers: dbHeaders(key, { Prefer: "return=representation,resolution=ignore-duplicates" }),
         body: JSON.stringify({ id, owner_id: ownerId, original_filename: filename, mime_type: mimeType, size_bytes: sizeBytes,
           duration_seconds: Number.isFinite(input.durationSeconds) ? Math.max(0, Number(input.durationSeconds)) : null,
           storage_path: storagePath, status: "created", total_chunks: totalChunks, completed_chunks: 0, transcript: "" }),
+        signal: AbortSignal.timeout(10000),
       });
       if (!response.ok) throw new Error("Could not create a persistent transcription job. Confirm the VoiceText recordings table exists in Supabase.");
       const rows = await response.json() as Job[];
@@ -105,18 +131,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (action === "process") {
-    const id = String(input.requestId || "");
-    const ownerId = String(input.ownerId || "");
-    if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return res.status(400).json({ error: "A verified AURORA account owner is required." });
-    const chunkNumber = Number(input.chunkNumber), totalChunks = Number(input.totalChunks);
+    const id = String(input.requestId || ""), chunkNumber = Number(input.chunkNumber), totalChunks = Number(input.totalChunks);
     const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
     const mimeType = String(input.mimeType || "").toLowerCase();
     const supported = new Set(["audio/wav","audio/x-wav","audio/mpeg","audio/mp3","audio/ogg","audio/mp4","audio/aac","audio/webm"]);
-    if (!/^[0-9a-f-]{36}$/i.test(id) || !Number.isInteger(chunkNumber) || chunkNumber < 1 ||
-        !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 ||
-        !audioBase64 || audioBase64.length > 4000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64) || audioBase64.length % 4 !== 0) {
-      return res.status(400).json({ error: "A valid job ID and audio section are required." });
-    }
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !Number.isInteger(chunkNumber) || chunkNumber < 1 || !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 ||
+        !audioBase64 || audioBase64.length > 4000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64) || audioBase64.length % 4 !== 0) return res.status(400).json({ error: "A valid job ID, section number and audio section are required." });
     if (!supported.has(mimeType)) return res.status(415).json({ error: "Unsupported audio section format." });
     try {
       const job = await readJob(id, ownerId);
@@ -130,39 +150,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const objectPath = job.storage_path + "/chunks/" + String(chunkNumber).padStart(5, "0") + "." + ext;
       const bytes = Buffer.from(audioBase64, "base64");
       const stored = await fetch(url + "/storage/v1/object/" + encodeURIComponent(bucket) + "/" + objectPath.split("/").map(encodeURIComponent).join("/"), {
-        method: "POST", headers: { apikey: key, Authorization: "Bearer " + key, "Content-Type": mimeType, "x-upsert": "true" }, body: bytes,
+        method: "POST", headers: { apikey: key, Authorization: "Bearer " + key, "Content-Type": mimeType, "x-upsert": "true" }, body: bytes, signal: AbortSignal.timeout(15000),
       });
       if (!stored.ok) throw new Error("The audio section could not be saved to secure cloud storage.");
-      const languageHint = typeof input.languageHint === "string" ? input.languageHint.trim().slice(0, 120) : undefined;
-      const result = await transcribeWithFallback({ audioBase64, mimeType, languageHint });
+      const result = await transcribeWithFallback({ audioBase64, mimeType, languageHint: typeof input.languageHint === "string" ? input.languageHint.trim().slice(0, 120) : undefined });
       const transcript = [job.transcript.trim(), result.text.trim()].filter(Boolean).join(" ");
       const done = chunkNumber === totalChunks;
-      const updated = await updateJob(id, ownerId, { status: done ? "completed" : "processing", completed_chunks: chunkNumber,
-        transcript, error_message: null, completed_at: done ? new Date().toISOString() : null });
+      const updated = await updateJob(id, ownerId, { status: done ? "completed" : "processing", completed_chunks: chunkNumber, transcript, error_message: null, completed_at: done ? new Date().toISOString() : null });
       return res.status(200).json({ ...publicJob(updated), language: result.language || null, provider: result.provider });
     } catch (error) {
-      return res.status(503).json({ error: error instanceof Error ? error.message.slice(0, 420) : "This section could not be processed.",
-        retryable: true, requestId: id, chunkNumber });
+      return res.status(503).json({ error: error instanceof Error ? error.message.slice(0, 420) : "This section could not be processed.", retryable: true, requestId: id, chunkNumber });
     }
   }
-
-  if (action !== "transcribe") return res.status(400).json({ error: "Unknown action. Use create, process, or transcribe." });
-  const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
-  if (!audioBase64 || audioBase64.length > 4000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64) || audioBase64.length % 4 !== 0) {
-    return res.status(audioBase64.length > 4000000 ? 413 : 400).json({ error: "Provide a valid audio section up to approximately 3 MB. Use persistent jobs for multi-section recordings." });
-  }
-  const mimeType = String(input.mimeType || "").toLowerCase();
-  const supported = new Set(["audio/wav","audio/x-wav","audio/mpeg","audio/mp3","audio/ogg","audio/mp4","audio/aac","audio/webm"]);
-  if (!supported.has(mimeType)) return res.status(415).json({ error: "VoiceText integration currently accepts audio files only. Convert video to an audio file first." });
-  try {
-    const result = await transcribeWithFallback({ audioBase64, mimeType, languageHint: typeof input.languageHint === "string" ? input.languageHint.trim().slice(0, 120) : undefined });
-    return res.status(200).json({ requestId: input.requestId, text: result.text, language: result.language || null,
-      segments: result.segments || [], provider: result.provider, completedAt: new Date().toISOString(), retention: "not_stored_by_integration_endpoint" });
-  } catch (error) {
-    const status = Number((error as { status?: number })?.status);
-    return res.status(status >= 400 && status < 500 ? status : 503).json({
-      error: error instanceof Error ? error.message.slice(0, 420) : "VoiceText transcription is temporarily unavailable.",
-      retryable: status === 429 || status >= 500 || !status,
-    });
-  }
+  return res.status(400).json({ error: "Unknown action. Use create, process, or status." });
 }
