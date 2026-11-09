@@ -134,3 +134,19 @@ The main AURORA Assistant can send an explicitly selected audio file through its
 - Redeploy both projects after configuring the variables. A live integration test requires both secrets and at least one working transcription provider.
 
 The first bridge version accepts audio only and has a 1.2 MB file-selection limit in the main AURORA UI. Video extraction and larger resumable jobs are future work.
+
+
+## Private AURORA transcription jobs
+
+The private AURORA plugin endpoint supports durable multi-section jobs. Apply `supabase/migrations/202611090001_persistent_aurora_transcription_jobs.sql` in the Supabase SQL Editor for the same project used by VoiceText. This creates the private `voicetext_recordings` table and `voicetext-recordings` Storage bucket. The endpoint stores each successfully received audio section in that bucket and checkpoints completed section count plus cumulative transcript in the table.
+
+Set these additional server-only Vercel variables on the VoiceText project:
+
+- `SUPABASE_URL` — the existing Supabase project URL.
+- `SUPABASE_SERVICE_ROLE_KEY` — the project service-role key. This must remain server-only and must never be prefixed with `VITE_` or shipped in the app.
+- `SUPABASE_ANON_KEY` — optional; used for verifying the AURORA user's access token. If omitted, the server uses the service-role key only for the Auth API request.
+- `SUPABASE_RECORDINGS_BUCKET=voicetext-recordings` — optional; this is the migration's default bucket.
+
+For job creation, processing and status requests, the main AURORA server verifies the signed-in user's Supabase access token and forwards that token through a private server-to-server header. VoiceText independently verifies the token with Supabase Auth and derives the owner ID from the verified identity; it does not trust a caller-supplied owner ID. Every database read/update is filtered by both job ID and verified owner ID. The plugin bearer token alone is not sufficient to read another user's job.
+
+This is durable checkpointing and resumability, not unattended server-side background execution. The app must remain active while it captures and submits the remaining audio sections. If it closes, completed sections remain stored and the user can reselect the same source recording to resume. Provider quotas and hosting time limits still apply.
