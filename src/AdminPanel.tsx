@@ -3,7 +3,7 @@ import { ShieldCheck, RefreshCw, LogOut, Users, Activity, Bug, AlertTriangle } f
 
 declare global { interface Window { google?: any; } }
 type AdminData = { users: any[]; events: any[]; reports: any[]; health?: any; checkedAt?: string };
-export default function AdminPanel() {
+export default function AdminPanel({ apiBaseUrl = "" }: { apiBaseUrl?: string }) {
   const buttonRef = useRef<HTMLDivElement>(null);
   const [credential, setCredential] = useState("");
   const [data, setData] = useState<AdminData | null>(null);
@@ -13,7 +13,7 @@ export default function AdminPanel() {
   async function load(token: string) {
     setBusy(true); setError("");
     try {
-      const response = await fetch("/api/admin", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+      const response = await fetch(apiBaseUrl + "/api/admin", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Admin access could not be verified.");
       setCredential(token); setData(body);
