@@ -104,37 +104,32 @@ For direct app fallback, set the GitHub Actions repository variable `BACKUP_API_
 
 ## Cloudflare Pages website migration (production-safe)
 
-The frontend migration is implemented as a Cloudflare Pages deployment while preserving the existing Vite/React source and the independent Worker.
+A Cloudflare Pages production deployment path is configured alongside the existing Vercel deployment. This is a staged migration: do not delete or disconnect Vercel until the Pages site and every required API path have been verified.
 
-### Architecture
+### What Pages currently serves
 
 - Cloudflare Pages serves the existing Vite build from `dist/`.
-- `functions/api/[endpoint].ts` is a same-origin Pages Function proxy for the supported API routes.
-- The Pages Function forwards requests to the verified Worker at `https://aurora-voicetext.alwerioghenepeace563.workers.dev` and attaches `BACKUP_API_TOKEN` server-side. The token is never placed in Vite variables, browser JavaScript, or the Android APK.
-- `GET /api/health` is mapped to the Worker's `GET /health`; the existing POST feature paths are forwarded to their matching Worker routes.
-- The proxy allows only the known AURORA API endpoint names and forwards binary responses as streams.
-- Vercel remains unchanged during this migration and must not be removed until Pages and feature tests pass.
+- `functions/api/[endpoint].ts` provides a same-origin Pages Function proxy for the supported Worker-backed endpoints: `transcribe`, `tts`, `assist`, `translate`, `subtitles`, and `subtitles-download`.
+- `functions/api/health.ts` forwards `GET /api/health` to the Worker's `GET /health`.
+- The Pages Function attaches `BACKUP_API_TOKEN` server-side. The token is not exposed in browser JavaScript, Vite variables, or the Android app.
+- Vercel-only routes such as `/api/aurora-transcribe` (including its Supabase-backed durable job actions), `/api/admin`, `/api/diagnostics`, `/api/bug-report`, and `/api/voice-chat` are not migrated by this Pages proxy yet. Keep the existing Vercel origin for the main AURORA private integration until those routes are ported and tested.
 
-### Deploying Pages
+### Deploying Pages from GitHub Actions
 
-The workflow `.github/workflows/cloudflare-pages-deploy.yml` builds the existing app, runs its existing test suite, creates the Pages project `aurora-voicetext` if needed, configures the two server-side Pages secrets, and deploys the production branch.
+The workflow `.github/workflows/cloudflare-pages-deploy.yml` runs on a manual dispatch or relevant changes pushed to `main`. It installs dependencies, runs the complete test suite, builds the Vite app, configures the private Worker connection, and deploys the `dist/` output to the Pages project `aurora-voicetext`.
 
-It uses these existing GitHub Actions secrets:
-- `CLOUDFLARE_API_TOKEN`
+Required GitHub Actions repository secrets:
+- `CLOUDFLARE_API_TOKEN` — the existing Cloudflare API token used by the Worker deployment, with permissions to manage Pages projects/deployments and secrets. Alternatively, set `CLOUDFLARE_PAGES_API_TOKEN` to a dedicated token; it takes precedence.
 - `CLOUDFLARE_ACCOUNT_ID`
-- `BACKUP_API_TOKEN` (the same value already configured on the Worker)
+- `BACKUP_API_TOKEN` — the same secret configured on the existing Cloudflare Worker.
 
-The Cloudflare API token must have permission to deploy Workers and manage Cloudflare Pages projects/deployments/secrets in the account identified by `CLOUDFLARE_ACCOUNT_ID`. The Pages deployment will fail clearly if the token lacks Pages permissions.
+The Pages workflow accepts either `CLOUDFLARE_PAGES_API_TOKEN` or `CLOUDFLARE_API_TOKEN`, so the existing Worker token name can be reused. The API token must have the required Pages permissions; a Worker-only token may fail and need its Pages permissions expanded. No provider keys or Supabase service-role keys are required by the Pages static-site deployment itself.
 
-After the workflow succeeds, the Pages site will be available at `https://aurora-voicetext.pages.dev` (unless the project has a different assigned subdomain). Verify the frontend and `/api/health` before changing canonical SEO URLs, Android production API configuration, or the existing Vercel site.
+After the workflow succeeds, check the Pages production URL shown in the Actions log (normally `https://aurora-voicetext.pages.dev`). Test the frontend, `/api/health`, transcription, transcript cleanup, translation, speech, subtitle search, and authorized subtitle download where provider credentials permit. Do not change canonical metadata, the Android API origin, or the main AURORA integration origin until those tests pass.
 
-### Manual verification checklist
+### Migration boundary
 
-1. Open the Pages production URL and confirm the existing AURORA VoiceText interface loads.
-2. Open `/api/health`; it should return the same provider-status JSON as the Worker health endpoint.
-3. Test a short transcription, transcript polish, translation, speech generation, subtitle search, and subtitle download where provider credentials permit.
-4. Only after those checks pass, update canonical metadata, sitemap, robots, Google Search Console verification, and the Android API origin.
-
+This is not yet a complete Vercel replacement. The existing private AURORA plugin endpoint and account-scoped persistent transcription jobs still run in the Vercel API implementation. The Pages Worker proxy intentionally does not pretend to support those routes. A separate migration is required to port the private token validation, Supabase Auth user verification, owner-scoped job database operations, private Storage uploads, and checkpoint concurrency rules to Cloudflare before changing the main AURORA server's VoiceText API origin.
 
 
 ## Main AURORA Assistant integration
