@@ -328,7 +328,9 @@ export default {
         if (typeof body.text !== "string" || !body.text.trim() || typeof body.targetLanguage !== "string" || !body.targetLanguage.trim() || body.text.length > 24000) return json({ error: "Text and targetLanguage are required; maximum 24,000 characters." }, 400, cors);
         return json(await translate(body, env), 200, cors);
       }
-      if (url.pathname === "/api/voice-chat") {\n        return json(await voiceChat(body, env), 200, cors);\n      }\n      if (url.pathname === "/api/subtitles") {
+      if (url.pathname === "/api/voice-chat") {
+        return json(await voiceChat(body, env), 200, cors);
+      }\n      if (url.pathname === "/api/subtitles") {
         if (typeof body.query !== "string" || body.query.trim().length < 2 || body.query.length > 180) return json({ error: "Enter a title with 2–180 characters." }, 400, cors);
         return json({ results: await subtitleSearch(body, env), provider: "opensubtitles" }, 200, cors);
       }
