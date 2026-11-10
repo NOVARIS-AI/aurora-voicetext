@@ -8,10 +8,19 @@ const ALLOWED_ENDPOINTS = new Set([
   "tts",
   "assist",
   "translate",
+  "voice-chat",
   "subtitles",
   "subtitles-download",
   "health",
+  // These authenticated/administrative routes remain on the existing Vercel
+  // server while the public app and user-facing AI features run on Pages.
+  "admin",
+  "bug-report",
+  "diagnostics",
+  "aurora-transcribe",
 ]);
+const VERCEL_API_ENDPOINTS = new Set(["admin", "bug-report", "diagnostics", "aurora-transcribe"]);
+const VERCEL_API_BASE_URL = "https://aurora-voicetext-qk8s.vercel.app";
 
 const corsHeaders = (origin: string): Headers => {
   const headers = new Headers({
@@ -46,18 +55,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   const isHealth = endpoint === "health";
-  if (isHealth && request.method !== "GET") {
+  const isVercelEndpoint = VERCEL_API_ENDPOINTS.has(endpoint);
+  const isReadOnly = isHealth || endpoint === "admin";
+  if (isReadOnly && request.method !== "GET") {
     headers.set("Allow", "GET");
     return Response.json({ error: "Method not allowed." }, { status: 405, headers });
   }
-  if (!isHealth && request.method !== "POST") {
+  if (!isReadOnly && request.method !== "POST") {
     headers.set("Allow", "POST");
     return Response.json({ error: "Method not allowed." }, { status: 405, headers });
   }
 
   const baseUrl = (env.BACKUP_API_BASE_URL || "https://aurora-voicetext.alwerioghenepeace563.workers.dev").replace(/\/+$/, "");
   const token = env.BACKUP_API_TOKEN;
-  if (!token) {
+  if (!isVercelEndpoint && !token) {
     return Response.json(
       { error: "The AURORA backend connection is not configured on Cloudflare Pages." },
       { status: 503, headers },
@@ -65,11 +76,13 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   const workerPath = isHealth ? "/health" : "/api/" + endpoint;
-  const target = new URL(workerPath, baseUrl);
+  const target = isVercelEndpoint
+    ? new URL(workerPath, VERCEL_API_BASE_URL)
+    : new URL(workerPath, baseUrl);
   const forwardedHeaders = new Headers(request.headers);
   forwardedHeaders.delete("host");
   forwardedHeaders.delete("content-length");
-  forwardedHeaders.set("Authorization", "Bearer " + token);
+  if (!isVercelEndpoint) forwardedHeaders.set("Authorization", "Bearer " + token);
   forwardedHeaders.set("Accept", request.headers.get("Accept") || "application/json, audio/mpeg, application/octet-stream");
 
   try {
