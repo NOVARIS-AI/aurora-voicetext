@@ -10,7 +10,8 @@ test("AURORA VoiceText bridge verifies the integration token and actual Supabase
   assert.ok(endpoint.includes("timingSafeEqual"));
   assert.ok(endpoint.includes("owner_id=eq"));
   assert.ok(endpoint.includes("ownerId"));
-  assert.ok(endpoint.includes("async function verifiedOwner"));\n  assert.ok(endpoint.includes("typeof user.id === \"string\""));
+  assert.ok(endpoint.includes("async function verifiedOwner"));
+  assert.ok(endpoint.includes("typeof user.id === \"string\""));
   assert.ok(endpoint.includes("x-aurora-user-token"));
   assert.ok(endpoint.includes("/auth/v1/user"));
   assert.ok(endpoint.includes("SUPABASE_SERVICE_ROLE_KEY"));
