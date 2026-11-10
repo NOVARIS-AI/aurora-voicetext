@@ -1629,6 +1629,7 @@ function App() {
     const templateSubtitle = exportTemplate === 'meeting' ? 'Meeting transcript' : exportTemplate === 'study' ? 'Study notes' : '';
     const isSubtitleExport = exportType === 'srt' || exportType === 'vtt';
     let exportText = text;
+    let aiProofread = false;
     let aiFallbackNotice = '';
     if (!isSubtitleExport) {
       setError('');
@@ -1684,7 +1685,7 @@ function App() {
               new Paragraph({ children: [new TextRun({ text: templateLabel, bold: true, size: 18, color: '167D91', characterSpacing: 28, font: 'Aptos' })], spacing: { after: 180 } }),
               new Paragraph({ children: [new TextRun({ text: documentTitle, bold: true, size: 36, color: '172033', font: 'Aptos Display' })], spacing: { after: 140, line: 420 } }),
               ...(templateSubtitle ? [new Paragraph({ children: [new TextRun({ text: templateSubtitle, color: '475569', size: 22, font: 'Aptos' })], spacing: { after: 100 } })] : []),
-              new Paragraph({ children: [new TextRun({ text: attribution, italics: true, color: '64748B', size: 18, font: 'Aptos' })], spacing: { after: 420, border: { bottom: { color: 'D9E2EC', space: 8, style: 'single', size: 4 } } } }),
+              new Paragraph({ children: [new TextRun({ text: attribution, italics: true, color: '64748B', size: 18, font: 'Aptos' })], spacing: { after: 420 }, border: { bottom: { color: 'D9E2EC', space: 8, style: 'single', size: 4 } } }),
               ...bodyParagraphs,
             ],
           }],
@@ -1692,7 +1693,8 @@ function App() {
         const blob = await Packer.toBlob(doc);
         await downloadFile(fileBase + '.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         setError('');
-        setStatus(canUseTimestamps ? 'DOCX exported with matching timestamps.' : aiProofread ? 'AI-proofread DOCX exported with clean paragraphs and spacing.' : 'AI proofreading was unavailable; original transcript exported with clean paragraphs.');
+        const docxStatus = canUseTimestamps ? 'DOCX exported with matching timestamps.' : aiProofread ? 'AI-proofread DOCX exported with clean paragraphs and spacing.' : 'DOCX exported with original wording and clean paragraphs.';
+        setStatus(aiFallbackNotice ? docxStatus + ' ' + aiFallbackNotice : docxStatus);
       } catch (error) { setError(error instanceof Error ? error.message : 'DOCX export failed.'); }
       return;
     }
@@ -1722,7 +1724,8 @@ function App() {
           y += 3.2;
         }
         await downloadFile(fileBase + '.pdf', pdf.output('blob'), 'application/pdf');
-        setStatus((aiProofread ? 'AI-proofread PDF' : 'PDF (original wording)') + ' created with clean paragraphs. Choose where to save or share it.');
+        const pdfStatus = (aiProofread ? 'AI-proofread PDF' : 'PDF (original wording)') + ' created with clean paragraphs. Choose where to save or share it.';
+        setStatus(aiFallbackNotice ? pdfStatus + ' ' + aiFallbackNotice : pdfStatus);
         return;
       }
       const popup = window.open('', '_blank');
@@ -1734,6 +1737,7 @@ function App() {
       popup.document.querySelector('.byline')!.textContent = attribution;
       popup.document.querySelector('.transcript')!.textContent = timestamped;
       popup.document.close(); popup.focus(); popup.print();
+      setStatus(aiFallbackNotice || 'PDF print view opened. Choose Save as PDF in the print options.');
       return;
     }
     const extensions: Record<string, { ext: string; mime: string; text: string }> = {
@@ -1747,7 +1751,7 @@ function App() {
     const selected = extensions[exportType] ?? extensions.txt;
     await downloadFile(fileBase + '.' + selected.ext, selected.text, selected.mime);
     if (exportType === 'srt' || exportType === 'vtt') setStatus(timestampsCoverTranscript ? 'Exported speech-aligned subtitles. Text was left unchanged to protect subtitle timing.' : 'Exported estimated subtitle timings. Text was left unchanged to protect subtitle formatting.');
-    else setStatus(aiProofread ? 'AI-proofread export created with corrected wording and clean paragraphs.' : 'AI proofreading was unavailable; original transcript exported with clean paragraphs.');
+    else setStatus(aiFallbackNotice ? 'Export created. ' + aiFallbackNotice : aiProofread ? 'AI-proofread export created with corrected wording and clean paragraphs.' : 'Export created with original wording and clean paragraphs.');
     setError('');
   }
 
@@ -2005,7 +2009,7 @@ function App() {
                   <label className="field-label" htmlFor="export-type">File format<AppSelect ariaLabel="Export file format" value={exportType} onChange={setExportType} options={[{group:'Documents',value:'docx',label:'Word document (.docx)'},{group:'Documents',value:'pdf',label:'PDF document (.pdf)'},{group:'Documents',value:'rtf',label:'Rich text (.rtf)'},{group:'Documents',value:'html',label:'Web document (.html)'},{group:'Documents',value:'md',label:'Markdown (.md)'},{group:'Documents',value:'txt',label:'Plain text (.txt)'},{group:'Subtitles',value:'srt',label:'SubRip subtitles (.srt)'},{group:'Subtitles',value:'vtt',label:'Web subtitles (.vtt)'}]}/></label>
                 </div>
                 <label className="export-option"><input type="checkbox" checked={includeTimestamps} onChange={event=>setIncludeTimestamps(event.target.checked)}/> Include timestamps when available</label>
-                <div className="export-actions"><button className="primary" type="button" onClick={() => runExportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
+                <div className="export-actions"><button className="primary" type="button" disabled={exportBusy} onClick={() => runExportTranscript(active.transcript, active.file.name.replace(/\.[^.]+$/, '') || 'transcript', active.timedSegments)}><Download size={16}/> Export {exportType.toUpperCase()}</button><button className="secondary" type="button" onClick={() => copyText(active.transcript)}><Copy size={16}/> Copy text</button></div>
               </section>
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
