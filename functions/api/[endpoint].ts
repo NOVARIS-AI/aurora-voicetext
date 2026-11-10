@@ -19,7 +19,7 @@ const ALLOWED_ENDPOINTS = new Set([
   "diagnostics",
   "aurora-transcribe",
 ]);
-const VERCEL_API_ENDPOINTS = new Set(["admin", "bug-report", "diagnostics", "aurora-transcribe"]);
+const VERCEL_API_ENDPOINTS = new Set(["admin", "bug-report", "diagnostics", "aurora-transcribe", "voice-chat"]);
 const VERCEL_API_BASE_URL = "https://aurora-voicetext-qk8s.vercel.app";
 
 const corsHeaders = (origin: string): Headers => {
