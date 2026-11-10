@@ -40,7 +40,7 @@ const safeRate = (value: unknown) => Number.isFinite(Number(value)) ? Math.min(2
 
 async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHint?: string) {
   const failures: string[] = [];
-  // Keep the Worker request inside the Vercel-to-Worker proxy timeout, leaving
+  // Keep the Worker request inside the Pages/Vercel proxy timeout, leaving
   // a small response margin so the caller receives the completed transcript.
   const requestDeadline = Date.now() + 105000;
   const remainingMs = () => Math.max(0, requestDeadline - Date.now());
@@ -337,7 +337,9 @@ export default {
       const headers = new Headers(file.headers); for (const [key, value] of cors) headers.set(key, value);
       return new Response(file.body, { status: file.status, headers });
     } catch (error) {
-      return json({ error: error instanceof Error ? error.message.slice(0, 450) : "Backup provider unavailable." }, 503, cors);
+      const requestedStatus = (error as { status?: number }).status;
+      const status = requestedStatus && requestedStatus >= 400 && requestedStatus < 500 ? requestedStatus : 503;
+      return json({ error: error instanceof Error ? error.message.slice(0, 450) : "Backup provider unavailable." }, status, cors);
     }
   },
 };
