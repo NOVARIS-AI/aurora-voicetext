@@ -92,7 +92,7 @@ test("Backup Worker deploy name, Pages health target, and provider readiness sta
   const workerConfig = await readFile(new URL("../backup-worker/wrangler.toml", import.meta.url), "utf8");
   const worker = await readFile(new URL("../backup-worker/src/index.ts", import.meta.url), "utf8");
   assert.match(workerConfig, /^name = "aurora-voicetext-backup"$/m);
-  assert.match(health, /aurora-voicetext-backup\.alwerioghenepeace563\.workers\\.dev/);
+  assert.match(health, /aurora-voicetext-backup\.schoolershubit5\.workers\.dev/);
   assert.match(worker, /openrouter:\s*Boolean\(env\.OPENROUTER_API_KEY\)/);
   assert.match(worker, /subtitleDownload:\s*Boolean\(env\.OPENSUBTITLES_API_KEY && env\.OPENSUBTITLES_TOKEN\)/);
 });
