@@ -41,13 +41,13 @@ const STORAGE_KEY = 'aurora-voicetext-library-v2';
 // native builds must use the deployed API origin unless explicitly overridden at build time.
 const API_BASE_URL = (() => {
   const configured = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-  const fallback = Capacitor.isNativePlatform() ? 'https://aurora-voicetext-qk8s.vercel.app' : '';
+  const fallback = Capacitor.isNativePlatform() ? 'https://aurora-voicetext.pages.dev' : '';
   const candidate = configured || fallback;
   if (!candidate) return '';
   try {
     const parsed = new URL(candidate);
     // Cloudflare Workers are backup services, not the primary app API: the
-    // Vercel routes hold the private backup token for TTS/subtitle failover.
+    // Native builds use the Cloudflare Pages API gateway so web and APK share the same current backend.
     if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') return fallback;
     if (parsed.hostname.endsWith('.workers.dev')) return fallback;
     return candidate.replace(/\/+$/, '');
