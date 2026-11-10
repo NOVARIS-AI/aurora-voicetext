@@ -68,12 +68,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   const isHealth = endpoint === "health";
   const isVercelEndpoint = VERCEL_API_ENDPOINTS.has(endpoint);
-  const isReadOnly = isHealth || endpoint === "admin";
-  if (isReadOnly && request.method !== "GET") {
+  const isGetOnly = isHealth || endpoint === "admin";
+  const allowsGetAndPost = endpoint === "aurora-transcribe";
+  if (isGetOnly && request.method !== "GET") {
     headers.set("Allow", "GET");
     return Response.json({ error: "Method not allowed." }, { status: 405, headers });
   }
-  if (!isReadOnly && request.method !== "POST") {
+  if (allowsGetAndPost && !["GET", "POST"].includes(request.method)) {
+    headers.set("Allow", "GET, POST");
+    return Response.json({ error: "Method not allowed." }, { status: 405, headers });
+  }
+  if (!isGetOnly && !allowsGetAndPost && request.method !== "POST") {
     headers.set("Allow", "POST");
     return Response.json({ error: "Method not allowed." }, { status: 405, headers });
   }
@@ -91,6 +96,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const target = isVercelEndpoint
     ? new URL(workerPath, VERCEL_API_BASE_URL)
     : new URL(workerPath, baseUrl);
+  // Preserve status-query parameters used by resumable transcription jobs.
+  target.search = new URL(request.url).search;
   const forwardedHeaders = new Headers(request.headers);
   forwardedHeaders.delete("host");
   forwardedHeaders.delete("content-length");
