@@ -33,3 +33,25 @@ test("bridge rejects unsupported video instead of pretending to transcribe it", 
   assert.ok(endpoint.includes("audio files only"));
   assert.ok(endpoint.includes("415"));
 });
+
+
+test("persistent jobs enforce ordered bounded sections and owner-scoped checkpoints", () => {
+  assert.ok(endpoint.includes("chunkNumber > totalChunks"));
+  assert.ok(endpoint.includes("chunkNumber !== job.completed_chunks + 1"));
+  assert.ok(endpoint.includes("completed_chunks=eq."));
+  assert.ok(endpoint.includes("owner_id=eq."));
+  assert.ok(endpoint.includes("current.completed_chunks >= target"));
+  assert.ok(endpoint.includes("status: done ? \"completed\" : \"processing\""));
+  assert.ok(endpoint.includes("storage/v1/object/"));
+  assert.ok(endpoint.includes("encodeURIComponent(bucket)"));
+});
+
+test("persistent job storage migration is private and bounded", async () => {
+  const migration = await readFile(new URL("../supabase/migrations/202611090001_persistent_aurora_transcription_jobs.sql", import.meta.url), "utf8");
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /public, file_size_limit/);
+  assert.match(migration, /'voicetext-recordings',[\s\S]*?false[\s\S]*?5242880/);
+  assert.match(migration, /owner_id uuid references auth\.users\(id\) on delete cascade/);
+  assert.match(migration, /completed_chunks integer not null default 0/);
+  assert.match(migration, /check \(status in \('created','uploading','uploaded','processing','completed','failed'\)\)/);
+});
