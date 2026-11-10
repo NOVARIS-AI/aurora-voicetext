@@ -37,6 +37,8 @@ test("checks the backup Worker using the server-side bearer token", async () => 
     providers: {
       transcription: true,
       speech: false,
+      openrouter: false,
+      voiceChat: false,
       translation: true,
       transcriptPolish: false,
       subtitles: false,
