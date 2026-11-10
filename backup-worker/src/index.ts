@@ -1,6 +1,8 @@
 export interface Env {
   ASSEMBLYAI_API_KEY?: string;
   GROQ_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
   OPENAI_API_KEY?: string;
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_DEFAULT_VOICE_ID?: string;
@@ -26,6 +28,7 @@ export interface Env {
   OPENAI_TRANSLATION_MODEL?: string;
   GROQ_TRANSLATION_MODEL?: string;
   GROQ_CHAT_MODEL?: string;
+  OPENROUTER_CHAT_MODEL?: string;
   OPENAI_CHAT_MODEL?: string;
 }
 type AudioBody = { audioBase64?: string; mimeType?: string; languageHint?: string; chunkNumber?: number; totalChunks?: number };
@@ -168,13 +171,14 @@ async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuf
 
 async function translate(input: TranslateBody, env: Env) {
   const providers = [
-    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
-    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile" },
+    { name: "openrouter", key: env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
+    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile", headers: {} },
   ].filter(p => p.key);
   const failures: string[] = [];
   for (const provider of providers) {
     try {
-      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" }, body: JSON.stringify({ model: provider.model, temperature: 0.1, messages: [{ role: "system", content: "Translate faithfully. Preserve meaning, names, numbers, speaker labels, subtitle line breaks and timestamps. Do not add explanations or invent missing content." }, { role: "user", content: "Source language: " + (input.sourceLanguage || "auto-detect") + "\nTarget language: " + input.targetLanguage + "\n\n" + input.text }] }), signal: AbortSignal.timeout(90000) });
+      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json", ...provider.headers }, body: JSON.stringify({ model: provider.model, temperature: 0.1, messages: [{ role: "system", content: "Translate faithfully. Preserve meaning, names, numbers, speaker labels, subtitle line breaks and timestamps. Do not add explanations or invent missing content." }, { role: "user", content: "Source language: " + (input.sourceLanguage || "auto-detect") + "\nTarget language: " + input.targetLanguage + "\n\n" + input.text }] }), signal: AbortSignal.timeout(90000) });
       const payload = await response.json().catch(() => ({})) as { choices?: Array<{message?:{content?:string}}>; error?:{message?:string} };
       const result = payload.choices?.[0]?.message?.content?.trim();
       if (!response.ok || !result) throw new Error(payload.error?.message || provider.name + " translation failed.");
@@ -186,13 +190,14 @@ async function translate(input: TranslateBody, env: Env) {
 
 async function polishTranscript(text: string, env: Env): Promise<{ text: string; provider: string }> {
   const providers = [
-    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
-    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile" },
+    { name: "openrouter", key: env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
+    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile", headers: {} },
   ].filter(p => p.key);
   const failures: string[] = [];
   for (const provider of providers) {
     try {
-      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" }, body: JSON.stringify({ model: provider.model, temperature: 0.1, messages: [
+      const response = await fetch(provider.url, { method: "POST", headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json", ...provider.headers }, body: JSON.stringify({ model: provider.model, temperature: 0.1, messages: [
         { role: "system", content: "Clean this speech transcript for readability. Correct punctuation, capitalization and obvious transcription formatting issues. Preserve every factual detail, sentence, name, number, language and Nigerian Pidgin expression. Do not summarize, add facts, translate, or omit content. Return only the corrected transcript." },
         { role: "user", content: text },
       ] }), signal: AbortSignal.timeout(90000) });
@@ -220,15 +225,16 @@ async function voiceChat(input: ChatBody, env: Env): Promise<{ text: string; pro
   }
   const system = "You are AURORA, a helpful, natural conversational AI inside AURORA VoiceText. Answer the user's actual question directly and warmly. When asked to write something for speech, produce a polished, natural spoken script. Preserve the user's requested language, names, facts and tone. Do not claim to have generated audio; the app handles speech generation separately. Keep ordinary answers concise unless detail is requested.";
   const providers = [
-    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_CHAT_MODEL || "llama-3.3-70b-versatile" },
-    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_CHAT_MODEL || "gpt-4o-mini" },
+    { name: "openrouter", key: env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: env.OPENROUTER_CHAT_MODEL || env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_CHAT_MODEL || "llama-3.3-70b-versatile", headers: {} },
+    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_CHAT_MODEL || "gpt-4o-mini", headers: {} },
   ].filter(provider => Boolean(provider.key));
   const failures: string[] = [];
   for (const provider of providers) {
     try {
       const response = await fetch(provider.url, {
         method: "POST",
-        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" },
+        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json", ...provider.headers },
         body: JSON.stringify({ model: provider.model, temperature: 0.65, max_tokens: 1400, messages: [{ role: "system", content: system }, ...messages] }),
         signal: AbortSignal.timeout(60000),
       });
@@ -279,7 +285,7 @@ export default {
       cors.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS"); cors.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), voiceChat: Boolean(env.GROQ_API_KEY || env.OPENAI_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
+    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.GROQ_API_KEY), voiceChat: Boolean(env.OPENROUTER_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
     const routes = new Set(["/api/transcribe", "/api/tts", "/api/assist", "/api/translate", "/api/voice-chat", "/api/subtitles", "/api/subtitles-download"]);
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
     if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
