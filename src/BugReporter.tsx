@@ -9,15 +9,15 @@ function installationId() {
 const installId = installationId();
 const platform = /Android/i.test(navigator.userAgent) ? "Android" : /iPhone|iPad/i.test(navigator.userAgent) ? "iOS" : "Web";
 const appVersion = (import.meta.env.VITE_APP_VERSION as string | undefined) || "1.0";
-function sendDiagnostic(eventType: string, severity = "info", feature = "app", message = "") {
-  void fetch("/api/diagnostics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ installId, eventType, severity, feature, message, platform, appVersion }), keepalive: true }).catch(()=>{});
+function sendDiagnostic(eventType: string, severity = "info", feature = "app", message = "", apiBaseUrl = "") {
+  void fetch(apiBaseUrl + "/api/diagnostics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ installId, eventType, severity, feature, message, platform, appVersion }), keepalive: true }).catch(()=>{});
 }
-export default function BugReporter({ page }: { page: string }) {
+export default function BugReporter({ page, apiBaseUrl = "" }: { page: string; apiBaseUrl?: string }) {
   const [open,setOpen]=useState(false), [description,setDescription]=useState(""), [busy,setBusy]=useState(false), [status,setStatus]=useState("");
   useEffect(()=>{
-    sendDiagnostic("app_opened");
-    const onError=()=>sendDiagnostic("runtime_error","error","runtime","A browser runtime error occurred.");
-    const onRejection=()=>sendDiagnostic("unhandled_rejection","error","runtime","An unhandled asynchronous error occurred.");
+    sendDiagnostic("app_opened", "info", "app", "", apiBaseUrl);
+    const onError=()=>sendDiagnostic("runtime_error","error","runtime","A browser runtime error occurred.",apiBaseUrl);
+    const onRejection=()=>sendDiagnostic("unhandled_rejection","error","runtime","An unhandled asynchronous error occurred.",apiBaseUrl);
     window.addEventListener("error",onError); window.addEventListener("unhandledrejection",onRejection);
     let lastShake=0;
     const onMotion=(event:DeviceMotionEvent)=>{
@@ -27,11 +27,11 @@ export default function BugReporter({ page }: { page: string }) {
     };
     window.addEventListener("devicemotion",onMotion);
     return ()=>{window.removeEventListener("error",onError);window.removeEventListener("unhandledrejection",onRejection);window.removeEventListener("devicemotion",onMotion);};
-  },[]);
+  },[apiBaseUrl]);
   async function submit(){
     if(description.trim().length<4){setStatus("Please describe what happened.");return;}
     setBusy(true);setStatus("");
-    try{const response=await fetch("/api/bug-report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({installId,description:description.trim(),platform,appVersion,page})});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||"Could not submit report.");setStatus(body.message||"Report received.");setDescription("");}
+    try{const response=await fetch(apiBaseUrl + "/api/bug-report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({installId,description:description.trim(),platform,appVersion,page})});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||"Could not submit report.");setStatus(body.message||"Report received.");setDescription("");}
     catch(reason){setStatus(reason instanceof Error?reason.message:"Could not submit report.");}
     finally{setBusy(false);}
   }
