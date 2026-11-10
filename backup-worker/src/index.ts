@@ -25,12 +25,16 @@ export interface Env {
   ELEVENLABS_TTS_MODEL?: string;
   OPENAI_TRANSLATION_MODEL?: string;
   GROQ_TRANSLATION_MODEL?: string;
+  GROQ_CHAT_MODEL?: string;
+  OPENAI_CHAT_MODEL?: string;
 }
 type AudioBody = { audioBase64?: string; mimeType?: string; languageHint?: string; chunkNumber?: number; totalChunks?: number };
 type VoiceBody = { text?: string; voice?: string; style?: string; rate?: number; pitch?: number; emotion?: string; language?: string };
 type TranslateBody = { text?: string; targetLanguage?: string; sourceLanguage?: string };
 type SubtitleBody = { query?: string; languages?: string; type?: "movie" | "episode" };
-const allowedOrigins = new Set(["https://aurora-voicetext-qk8s.vercel.app","https://aurora-voicetext.vercel.app","capacitor://localhost","https://localhost","http://localhost"]);
+type ChatMessage = { role: "user" | "assistant"; content: string };
+type ChatBody = { messages?: ChatMessage[] };
+const allowedOrigins = new Set(["https://aurora-voicetext.pages.dev","https://aurora-voicetext-qk8s.vercel.app","https://aurora-voicetext.vercel.app","capacitor://localhost","https://localhost","http://localhost"]);
 const json = (data: unknown, status = 200, headers?: HeadersInit) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...Object.fromEntries(new Headers(headers || {}).entries()) } });
 const safeRate = (value: unknown) => Number.isFinite(Number(value)) ? Math.min(2, Math.max(0.5, Number(value))) : 1;
 
@@ -201,6 +205,44 @@ async function polishTranscript(text: string, env: Env): Promise<{ text: string;
   throw new Error(failures.join(" | ") || "No AI text provider configured.");
 }
 
+async function voiceChat(input: ChatBody, env: Env): Promise<{ text: string; provider: string }> {
+  const messages = Array.isArray(input.messages)
+    ? input.messages.filter((item): item is ChatMessage =>
+        Boolean(item) && (item.role === "user" || item.role === "assistant") &&
+        typeof item.content === "string"
+      ).slice(-16).map(item => ({ role: item.role, content: item.content.trim().slice(0, 12000) }))
+    : [];
+  if (!messages.length || !messages.some(item => item.role === "user" && item.content)) {
+    throw Object.assign(new Error("Write a message before chatting with AURORA."), { status: 400 });
+  }
+  if (messages.reduce((total, item) => total + item.content.length, 0) > 24000) {
+    throw Object.assign(new Error("This conversation is too long. Start a fresh chat or shorten your message."), { status: 413 });
+  }
+  const system = "You are AURORA, a helpful, natural conversational AI inside AURORA VoiceText. Answer the user's actual question directly and warmly. When asked to write something for speech, produce a polished, natural spoken script. Preserve the user's requested language, names, facts and tone. Do not claim to have generated audio; the app handles speech generation separately. Keep ordinary answers concise unless detail is requested.";
+  const providers = [
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_CHAT_MODEL || "llama-3.3-70b-versatile" },
+    { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_CHAT_MODEL || "gpt-4o-mini" },
+  ].filter(provider => Boolean(provider.key));
+  const failures: string[] = [];
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.url, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: provider.model, temperature: 0.65, max_tokens: 1400, messages: [{ role: "system", content: system }, ...messages] }),
+        signal: AbortSignal.timeout(60000),
+      });
+      const payload = await response.json().catch(() => ({})) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+      const text = payload.choices?.[0]?.message?.content?.trim();
+      if (!response.ok || !text) throw new Error(payload.error?.message || provider.name + " chat returned an empty response.");
+      return { text, provider: provider.name };
+    } catch (error) {
+      failures.push(provider.name + ": " + (error instanceof Error ? error.message : "request failed"));
+    }
+  }
+  throw Object.assign(new Error(failures.join(" | ") || "AI chat is not configured. Add GROQ_API_KEY or OPENAI_API_KEY to the backup Worker secrets."), { status: 503 });
+}
+
 async function subtitleSearch(input: SubtitleBody, env: Env) {
   if (!env.OPENSUBTITLES_API_KEY) throw new Error("Subtitle search provider is not configured.");
   const url = new URL("https://api.opensubtitles.com/api/v1/subtitles");
@@ -237,8 +279,8 @@ export default {
       cors.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS"); cors.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
-    const routes = new Set(["/api/transcribe", "/api/tts", "/api/assist", "/api/translate", "/api/subtitles", "/api/subtitles-download"]);
+    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), translation: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENAI_API_KEY || env.GROQ_API_KEY), voiceChat: Boolean(env.GROQ_API_KEY || env.OPENAI_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
+    const routes = new Set(["/api/transcribe", "/api/tts", "/api/assist", "/api/translate", "/api/voice-chat", "/api/subtitles", "/api/subtitles-download"]);
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
     if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
     const bearer = Boolean(env.BACKUP_API_TOKEN) && request.headers.get("authorization") === "Bearer " + env.BACKUP_API_TOKEN;
@@ -262,7 +304,7 @@ export default {
     if (!bearer && !publicTranscriptionAllowed) return json({ error: "Unauthorized or origin not allowed." }, 401, cors);
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (url.pathname === "/api/transcribe" && contentLength > 2_000_000) return json({ error: "Audio request is too large." }, 413, cors);
-    const body = await request.json().catch(() => null) as (AudioBody & VoiceBody & TranslateBody & SubtitleBody & {fileId?:number}) | null;
+    const body = await request.json().catch(() => null) as (AudioBody & VoiceBody & TranslateBody & SubtitleBody & ChatBody & {fileId?:number}) | null;
     if (!body) return json({ error: "Invalid JSON request." }, 400, cors);
     try {
       if (url.pathname === "/api/transcribe") {
@@ -286,7 +328,7 @@ export default {
         if (typeof body.text !== "string" || !body.text.trim() || typeof body.targetLanguage !== "string" || !body.targetLanguage.trim() || body.text.length > 24000) return json({ error: "Text and targetLanguage are required; maximum 24,000 characters." }, 400, cors);
         return json(await translate(body, env), 200, cors);
       }
-      if (url.pathname === "/api/subtitles") {
+      if (url.pathname === "/api/voice-chat") {\n        return json(await voiceChat(body, env), 200, cors);\n      }\n      if (url.pathname === "/api/subtitles") {
         if (typeof body.query !== "string" || body.query.trim().length < 2 || body.query.length > 180) return json({ error: "Enter a title with 2–180 characters." }, 400, cors);
         return json({ results: await subtitleSearch(body, env), provider: "opensubtitles" }, 200, cors);
       }
