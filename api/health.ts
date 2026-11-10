@@ -68,9 +68,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       aiSpeech: Boolean(providers.openai || process.env.ELEVENLABS_API_KEY ||
         backupHealth.providers?.speech),
       elevenLabs: Boolean(process.env.ELEVENLABS_API_KEY),
-      translation: Boolean(providers.openai || providers.groq ||
+      openRouter: Boolean(process.env.OPENROUTER_API_KEY ||
+        backupHealth.providers?.openrouter),
+      voiceChat: Boolean(process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY ||
+        process.env.OPENAI_API_KEY || backupHealth.providers?.voiceChat),
+      translation: Boolean(process.env.OPENROUTER_API_KEY || providers.openai || providers.groq ||
         backupHealth.providers?.translation),
-      transcriptPolish: Boolean(providers.openai || providers.groq ||
+      transcriptPolish: Boolean(process.env.OPENROUTER_API_KEY || providers.openai || providers.groq ||
         backupHealth.providers?.transcriptPolish),
       subtitleSearch: Boolean(process.env.OPENSUBTITLES_API_KEY ||
         backupHealth.providers?.subtitles),
