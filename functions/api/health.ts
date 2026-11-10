@@ -45,7 +45,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   const baseUrl = (env.BACKUP_API_BASE_URL ||
-    "https://aurora-voicetext.alwerioghenepeace563.workers.dev").replace(/\/+$/, "");
+    "https://aurora-voicetext-backup.alwerioghenepeace563.workers.dev").replace(/\/+$/, "");
 
   try {
     const target = new URL("/health", baseUrl);
