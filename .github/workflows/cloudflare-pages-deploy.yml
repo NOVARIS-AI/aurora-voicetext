@@ -50,6 +50,8 @@ jobs:
         run: npm test
       - name: Build existing AURORA VoiceText app
         run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
       - name: Install Wrangler
         run: npm install --global wrangler@4.157.0
       - name: Verify Cloudflare deployment credentials
