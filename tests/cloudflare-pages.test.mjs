@@ -22,7 +22,7 @@ test("Pages deployment is triggered by application, API proxy, Worker, and test 
 });
 
 test("Pages API proxy exposes only the supported Worker endpoints and keeps its token server-side", () => {
-  for (const endpoint of ["transcribe", "tts", "assist", "translate", "subtitles", "subtitles-download", "health"]) {
+  for (const endpoint of ["transcribe", "tts", "assist", "translate", "voice-chat", "subtitles", "subtitles-download", "health", "admin", "bug-report", "diagnostics", "aurora-transcribe"]) {
     assert.ok(proxy.includes('"' + endpoint + '"'));
   }
   assert.match(proxy, /env\.BACKUP_API_TOKEN/);
@@ -37,4 +37,26 @@ test("Pages health endpoint forwards the private Worker credential without expos
   assert.match(health, /Authorization:\s*"Bearer "\s*\+\s*token/);
   assert.match(health, /Cache-Control/);
   assert.doesNotMatch(health, /VITE_BACKUP_API_TOKEN/);
+});
+
+
+test("Cloudflare Pages keeps administrative Vercel routes available without exposing Worker secrets", () => {
+  assert.match(proxy, /VERCEL_API_ENDPOINTS/);
+  assert.match(proxy, /https:\/\/aurora-voicetext-qk8s\.vercel\.app/);
+  assert.match(proxy, /if \(!isVercelEndpoint\) forwardedHeaders\.set\("Authorization"/);
+});
+
+test("Voice Workspace chat is implemented in the backup Worker and advertised by health", async () => {
+  const worker = await readFile(new URL("../backup-worker/src/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /\/api\/voice-chat/);
+  assert.match(worker, /async function voiceChat\(/);
+  assert.match(worker, /voiceChat:\s*Boolean\(env\.GROQ_API_KEY \|\| env\.OPENAI_API_KEY\)/);
+  assert.match(worker, /GROQ_CHAT_MODEL/);
+});
+
+test("Native Android builds use the production Cloudflare Pages API gateway", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(app, /https:\/\/aurora-voicetext\.pages\.dev/);
+  assert.match(app, /<AdminPanel apiBaseUrl=\{API_BASE_URL\}/);
+  assert.match(app, /<BugReporter page=\{page\} apiBaseUrl=\{API_BASE_URL\}/);
 });
