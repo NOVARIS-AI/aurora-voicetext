@@ -1,4 +1,4 @@
-type BackupPath = "/api/transcribe" | "/api/tts" | "/api/assist" | "/api/translate" | "/api/subtitles" | "/api/subtitles-download";
+type BackupPath = "/api/transcribe" | "/api/tts" | "/api/assist" | "/api/translate" | "/api/subtitles" | "/api/subtitles-download" | "/api/voice-chat";
 export async function callBackup(path: BackupPath, body: unknown): Promise<Response | null> {
   const base = process.env.BACKUP_BACKEND_URL?.replace(/\/+$/, "");
   const token = process.env.BACKUP_BACKEND_TOKEN;
