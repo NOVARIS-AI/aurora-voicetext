@@ -163,3 +163,13 @@ Set these additional server-only Vercel variables on the VoiceText project:
 For job creation, processing and status requests, the main AURORA server verifies the signed-in user's Supabase access token and forwards that token through a private server-to-server header. VoiceText independently verifies the token with Supabase Auth and derives the owner ID from the verified identity; it does not trust a caller-supplied owner ID. Every database read/update is filtered by both job ID and verified owner ID. The plugin bearer token alone is not sufficient to read another user's job.
 
 This is durable checkpointing and resumability, not unattended server-side background execution. The app must remain active while it captures and submits the remaining audio sections. If it closes, completed sections remain stored and the user can reselect the same source recording to resume. Provider quotas and hosting time limits still apply.
+
+
+### Persistent-job processing guarantees and limits
+
+- Section numbers are checked against the saved job's total count and must arrive in order.
+- Checkpoint updates use an expected previous completed-section count, so a late duplicate cannot overwrite a newer transcript checkpoint. A retry that races with an already-saved section returns the newer checkpoint.
+- Audio sections are written to the private bucket before transcription; the transcript and completed-section count are saved only after the provider returns successfully.
+- The Android WorkManager queue can retry delivery while Android permits the app's scheduled work to run. This is not a guarantee of uninterrupted processing on every OEM/device, and the browser still performs local media decoding and section capture while the app is open.
+- Video support in main AURORA extracts its audio track locally. VoiceText receives audio sections only; it does not receive or analyse video frames.
+- The integration does not automatically delete saved jobs or audio objects. Add an explicit retention/deletion policy before production rollout if recordings must expire.
