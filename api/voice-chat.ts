@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { callBackup } from "./_lib/backup.js";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -38,5 +39,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       failures.push(provider.name + ": " + (error instanceof Error ? error.message : "request failed"));
     }
   }
-  return res.status(503).json({ error: failures.join(" | ") || "AI chat is not configured. Add GROQ_API_KEY or OPENAI_API_KEY to the Vercel project environment." });
+  try {
+    const backup = await callBackup("/api/voice-chat", { messages });
+    if (backup?.ok) {
+      const payload = await backup.json().catch(() => ({})) as { text?: string; provider?: string; error?: string };
+      if (typeof payload.text === "string" && payload.text.trim()) {
+        return res.status(200).json({ text: payload.text.trim(), provider: payload.provider || "backup-worker", backupUsed: true });
+      }
+    }
+  } catch (error) {
+    failures.push("Backup Worker: " + (error instanceof Error ? error.message : "request failed"));
+  }
+  return res.status(503).json({ error: failures.join(" | ") || "AI chat is not configured. Add GROQ_API_KEY or OPENAI_API_KEY to the server environment." });
 }
