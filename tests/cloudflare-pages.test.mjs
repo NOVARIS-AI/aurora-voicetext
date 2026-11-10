@@ -60,3 +60,16 @@ test("Native Android builds use the production Cloudflare Pages API gateway", as
   assert.match(app, /<AdminPanel apiBaseUrl=\{API_BASE_URL\}/);
   assert.match(app, /<BugReporter page=\{page\} apiBaseUrl=\{API_BASE_URL\}/);
 });
+
+
+test("Cloudflare Pages sends user-facing APIs to the primary server with independent Worker fallback", async () => {
+  const primary = await readFile(new URL("../functions/api/[endpoint].ts", import.meta.url), "utf8");
+  const voiceChat = await readFile(new URL("../api/voice-chat.ts", import.meta.url), "utf8");
+  const backup = await readFile(new URL("../api/_lib/backup.ts", import.meta.url), "utf8");
+  for (const endpoint of ["transcribe", "tts", "assist", "translate", "voice-chat", "subtitles", "subtitles-download"]) {
+    assert.ok(primary.includes('"' + endpoint + '"'), "Missing primary API route " + endpoint);
+  }
+  assert.match(primary, /new URL\(workerPath, VERCEL_API_BASE_URL\)/);
+  assert.match(voiceChat, /callBackup\("\/api\/voice-chat"/);
+  assert.match(backup, /"\/api\/voice-chat"/);
+});
