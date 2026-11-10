@@ -12,14 +12,26 @@ const ALLOWED_ENDPOINTS = new Set([
   "subtitles",
   "subtitles-download",
   "health",
-  // These authenticated/administrative routes remain on the existing Vercel
-  // server while the public app and user-facing AI features run on Pages.
   "admin",
   "bug-report",
   "diagnostics",
   "aurora-transcribe",
 ]);
-const VERCEL_API_ENDPOINTS = new Set(["admin", "bug-report", "diagnostics", "aurora-transcribe", "voice-chat"]);
+const VERCEL_API_ENDPOINTS = new Set([
+  // Vercel is the primary API and already hands provider failures to the
+  // independently deployed Worker. Pages is the public same-origin gateway.
+  "transcribe",
+  "tts",
+  "assist",
+  "translate",
+  "voice-chat",
+  "subtitles",
+  "subtitles-download",
+  "admin",
+  "bug-report",
+  "diagnostics",
+  "aurora-transcribe",
+]);
 const VERCEL_API_BASE_URL = "https://aurora-voicetext-qk8s.vercel.app";
 
 const corsHeaders = (origin: string): Headers => {
