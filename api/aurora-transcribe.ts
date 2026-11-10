@@ -149,7 +149,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (job.status === "completed") return res.status(200).json(publicJob(job));
       if (job.total_chunks !== totalChunks) return res.status(409).json({ error: "Section count does not match the saved job." });
       if (chunkNumber <= job.completed_chunks) return res.status(200).json(publicJob(job));
-      if (chunkNumber !== job.completed_chunks + 1) return res.status(409).json({ error: "Process sections in order. Resume from section " + (job.completed_chunks + 1) + ".", ...publicJob(job) });
+      if (chunkNumber !== job.completed_chunks + 1) return res.status(409).json({ ...publicJob(job), error: "Process sections in order. Resume from section " + (job.completed_chunks + 1) + "." });
       const { url, key, bucket } = dbConfig();
       const ext = mimeType.includes("wav") ? "wav" : mimeType.includes("mpeg") || mimeType.includes("mp3") ? "mp3" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : mimeType.includes("aac") ? "aac" : "webm";
       const objectPath = job.storage_path + "/chunks/" + String(chunkNumber).padStart(5, "0") + "." + ext;
