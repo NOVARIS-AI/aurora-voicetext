@@ -58,9 +58,10 @@ jobs:
       - name: Build web application
         run: npm run build
         env:
-          VITE_API_BASE_URL: https://aurora-voicetext.vercel.app
+          VITE_API_BASE_URL: https://aurora-voicetext.pages.dev
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_BACKUP_API_BASE_URL: ${{ vars.BACKUP_API_BASE_URL }}
-          VITE_BACKUP_API_PUBLIC_FALLBACK: 'true'
+          VITE_BACKUP_API_PUBLIC_FALLBACK: 'false'
 
       - name: Generate Android project
         run: npx cap add android
