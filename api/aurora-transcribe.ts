@@ -51,15 +51,20 @@ async function readJob(id: string, ownerId: string): Promise<Job | null> {
   const rows = await response.json() as Job[];
   return rows[0] || null;
 }
-async function updateJob(id: string, ownerId: string, patch: Record<string, unknown>): Promise<Job> {
+async function updateJob(id: string, ownerId: string, patch: Record<string, unknown>, expectedCompletedChunks: number): Promise<Job> {
   const { url, key } = dbConfig();
-  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId), {
+  const response = await fetch(url + "/rest/v1/voicetext_recordings?id=eq." + encodeURIComponent(id) + "&owner_id=eq." + encodeURIComponent(ownerId) + "&completed_chunks=eq." + expectedCompletedChunks, {
     method: "PATCH", headers: dbHeaders(key, { Prefer: "return=representation" }), body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
     signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) throw new Error("Could not save transcription job progress.");
   const rows = await response.json() as Job[];
-  if (!rows[0]) throw new Error("The transcription job could not be found.");
+  if (!rows[0]) {
+    const current = await readJob(id, ownerId);
+    const target = Number(patch.completed_chunks);
+    if (current && Number.isInteger(target) && current.completed_chunks >= target) return current;
+    throw new Error("The transcription job changed while this section was processing. Refresh its saved checkpoint before retrying.");
+  }
   return rows[0];
 }
 function publicJob(job: Job) {
@@ -135,7 +140,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const audioBase64 = typeof input.audioBase64 === "string" ? input.audioBase64 : "";
     const mimeType = String(input.mimeType || "").toLowerCase();
     const supported = new Set(["audio/wav","audio/x-wav","audio/mpeg","audio/mp3","audio/ogg","audio/mp4","audio/aac","audio/webm"]);
-    if (!/^[0-9a-f-]{36}$/i.test(id) || !Number.isInteger(chunkNumber) || chunkNumber < 1 || !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 ||
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !Number.isInteger(chunkNumber) || chunkNumber < 1 || !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 2000 || chunkNumber > totalChunks ||
         !audioBase64 || audioBase64.length > 4000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64) || audioBase64.length % 4 !== 0) return res.status(400).json({ error: "A valid job ID, section number and audio section are required." });
     if (!supported.has(mimeType)) return res.status(415).json({ error: "Unsupported audio section format." });
     try {
@@ -156,7 +161,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = await transcribeWithFallback({ audioBase64, mimeType, languageHint: typeof input.languageHint === "string" ? input.languageHint.trim().slice(0, 120) : undefined });
       const transcript = [job.transcript.trim(), result.text.trim()].filter(Boolean).join(" ");
       const done = chunkNumber === totalChunks;
-      const updated = await updateJob(id, ownerId, { status: done ? "completed" : "processing", completed_chunks: chunkNumber, transcript, error_message: null, completed_at: done ? new Date().toISOString() : null });
+      const updated = await updateJob(id, ownerId, { status: done ? "completed" : "processing", completed_chunks: chunkNumber, transcript, error_message: null, completed_at: done ? new Date().toISOString() : null }, job.completed_chunks);
       return res.status(200).json({ ...publicJob(updated), language: result.language || null, provider: result.provider });
     } catch (error) {
       return res.status(503).json({ error: error instanceof Error ? error.message.slice(0, 420) : "This section could not be processed.", retryable: true, requestId: id, chunkNumber });
