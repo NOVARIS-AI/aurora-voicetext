@@ -52,6 +52,8 @@ export async function getBackupHealth(env = {}, fetcher = fetch) {
         ? {
             transcription: Boolean(payload.providers.transcription),
             speech: Boolean(payload.providers.speech),
+            openrouter: Boolean(payload.providers.openrouter),
+            voiceChat: Boolean(payload.providers.voiceChat),
             translation: Boolean(payload.providers.translation),
             transcriptPolish: Boolean(payload.providers.transcriptPolish),
             subtitles: Boolean(payload.providers.subtitles),
