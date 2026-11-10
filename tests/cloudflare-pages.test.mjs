@@ -80,3 +80,10 @@ test("Android APK build uses Cloudflare Pages rather than the legacy Vercel API 
   assert.match(workflow, /VITE_API_BASE_URL:\s*https:\/\/aurora-voicetext\.pages\.dev/);
   assert.match(workflow, /VITE_BACKUP_API_PUBLIC_FALLBACK:\s*'false'/);
 });
+
+
+test("Cloudflare gateway preserves GET status checks for resumable transcription jobs", async () => {
+  assert.match(proxy, /endpoint === "aurora-transcribe"/);
+  assert.match(proxy, /\["GET", "POST"\]\.includes\(request\.method\)/);
+  assert.match(proxy, /target\.search = new URL\(request\.url\)\.search/);
+});
