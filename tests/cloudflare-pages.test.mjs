@@ -73,3 +73,10 @@ test("Cloudflare Pages sends user-facing APIs to the primary server with indepen
   assert.match(voiceChat, /callBackup\("\/api\/voice-chat"/);
   assert.match(backup, /"\/api\/voice-chat"/);
 });
+
+
+test("Android APK build uses Cloudflare Pages rather than the legacy Vercel API base", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/android-apk.yml", import.meta.url), "utf8");
+  assert.match(workflow, /VITE_API_BASE_URL:\s*https:\/\/aurora-voicetext\.pages\.dev/);
+  assert.match(workflow, /VITE_BACKUP_API_PUBLIC_FALLBACK:\s*'false'/);
+});
