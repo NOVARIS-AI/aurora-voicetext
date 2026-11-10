@@ -1,3 +1,4 @@
+// Provider secrets are synchronized by the GitHub Actions deployment workflow.
 export interface Env {
   ASSEMBLYAI_API_KEY?: string;
   GROQ_API_KEY?: string;
