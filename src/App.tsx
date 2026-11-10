@@ -1629,7 +1629,7 @@ function App() {
       browserPdfPopup = window.open('', '_blank');
       if (!browserPdfPopup) { setError('Allow pop-ups to print or save as PDF.'); return; }
     }
-    const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-library');
+    const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
     const documentTitle = safeFileBaseName(baseName, 'Transcript');
     const attribution = 'Transcribed by AURORA VoiceText';
     const templateLabel = exportTemplate === 'meeting' ? 'MEETING TRANSCRIPT' : exportTemplate === 'study' ? 'STUDY NOTES' : 'TRANSCRIPT';
