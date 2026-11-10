@@ -37,7 +37,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       BACKUP_API_TOKEN: ${{ secrets.BACKUP_API_TOKEN }}
-      BACKUP_API_BASE_URL: https://aurora-voicetext.alwerioghenepeace563.workers.dev
+      BACKUP_API_BASE_URL: https://aurora-voicetext-backup.schoolershubit5.workers.dev
       PROJECT_NAME: aurora-voicetext
     steps:
       - uses: actions/checkout@v4
