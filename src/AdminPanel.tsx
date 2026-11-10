@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ShieldCheck, RefreshCw, LogOut, Users, Activity, Bug, AlertTriangle } from "lucide-react";
+import { ShieldCheck, RefreshCw, LogOut, Users, Activity, Bug } from "lucide-react";
 
 declare global { interface Window { google?: any; } }
 type AdminData = { users: any[]; events: any[]; reports: any[]; health?: any; checkedAt?: string };
