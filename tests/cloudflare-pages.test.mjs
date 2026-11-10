@@ -50,7 +50,7 @@ test("Voice Workspace chat is implemented in the backup Worker and advertised by
   const worker = await readFile(new URL("../backup-worker/src/index.ts", import.meta.url), "utf8");
   assert.match(worker, /\/api\/voice-chat/);
   assert.match(worker, /async function voiceChat\(/);
-  assert.match(worker, /voiceChat:\s*Boolean\(env\.GROQ_API_KEY \|\| env\.OPENAI_API_KEY\)/);
+  assert.match(worker, /voiceChat:\s*Boolean\(env\.OPENROUTER_API_KEY \|\| env\.GROQ_API_KEY \|\| env\.OPENAI_API_KEY\)/);
   assert.match(worker, /GROQ_CHAT_MODEL/);
 });
 
