@@ -1622,7 +1622,14 @@ function App() {
 
   async function exportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
     if (!text.trim()) { setError('There is no transcript to export yet.'); return; }
-    const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-transcript');
+    // Open the browser print window directly in the click gesture, before AI
+    // proofreading awaits the network, so popup blockers do not swallow PDF export.
+    let browserPdfPopup: Window | null = null;
+    if (exportType === 'pdf' && !Capacitor.isNativePlatform()) {
+      browserPdfPopup = window.open('', '_blank');
+      if (!browserPdfPopup) { setError('Allow pop-ups to print or save as PDF.'); return; }
+    }
+    const fileBase = safeFileBaseName(exportFilename || baseName, 'aurora-voicetext-library');
     const documentTitle = safeFileBaseName(baseName, 'Transcript');
     const attribution = 'Transcribed by AURORA VoiceText';
     const templateLabel = exportTemplate === 'meeting' ? 'MEETING TRANSCRIPT' : exportTemplate === 'study' ? 'STUDY NOTES' : 'TRANSCRIPT';
@@ -1728,8 +1735,8 @@ function App() {
         setStatus(aiFallbackNotice ? pdfStatus + ' ' + aiFallbackNotice : pdfStatus);
         return;
       }
-      const popup = window.open('', '_blank');
-      if (!popup) { setError('Allow pop-ups to print or save as PDF.'); return; }
+      const popup = browserPdfPopup;
+      if (!popup) { setError('The PDF print window could not be opened.'); return; }
       popup.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + documentTitle.replace(/[&<>\"]/g, '') + '</title><style>body{font:16px/1.8 Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 24px;color:#172033}.kicker{font-size:10px;letter-spacing:2px;color:#167d91;font-weight:bold;margin:0 0 12px}h1{font-size:30px;line-height:1.2;margin:0 0 8px}.subtitle{font-size:15px;color:#475569;margin:0 0 8px}.byline{color:#64748b;font-size:11px;margin:0 0 26px;padding-bottom:18px;border-bottom:1px solid #dbe3eb}.transcript{white-space:pre-wrap}@media print{body{margin:18mm auto;padding:0}}</style></head><body><p class="kicker"></p><h1></h1><p class="subtitle"></p><p class="byline"></p><div class="transcript"></div></body></html>');
       popup.document.querySelector('.kicker')!.textContent = templateLabel;
       popup.document.querySelector('h1')!.textContent = documentTitle;
