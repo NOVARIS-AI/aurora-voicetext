@@ -65,15 +65,16 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
 
 export async function translateWithFallback(input: TranslationRequest): Promise<{ text: string; provider: string }> {
   const providers = [
-    { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant" },
+    { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
+    { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant", headers: {} },
   ].filter(p => Boolean(p.key));
   const failures: string[] = [];
   for (const provider of providers) {
     try {
       const response = await fetch(provider.url, {
         method: "POST",
-        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" },
+        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json", ...provider.headers },
         body: JSON.stringify({
           model: provider.model,
           temperature: 0.1,
@@ -133,8 +134,9 @@ export async function searchSubtitles(input: SubtitleSearchRequest) {
 
 export async function polishTranscriptWithFallback(input: { text: string; language?: string }): Promise<{ text: string; provider: string }> {
   const providers = [
-    { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini" },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant" },
+    { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
+    { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant", headers: {} },
   ].filter(p => Boolean(p.key));
   const failures: string[] = [];
   const languageGuidance = input.language === "nigerian-english-pidgin"
@@ -146,7 +148,7 @@ export async function polishTranscriptWithFallback(input: { text: string; langua
     try {
       const response = await fetch(provider.url, {
         method: "POST",
-        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json" },
+        headers: { Authorization: "Bearer " + provider.key, "Content-Type": "application/json", ...provider.headers },
         body: JSON.stringify({ model: provider.model, temperature: 0.1, messages: [
           { role: "system", content: "Prepare this speech transcript for a clean professional export. Correct only clear transcription wording errors, grammar, punctuation, capitalization and spacing where the intended words are unambiguous. Preserve the speaker's meaning, facts, names, numbers, dates, technical terms, sentence order and every meaningful detail. Never summarize, invent, translate, censor, or omit content. Do not make the speaker sound unnaturally formal. " + languageGuidance + " Format it into short, comfortable reading paragraphs: normally one complete sentence per paragraph (or two short related sentences when they clearly belong together), roughly one to two printed lines where possible. Put every new speaker turn in its own paragraph and keep speaker labels. Do not split a sentence in the middle. Separate paragraphs with one blank line. Return only the corrected, paragraphed transcript, with no title, notes, markdown fences, or explanation." },
           { role: "user", content: input.text },
