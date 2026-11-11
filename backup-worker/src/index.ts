@@ -257,9 +257,16 @@ async function subtitleSearch(input: SubtitleBody, env: Env) {
   const url = new URL("https://api.opensubtitles.com/api/v1/subtitles");
   url.searchParams.set("query", input.query!); url.searchParams.set("languages", (input.languages || "en").slice(0, 80)); url.searchParams.set("order_by", "download_count"); url.searchParams.set("order_direction", "desc");
   if (input.type) url.searchParams.set("type", input.type);
-  const response = await fetch(url, { headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0" }, signal: AbortSignal.timeout(25000) });
+  const response = await fetch(url, { headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0", "Accept": "application/json" }, signal: AbortSignal.timeout(25000) });
   const payload = await response.json().catch(() => ({})) as { data?: Array<{id?:string;attributes?:{language?:string;release?:string;hearing_impaired?:boolean;download_count?:number;upload_date?:string;feature_details?:{title?:string;year?:number;movie_name?:string;episode_number?:number;season_number?:number};files?:Array<{file_id?:number;file_name?:string}>}}> ; message?:string };
-  if (!response.ok) throw new Error(payload.message || "Subtitle provider HTTP " + response.status);
+  if (!response.ok) {
+    const message = payload.message || "Subtitle provider HTTP " + response.status;
+    const error = new Error(response.status === 403
+      ? "OpenSubtitles rejected the API key (HTTP 403). The saved OPENSUBTITLES_API_KEY may be invalid, disabled, or not an OpenSubtitles.com API consumer key. Check the key in GitHub Secrets; do not change the account password for this search error."
+      : message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
   return (payload.data || []).slice(0, 30).map(item => {
     const a = item.attributes || {}; const f = a.files?.[0] || {};
     return { id: item.id || String(f.file_id || ""), fileId: f.file_id || null, fileName: f.file_name || "Subtitle file", language: a.language || "", release: a.release || "", title: a.feature_details?.movie_name || a.feature_details?.title || input.query, year: a.feature_details?.year || null, season: a.feature_details?.season_number || null, episode: a.feature_details?.episode_number || null, hearingImpaired: Boolean(a.hearing_impaired), downloads: a.download_count || 0, uploadedAt: a.upload_date || null, downloadRequiresProviderAuthorization: true };
