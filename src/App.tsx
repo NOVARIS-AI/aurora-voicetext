@@ -9,7 +9,7 @@ import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, n
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
-  AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check, Film, Star, CalendarDays, Clapperboard, Play,
+  AudioLines, Upload, ArrowLeft, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check, Film, Star, CalendarDays, Clapperboard, Play,
   ShieldCheck, WandSparkles, LoaderCircle, FileText,
   Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
