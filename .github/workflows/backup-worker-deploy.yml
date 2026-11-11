@@ -1,6 +1,7 @@
 name: Deploy AURORA VoiceText backup worker
 
 on:
+  # Re-running this workflow syncs updated GitHub secrets into the Worker.
   workflow_dispatch:
   push:
     branches: [main]
