@@ -1670,6 +1670,10 @@ function App() {
 
   async function cleanSelectedAudio() {
     if (!active || cleanupBusy) return;
+    if (isVideoMediaFile(active.file)) {
+      setCleanupStatus('A video is selected. Audio cleanup currently supports audio files only; select or import an audio file first. Your video remains unchanged.');
+      return;
+    }
     setCleanupBusy(true); setCleanupStatus('Preparing audio…');
     let context: AudioContext | null = null;
     try {
@@ -2425,7 +2429,7 @@ function App() {
           </div>
           {voiceStatus && <div className="status-message" role="status">{voiceStatus}</div>}
           {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
-          <details className="voice-audio-tools"><summary><AudioWaveform size={16}/> Audio trimming tools</summary>
+          <details className="voice-audio-tools" open><summary><AudioWaveform size={16}/> Audio editor & restoration</summary>
             {editorStatus && <div className="status-message" role="status">{editorStatus}</div>}
           <div className="voice-workspace-grid">
           {!active ? <div className="empty-state"><AudioWaveform/><strong>No recording selected</strong><span>Import an audio file in Transcribe, then return here to edit it.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div> : <section className="card studio-card">
@@ -2443,7 +2447,7 @@ function App() {
           </div>
           <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
           <section className="audio-cleanup-panel">
-            <div className="audio-cleanup-heading"><div><small>02 · AUDIO RESTORATION</small><h3><Sparkles size={17}/> Clean up this recording</h3><p>Adaptive noise reduction, rumble filtering, speech-presence EQ and gentle compression. Processing runs on your device.</p></div><span className="cleanup-local-pill">ON-DEVICE</span></div>
+            <div className="audio-cleanup-heading"><div><small>02 · AUDIO RESTORATION</small><h3><Sparkles size={17}/> Clean up this recording</h3><p>Choose a profile, generate a cleaned preview, listen, then download a separate WAV. Your original stays untouched.</p></div><span className="cleanup-local-pill">ON-DEVICE</span></div>
             <label className="cleanup-profile-control">Enhancement profile
               <select value={cleanupProfile} onChange={event=>setCleanupProfile(event.target.value as 'natural'|'interview'|'noisy')}>
                 <option value="natural">Natural voice · balanced</option>
@@ -2452,8 +2456,9 @@ function App() {
               </select>
             </label>
             <label className="cleanup-strength-control">Noise reduction strength <strong>{cleanupStrength}%</strong><input type="range" min="0" max="100" step="5" value={cleanupStrength} onChange={event=>setCleanupStrength(Number(event.target.value))}/><span><small>Gentle</small><small>Strong</small></span></label>
+            {isVideoMediaFile(active.file) && <div className="cleanup-video-note" role="status">A video is selected. This cleanup tool currently works with audio files only. Import an audio file to use it; your video will not be changed.</div>}
             <div className="cleanup-note"><Volume2 size={16}/><span>Choose a profile for the recording. Stronger filtering can soften quiet words. This is advanced on-device audio processing, not cloud-based AI source separation or echo cancellation.</span></div>
-            <div className="studio-actions"><button className="primary" type="button" disabled={cleanupBusy||!active} onClick={()=>void cleanSelectedAudio()}>{cleanupBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {cleanupBusy?'Cleaning audio…':'Generate cleaned preview'}</button>{cleanedAudioUrl&&<button className="secondary" type="button" onClick={()=>void downloadCleanedAudio()}><Download size={16}/> Download cleaned WAV</button>}</div>
+            <div className="studio-actions"><button className="primary" type="button" disabled={cleanupBusy||!active||isVideoMediaFile(active.file)} onClick={()=>void cleanSelectedAudio()}>{cleanupBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {cleanupBusy?'Cleaning audio…':'Generate cleaned preview'}</button>{cleanedAudioUrl&&<button className="secondary" type="button" onClick={()=>void downloadCleanedAudio()}><Download size={16}/> Download cleaned WAV</button>}</div>
             {cleanedAudioUrl&&<div className="cleaned-audio-preview"><strong>Cleaned audio preview</strong><audio controls preload="metadata" src={cleanedAudioUrl}/></div>}
             {cleanupStatus&&<div className="status-message" role="status">{cleanupStatus}</div>}
           </section>
