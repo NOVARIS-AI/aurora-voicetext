@@ -1182,6 +1182,10 @@ function App() {
   const [editorEnd, setEditorEnd] = useState(0);
   const [editorDuration, setEditorDuration] = useState(0);
   const [editorBusy, setEditorBusy] = useState(false);
+  const [cleanupStrength, setCleanupStrength] = useState(45);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupStatus, setCleanupStatus] = useState('');
+  const [cleanedAudioUrl, setCleanedAudioUrl] = useState('');
   const [includeTimestamps, setIncludeTimestamps] = useState(true);
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
@@ -1209,6 +1213,7 @@ function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cleanupAudioUrlRef = useRef<string>('');
   const libraryImportRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<AudioFile[]>(files);
   filesRef.current = files;
@@ -1652,6 +1657,92 @@ function App() {
     } catch (reason) {
       setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+2), role: 'assistant', text: reason instanceof Error ? reason.message : 'That request could not be completed. Please try again.' }]);
     } finally { setPreviewBusy(false); }
+  }
+
+  useEffect(() => {
+    return () => { if (cleanupAudioUrlRef.current) URL.revokeObjectURL(cleanupAudioUrlRef.current); };
+  }, []);
+
+  async function cleanSelectedAudio() {
+    if (!active || cleanupBusy) return;
+    setCleanupBusy(true); setCleanupStatus('Preparing audio…');
+    let context: AudioContext | null = null;
+    try {
+      context = new AudioContext();
+      let sourceBytes: ArrayBuffer;
+      if (active.nativePath && (!active.file.size || active.file.size < 1024)) {
+        const duration = editorDuration || (active.nativeDurationMs ? active.nativeDurationMs / 1000 : 0);
+        if (!duration) throw new Error('Wait for the recording duration to load, then try again.');
+        if (duration > 900) throw new Error('For reliable processing on your phone, clean recordings in sections shorter than 15 minutes.');
+        setCleanupStatus('Decoding original recording…');
+        const result = await nativeAudioFiles.decodeSegment({ path: active.nativePath, startSeconds: 0, durationSeconds: duration });
+        const binary = atob(result.wavBase64); const bytes = new Uint8Array(binary.length);
+        for (let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+        sourceBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      } else {
+        if (active.file.size > 180 * 1024 * 1024) throw new Error('This file is too large for safe on-device cleanup. Try a shorter audio section.');
+        sourceBytes = await active.file.arrayBuffer();
+      }
+      setCleanupStatus('Reducing steady background noise and improving speech clarity…');
+      const decoded = await context.decodeAudioData(sourceBytes);
+      if (!decoded.length || decoded.duration > 900) throw new Error('Please choose a recording shorter than 15 minutes for on-device cleanup.');
+      const channels = decoded.numberOfChannels;
+      const sampleRate = decoded.sampleRate;
+      const channelData = Array.from({length:channels},(_,channel)=>new Float32Array(decoded.getChannelData(channel)));
+      const strength = cleanupStrength / 100;
+      const frameSize = Math.max(256, Math.floor(sampleRate * 0.02));
+      let overallSquares = 0, overallCount = 0;
+      for (const channel of channelData) for (let i=0;i<channel.length;i+=4) { overallSquares += channel[i]*channel[i]; overallCount++; }
+      const averageRms = Math.sqrt(overallSquares / Math.max(1,overallCount));
+      const gateThreshold = Math.max(0.0015, averageRms * (0.025 + strength * 0.16));
+      let peak = 0;
+      for (let frame=0;frame<decoded.length;frame+=frameSize) {
+        const end=Math.min(decoded.length,frame+frameSize); let square=0,count=0;
+        for(const channel of channelData) for(let i=frame;i<end;i+=2){square+=channel[i]*channel[i];count++;}
+        const rms=Math.sqrt(square/Math.max(1,count));
+        const targetGain = strength===0 ? 1 : Math.max(0.16,Math.min(1,(rms-gateThreshold*0.45)/(gateThreshold*1.8)));
+        const frameGain = 1 - strength + strength * targetGain;
+        for(const channel of channelData) for(let i=frame;i<end;i++){
+          const sample=channel[i]*frameGain;
+          const previous = i ? channel[i-1] : 0;
+          const highPassed = sample - previous * 0.94;
+          const shaped = highPassed * (0.78 + strength*0.22);
+          const compressed = Math.tanh(shaped * (1 + strength*1.1)) / Math.tanh(1 + strength*1.1);
+          channel[i]=compressed;
+          peak=Math.max(peak,Math.abs(compressed));
+        }
+      }
+      const normaliseGain = peak > 0 ? Math.min(1.8,0.92/peak) : 1;
+      const dataBytes=decoded.length*channels*2;
+      const output=new ArrayBuffer(44+dataBytes); const view=new DataView(output);
+      const write=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)view.setUint8(offset+i,value.charCodeAt(i));};
+      write(0,'RIFF');view.setUint32(4,36+dataBytes,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*channels*2,true);view.setUint16(32,channels*2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,dataBytes,true);
+      let offset=44;
+      for(let i=0;i<decoded.length;i++) for(let channel=0;channel<channels;channel++){
+        const sample=Math.max(-1,Math.min(1,channelData[channel][i]*normaliseGain));
+        view.setInt16(offset,sample<0?sample*32768:sample*32767,true);offset+=2;
+      }
+      const blob=new Blob([output],{type:'audio/wav'});
+      if(cleanupAudioUrlRef.current) URL.revokeObjectURL(cleanupAudioUrlRef.current);
+      const url=URL.createObjectURL(blob);cleanupAudioUrlRef.current=url;setCleanedAudioUrl(url);
+      setCleanupStatus('Cleanup preview ready. Your original recording is untouched. Download the cleaned WAV when you are happy with it.');
+    } catch(reason) {
+      setCleanupStatus(reason instanceof Error ? reason.message : 'Audio cleanup could not be completed.');
+    } finally {
+      if(context) await context.close().catch(()=>undefined);
+      setCleanupBusy(false);
+    }
+  }
+
+  async function downloadCleanedAudio() {
+    if(!cleanedAudioUrl || !active) return;
+    try {
+      const response=await fetch(cleanedAudioUrl);
+      const blob=await response.blob();
+      const base=active.file.name.replace(/\\.[^.]+$/,'');
+      await downloadFile(safeFileBaseName(base+'-cleaned','aurora-cleaned')+'.wav',blob,'audio/wav');
+      setCleanupStatus('Cleaned audio exported successfully. The original file remains unchanged.');
+    } catch(reason) { setCleanupStatus(reason instanceof Error?reason.message:'Could not export the cleaned audio.'); }
   }
 
   function updateTranscript(text: string) {
@@ -2325,6 +2416,14 @@ function App() {
             <button className="primary" type="button" disabled={editorBusy||!editorDuration||editorEnd<=editorStart} onClick={async()=>{setEditorBusy(true);setEditorStatus('');try{let wavBase64:string;if(active.nativePath){const result=await nativeAudioFiles.decodeSegment({path:active.nativePath,startSeconds:editorStart,durationSeconds:editorEnd-editorStart});wavBase64=result.wavBase64;}else{const context=new AudioContext();try{const decoded=await context.decodeAudioData(await active.file.arrayBuffer());const start=Math.floor(editorStart*decoded.sampleRate);const end=Math.min(decoded.length,Math.floor(editorEnd*decoded.sampleRate));if(end<=start)throw new Error('Choose a valid audio range.');const channels=decoded.numberOfChannels;const length=end-start;const buffer=new ArrayBuffer(44+length*channels*2);const view=new DataView(buffer);const write=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)view.setUint8(offset+i,value.charCodeAt(i));};write(0,'RIFF');view.setUint32(4,36+length*channels*2,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,decoded.sampleRate,true);view.setUint32(28,decoded.sampleRate*channels*2,true);view.setUint16(32,channels*2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,length*channels*2,true);let offset=44;for(let i=0;i<length;i++)for(let channel=0;channel<channels;channel++){const sample=Math.max(-1,Math.min(1,decoded.getChannelData(channel)[start+i]));view.setInt16(offset,sample<0?sample*32768:sample*32767,true);offset+=2;}const bytes=new Uint8Array(buffer);let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));wavBase64=btoa(binary);}finally{await context.close();}}const binary=atob(wavBase64);const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);await downloadFile(safeFileBaseName(active.file.name.replace(/\.[^.]+$/,'')+'-clip','aurora-clip')+'.wav',new Blob([bytes],{type:'audio/wav'}),'audio/wav');setEditorStatus('Trimmed audio clip exported. Your original file was not changed.');}catch(reason){setEditorStatus(reason instanceof Error?reason.message:'Could not export this audio section.');}finally{setEditorBusy(false);}}}>{editorBusy?<LoaderCircle className="spin" size={16}/>:<Download size={16}/>} {editorBusy?'Preparing clip…':'Export selected clip (WAV)'}</button>
           </div>
           <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
+          <section className="audio-cleanup-panel">
+            <div className="audio-cleanup-heading"><div><small>02 · AUDIO RESTORATION</small><h3><Sparkles size={17}/> Clean up this recording</h3><p>Reduce steady background noise, soften peaks and bring speech forward. Processing runs on your device.</p></div><span className="cleanup-local-pill">ON-DEVICE</span></div>
+            <label className="cleanup-strength-control">Noise reduction strength <strong>{cleanupStrength}%</strong><input type="range" min="0" max="100" step="5" value={cleanupStrength} onChange={event=>setCleanupStrength(Number(event.target.value))}/><span><small>Gentle</small><small>Strong</small></span></label>
+            <div className="cleanup-note"><Volume2 size={16}/><span>Best for steady fan, room and recording hiss. Strong settings may soften quiet speech. This is adaptive noise gating and voice levelling, not a studio spectral AI denoiser.</span></div>
+            <div className="studio-actions"><button className="primary" type="button" disabled={cleanupBusy||!active} onClick={()=>void cleanSelectedAudio()}>{cleanupBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {cleanupBusy?'Cleaning audio…':'Generate cleaned preview'}</button>{cleanedAudioUrl&&<button className="secondary" type="button" onClick={()=>void downloadCleanedAudio()}><Download size={16}/> Download cleaned WAV</button>}</div>
+            {cleanedAudioUrl&&<div className="cleaned-audio-preview"><strong>Cleaned audio preview</strong><audio controls preload="metadata" src={cleanedAudioUrl}/></div>}
+            {cleanupStatus&&<div className="status-message" role="status">{cleanupStatus}</div>}
+          </section>
         </section>}
         </div>
           </details>
