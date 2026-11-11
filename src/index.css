@@ -699,3 +699,10 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .movie-release-row strong{overflow:hidden;color:#eaf0f9;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .movie-release-row small{color:#8496ae;font-size:9px}
 @media(max-width:650px){.movie-detail-hero{grid-template-columns:104px minmax(0,1fr);gap:14px;min-height:0;padding:16px}.movie-detail-copy h1{font-size:23px}.movie-detail-copy>p{font-size:11px;line-height:1.6}.movie-detail-facts{gap:7px;font-size:9px}.movie-detail-body{padding:17px}.movie-stream-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.movie-stream-grid a{padding:11px;font-size:11px}.movie-release-row{grid-template-columns:minmax(0,1fr) auto}.movie-release-row button:last-child{grid-column:2}.movie-detail-toolbar>span{font-size:8px}}
+
+
+/* Manual speaker labelling for timestamped transcript lines */
+.insight-segment-row{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:7px;align-items:stretch}
+.insight-segment-row select{min-width:0;width:100%;padding:7px 6px;border:1px solid rgba(139,130,230,.22);border-radius:9px;color:#c9c7ff;background:#17152b;font:inherit;font-size:9px}
+.insight-segment-row .insight-segment{min-width:0;width:100%}
+@media(max-width:560px){.insight-segment-row{grid-template-columns:minmax(0,1fr) 94px;gap:5px}.insight-segment-row select{font-size:8px;padding:6px 3px}}
