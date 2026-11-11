@@ -18,6 +18,8 @@ export interface Env {
   ELEVENLABS_VOICE_ALLOY_ID?: string;
   OPENSUBTITLES_API_KEY?: string;
   OPENSUBTITLES_TOKEN?: string;
+  OPENSUBTITLES_USERNAME?: string;
+  OPENSUBTITLES_PASSWORD?: string;
   OPENSUBTITLES_USER_AGENT?: string;
   BACKUP_API_TOKEN?: string;
   BACKUP_PUBLIC_FALLBACK?: string;
@@ -265,12 +267,36 @@ async function subtitleSearch(input: SubtitleBody, env: Env) {
 }
 
 async function subtitleDownload(fileId: number, env: Env) {
-  if (!env.OPENSUBTITLES_API_KEY || !env.OPENSUBTITLES_TOKEN) throw new Error("Subtitle download credentials are not configured.");
-  const response = await fetch("https://api.opensubtitles.com/api/v1/download", { method: "POST", headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0", Authorization: "Bearer " + env.OPENSUBTITLES_TOKEN, "Content-Type": "application/json" }, body: JSON.stringify({ file_id: fileId }), signal: AbortSignal.timeout(25000) });
+  if (!env.OPENSUBTITLES_API_KEY || !env.OPENSUBTITLES_USERNAME || !env.OPENSUBTITLES_PASSWORD) {
+    throw new Error("Subtitle downloads need the OpenSubtitles API key plus the account username and password configured as backend secrets.");
+  }
+  const userAgent = env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0";
+  // OpenSubtitles issues short-lived bearer tokens through POST /login.
+  // Credentials remain in Worker secrets and are never sent to the client.
+  const login = await fetch("https://api.opensubtitles.com/api/v1/login", {
+    method: "POST",
+    headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": userAgent, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ username: env.OPENSUBTITLES_USERNAME, password: env.OPENSUBTITLES_PASSWORD }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const session = await login.json().catch(() => ({})) as { token?: string; base_url?: string; message?: string };
+  if (!login.ok || !session.token) {
+    const reason = login.status === 401 || login.status === 400
+      ? "OpenSubtitles account login was rejected. Check the saved account username and password."
+      : (session.message || "OpenSubtitles could not create an authenticated session (HTTP " + login.status + ").");
+    throw new Error(reason);
+  }
+  const host = session.base_url === "vip-api.opensubtitles.com" ? "https://vip-api.opensubtitles.com" : "https://api.opensubtitles.com";
+  const response = await fetch(host + "/api/v1/download", {
+    method: "POST",
+    headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": userAgent, Authorization: "Bearer " + session.token, "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId }),
+    signal: AbortSignal.timeout(25000),
+  });
   const payload = await response.json().catch(() => ({})) as { link?:string; file_name?:string; message?:string };
-  if (!response.ok || !payload.link) throw new Error(payload.message || "Subtitle provider did not authorize this download.");
+  if (!response.ok || !payload.link) throw new Error(payload.message || "OpenSubtitles did not authorize this download (HTTP " + response.status + ").");
   const file = await fetch(payload.link, { signal: AbortSignal.timeout(30000) });
-  if (!file.ok) throw new Error("Could not retrieve authorized subtitle file.");
+  if (!file.ok) throw new Error("Could not retrieve the authorized subtitle file.");
   const filename = (payload.file_name || "subtitle.srt").replace(/[^A-Za-z0-9._-]/g, "_");
   return new Response(await file.arrayBuffer(), { headers: { "content-type": file.headers.get("content-type") || "application/octet-stream", "content-disposition": 'attachment; filename="' + filename + '"', "cache-control": "no-store", "X-AURORA-Provider": "backup-opensubtitles" } });
 }
@@ -286,7 +312,7 @@ export default {
       cors.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS"); cors.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), openrouter: Boolean(env.OPENROUTER_API_KEY), translation: Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.GROQ_API_KEY), voiceChat: Boolean(env.OPENROUTER_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_TOKEN) } }, 200, cors);
+    if (url.pathname === "/health" && request.method === "GET") return json({ service: "aurora-voicetext-backup", status: "ok", providers: { transcription: Boolean(env.ASSEMBLYAI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), assemblyai: Boolean(env.ASSEMBLYAI_API_KEY), speech: Boolean(env.OPENAI_API_KEY || env.ELEVENLABS_API_KEY), openrouter: Boolean(env.OPENROUTER_API_KEY), translation: Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.GROQ_API_KEY), transcriptPolish: Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.GROQ_API_KEY), voiceChat: Boolean(env.OPENROUTER_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY), subtitles: Boolean(env.OPENSUBTITLES_API_KEY), subtitleDownload: Boolean(env.OPENSUBTITLES_API_KEY && env.OPENSUBTITLES_USERNAME && env.OPENSUBTITLES_PASSWORD) } }, 200, cors);
     const routes = new Set(["/api/transcribe", "/api/tts", "/api/assist", "/api/translate", "/api/voice-chat", "/api/subtitles", "/api/subtitles-download"]);
     if (!routes.has(url.pathname)) return json({ error: "Not found." }, 404, cors);
     if (request.method !== "POST") { const methodHeaders = new Headers(cors); methodHeaders.set("Allow", "POST"); return json({ error: "Method not allowed." }, 405, methodHeaders); }
