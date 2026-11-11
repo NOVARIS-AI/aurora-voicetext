@@ -66,9 +66,10 @@ test("Cloudflare Pages sends user-facing APIs to the primary server with indepen
   const primary = await readFile(new URL("../functions/api/[endpoint].ts", import.meta.url), "utf8");
   const voiceChat = await readFile(new URL("../api/voice-chat.ts", import.meta.url), "utf8");
   const backup = await readFile(new URL("../api/_lib/backup.ts", import.meta.url), "utf8");
-  for (const endpoint of ["transcribe", "tts", "assist", "translate", "voice-chat", "subtitles", "subtitles-download"]) {
+  for (const endpoint of ["transcribe", "tts", "assist", "translate", "voice-chat"]) {
     assert.ok(primary.includes('"' + endpoint + '"'), "Missing primary API route " + endpoint);
   }
+  assert.doesNotMatch(primary.match(/const VERCEL_API_ENDPOINTS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || "", /"subtitles(?:-download)?"/);
   assert.match(primary, /new URL\(workerPath, VERCEL_API_BASE_URL\)/);
   assert.match(voiceChat, /callBackup\("\/api\/voice-chat"/);
   assert.match(backup, /"\/api\/voice-chat"/);
@@ -94,5 +95,5 @@ test("Backup Worker deploy name, Pages health target, and provider readiness sta
   assert.match(workerConfig, /^name = "aurora-voicetext-backup"$/m);
   assert.match(health, /aurora-voicetext-backup\.schoolershubit5\.workers\.dev/);
   assert.match(worker, /openrouter:\s*Boolean\(env\.OPENROUTER_API_KEY\)/);
-  assert.match(worker, /subtitleDownload:\s*Boolean\(env\.OPENSUBTITLES_API_KEY && env\.OPENSUBTITLES_TOKEN\)/);
+  assert.match(worker, /subtitleDownload:\s*Boolean\(env\.OPENSUBTITLES_API_KEY && env\.OPENSUBTITLES_USERNAME && env\.OPENSUBTITLES_PASSWORD\)/);
 });
