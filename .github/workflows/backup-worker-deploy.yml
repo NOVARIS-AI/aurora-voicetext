@@ -69,7 +69,8 @@ jobs:
             if [ -n "$value" ]; then printf '%s' "$value" | wrangler secret put "$variable"; fi
           done
           if [ -n "$OPENSUBTITLES_API_KEY" ]; then printf '%s' "$OPENSUBTITLES_API_KEY" | wrangler secret put OPENSUBTITLES_API_KEY; fi
-          if [ -n "$OPENSUBTITLES_TOKEN" ]; then printf '%s' "$OPENSUBTITLES_TOKEN" | wrangler secret put OPENSUBTITLES_TOKEN; fi
+          if [ -n "$OPENSUBTITLES_USERNAME" ]; then printf '%s' "$OPENSUBTITLES_USERNAME" | wrangler secret put OPENSUBTITLES_USERNAME; fi
+          if [ -n "$OPENSUBTITLES_PASSWORD" ]; then printf '%s' "$OPENSUBTITLES_PASSWORD" | wrangler secret put OPENSUBTITLES_PASSWORD; fi
           if [ -n "$OPENSUBTITLES_USER_AGENT" ]; then printf '%s' "$OPENSUBTITLES_USER_AGENT" | wrangler secret put OPENSUBTITLES_USER_AGENT; fi
       - name: Deploy independent backup API
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
