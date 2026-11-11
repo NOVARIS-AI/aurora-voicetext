@@ -1572,12 +1572,12 @@ function App() {
         if (chunks.length > 12) throw new Error('This transcript is very long. Please split it into smaller recordings so the AI can analyse every section reliably.');
         const insights: string[] = [];
         for (let index = 0; index < chunks.length; index++) {
-          const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: task + '\\n\\nTranscript section ' + (index + 1) + ' of ' + chunks.length + ':\\n' + chunks[index] }] });
+          const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: task + '\n\nTranscript section ' + (index + 1) + ' of ' + chunks.length + ':\n' + chunks[index] }] });
           if (!data?.text) throw new Error('AURORA could not analyse transcript section ' + (index + 1) + '.');
           insights.push(String(data.text).trim());
         }
-        result = insights.length === 1 ? insights[0] : insights.map((item, index) => 'SECTION ' + (index + 1) + '\\n' + item).join('\\n\\n');
-      } else if (/\\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\\b/.test(lower)) {
+        result = insights.length === 1 ? insights[0] : insights.map((item, index) => 'SECTION ' + (index + 1) + '\n' + item).join('\n\n');
+      } else if (/\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\b/.test(lower)) {
         const chunks = splitLongText(active.transcript, 18000); const output: string[] = [];
         for (const chunk of chunks) {
           const { data } = await requestFeature('/api/assist', { text: chunk });
@@ -1586,7 +1586,7 @@ function App() {
         }
         result = output.join('\n\n'); updateTranscript(result);
       } else {
-        const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: 'Answer the following request using only the supplied transcript as source material. Be clear about uncertainty and never invent facts. Request: ' + prompt + '\\n\\nTranscript:\\n' + active.transcript.slice(0, 11000) + (active.transcript.length > 11000 ? '\\n\\n[Transcript excerpt: remaining text omitted. Ask for a specific section if needed.]' : '') }] });
+        const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: 'Answer the following request using only the supplied transcript as source material. Be clear about uncertainty and never invent facts. Request: ' + prompt + '\n\nTranscript:\n' + active.transcript.slice(0, 11000) + (active.transcript.length > 11000 ? '\n\n[Transcript excerpt: remaining text omitted. Ask for a specific section if needed.]' : '') }] });
         result = String(data?.text || '').trim();
         if (!result) throw new Error('AURORA could not complete that transcript request.');
       }
