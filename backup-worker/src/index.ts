@@ -294,14 +294,48 @@ async function subtitleDownload(fileId: number, env: Env) {
     throw new Error(reason);
   }
   const host = session.base_url === "vip-api.opensubtitles.com" ? "https://vip-api.opensubtitles.com" : "https://api.opensubtitles.com";
-  const response = await fetch(host + "/api/v1/download", {
-    method: "POST",
-    headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": userAgent, Authorization: "Bearer " + session.token, "Content-Type": "application/json" },
-    body: JSON.stringify({ file_id: fileId }),
-    signal: AbortSignal.timeout(25000),
-  });
-  const payload = await response.json().catch(() => ({})) as { link?:string; file_name?:string; message?:string };
-  if (!response.ok || !payload.link) throw new Error(payload.message || "OpenSubtitles did not authorize this download (HTTP " + response.status + ").");
+  // The OpenSubtitles edge occasionally returns transient 502/503/504
+  // responses before its download API handles the request. Retry once only
+  // for those transient statuses; never retry authorization/client errors.
+  let response: Response | null = null;
+  let responseText = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      response = await fetch(host + "/api/v1/download", {
+        method: "POST",
+        headers: { "Api-Key": env.OPENSUBTITLES_API_KEY, "User-Agent": userAgent, Authorization: "Bearer " + session.token, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ file_id: fileId }),
+        signal: AbortSignal.timeout(25000),
+      });
+      if (response.ok) break;
+      responseText = await response.text().catch(() => "");
+      if (![502, 503, 504].includes(response.status) || attempt === 1) break;
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    } catch (error) {
+      if (attempt === 1) throw Object.assign(new Error("OpenSubtitles download request failed at the network layer after one retry: " + (error instanceof Error ? error.message : "network error")), { status: 503 });
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+  }
+  if (!response) throw Object.assign(new Error("OpenSubtitles download request did not return a response."), { status: 503 });
+  const payload = (() => { try { return JSON.parse(responseText || "{}") as { link?:string; file_name?:string; message?:string }; } catch { return {} as { link?:string; file_name?:string; message?:string }; } })();
+  if (!responseText && response.ok) responseText = await response.clone().text().catch(() => "");
+  if (!response.ok || !payload.link) {
+    const transient = [502, 503, 504].includes(response.status);
+    const detail = (payload.message || responseText.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim()).slice(0, 180);
+    const ray = response.headers.get("cf-ray");
+    const retryAfter = response.headers.get("retry-after");
+    const server = response.headers.get("server");
+    const diagnostic = [
+      "OpenSubtitles " + (transient ? "temporarily failed" : "rejected") + " the download request (HTTP " + response.status + ").",
+      "Host: " + host.replace("https://", "") + ".",
+      ray ? "Request ID: " + ray + "." : "",
+      retryAfter ? "Retry-After: " + retryAfter + "." : "",
+      server ? "Edge: " + server + "." : "",
+      detail ? "Provider detail: " + detail : "",
+      transient ? "Please try again later; AURORA already retried once." : "",
+    ].filter(Boolean).join(" ");
+    throw Object.assign(new Error(diagnostic), { status: response.status >= 400 && response.status < 500 ? response.status : 503 });
+  }
   const file = await fetch(payload.link, { signal: AbortSignal.timeout(30000) });
   if (!file.ok) throw new Error("Could not retrieve the authorized subtitle file.");
   const filename = (payload.file_name || "subtitle.srt").replace(/[^A-Za-z0-9._-]/g, "_");
