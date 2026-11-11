@@ -322,7 +322,7 @@ async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: 
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error || new Error('Could not read saved workspace.'));
     });
-    if (!snapshot || !Array.isArray(snapshot.files) || !snapshot.files.length) return null;
+    if (!snapshot || !Array.isArray(snapshot.files)) return null;
     const files = await Promise.all(snapshot.files.map(async (meta: StoredAudioMeta) => {
       const saved = await new Promise<any>((resolve, reject) => {
         const request = db.transaction('audio', 'readonly').objectStore('audio').get(meta.id);
@@ -334,7 +334,7 @@ async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: 
       const nativePath = meta.nativePath || saved?.nativePath || undefined;
       return { ...meta, file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), nativePath } as AudioFile;
     }));
-    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','settings','admin'];
+    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','movieDetails','settings','admin'];
     return { files, activeId: typeof snapshot.activeId === 'string' ? snapshot.activeId : files[0]?.id ?? null, page: pages.includes(snapshot.page) ? snapshot.page : 'home' };
   } finally { db.close(); }
 }
@@ -1191,8 +1191,8 @@ function App() {
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
   const [subtitleType, setSubtitleType] = useState<'movie' | 'episode' | undefined>(undefined);
-  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;backdrop?:string;overview?:string;genres?:string[];rating?:string;imdbId?:string;cast?:string[];director?:string[];runtime?:string;country?:string[];artworkResolved?:boolean}>>([]);
-  const [selectedSubtitleId, setSelectedSubtitleId] = useState<string | null>(null);
+  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;backdrop?:string;overview?:string;genres?:string[];rating?:string;imdbId?:string;cast?:string[];director?:string[];runtime?:string;country?:string[];artworkResolved?:boolean}>>(() => { try { const saved = JSON.parse(localStorage.getItem('aurora-voicetext-subtitles-v1') || '[]'); return Array.isArray(saved) ? saved : []; } catch { return []; } });
+  const [selectedSubtitleId, setSelectedSubtitleId] = useState<string | null>(() => { try { return localStorage.getItem('aurora-voicetext-selected-subtitle-v1'); } catch { return null; } });
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
   const [transcriptTargetLanguage, setTranscriptTargetLanguage] = useState('English');
@@ -1345,6 +1345,14 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem('aurora-voicetext-folders-v1', JSON.stringify(libraryFolders)); } catch { /* Folder metadata is best-effort on low-storage devices. */ }
   }, [libraryFolders]);
+
+  useEffect(() => {
+    try { localStorage.setItem('aurora-voicetext-subtitles-v1', JSON.stringify(subtitleResults)); } catch { /* Subtitle metadata is small and best-effort. */ }
+  }, [subtitleResults]);
+
+  useEffect(() => {
+    try { if (selectedSubtitleId) localStorage.setItem('aurora-voicetext-selected-subtitle-v1', selectedSubtitleId); else localStorage.removeItem('aurora-voicetext-selected-subtitle-v1'); } catch { /* Keep navigation usable when storage is unavailable. */ }
+  }, [selectedSubtitleId]);
 
   // Restore before autosaving, so the initial empty React state cannot erase a session.
   useEffect(() => {
@@ -1781,6 +1789,16 @@ function App() {
   function updateTranscript(text: string) {
     if (!active) return;
     setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
+  }
+
+  function updateTimedSegmentSpeaker(index: number, speaker: string) {
+    if (!active?.timedSegments?.[index]) return;
+    setFiles(current => current.map(item => item.id === active.id ? {
+      ...item,
+      timedSegments: item.timedSegments?.map((segment, segmentIndex) => segmentIndex === index
+        ? { ...segment, speaker: speaker || undefined }
+        : segment),
+    } : item));
   }
 
   function applyTranscriptFormat(format: 'paragraphs' | 'sentence' | 'heading' | 'speaker') {
@@ -2414,7 +2432,7 @@ function App() {
               {detectedSpeakers.length>0 && <div className="timeline-speakers"><span>Speaker labels supplied by transcription</span>{detectedSpeakers.map(speaker=><span className="timeline-speaker-chip" key={speaker}>{speaker}</span>)}</div>}
               <div className="timeline-chapter-tools"><button className="timeline-more-button" type="button" onClick={()=>void generateMediaChapters()} disabled={chaptersBusy}>{chaptersBusy?'Finding chapter breaks…':'✨ Generate AI chapters'}</button>{detectedSpeakers.length>0 ? <label className="timeline-speaker-filter">Speaker view<select value={speakerFilter} onChange={event=>setSpeakerFilter(event.target.value)}><option value="all">All speakers</option>{detectedSpeakers.map(speaker=><option key={speaker} value={speaker}>{speaker}</option>)}</select></label> : <small className="timeline-speaker-note">No speaker labels were returned by the transcription engine. Speaker separation requires an audio diarization provider; AURORA will not guess who is speaking from text alone.</small>}</div>
               {mediaChapters.length>0 && <div className="media-chapters"><div className="media-chapters-title"><strong>AI chapters</strong><small>{mediaChapters.length} timestamped sections</small></div>{mediaChapters.map((chapter,index)=><button type="button" key={index} className={audioPlayhead>=chapter.start&&audioPlayhead<chapter.end?'media-chapter active':'media-chapter'} onClick={()=>jumpToTimedSegment(chapter.start)}><time>{Math.floor(chapter.start/60).toString().padStart(2,'0')}:{Math.floor(chapter.start%60).toString().padStart(2,'0')}</time><span><b>{chapter.title}</b><small>{chapter.summary}</small></span></button>)}</div>}
-              <div className="insight-segments">{visibleTimedSegments.map(segment=><button type="button" key={segment.index} className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'insight-segment active':'insight-segment'} onClick={()=>jumpToTimedSegment(segment.start)}><time>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</time><span>{segment.speaker ? <b>{segment.speaker}: </b> : null}{segment.text}</span></button>)}</div>
+              <div className="insight-segments">{visibleTimedSegments.map(segment=><div className="insight-segment-row" key={segment.index}><button type="button" className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'insight-segment active':'insight-segment'} onClick={()=>jumpToTimedSegment(segment.start)}><time>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</time><span>{segment.speaker ? <b>{segment.speaker}: </b> : null}{segment.text}</span></button><select aria-label={'Assign speaker for segment at '+Math.floor(segment.start)+' seconds'} value={segment.speaker || ''} onChange={event=>updateTimedSegmentSpeaker(segment.index,event.target.value)}><option value="">Unassigned</option><option value="Speaker 1">Speaker 1</option><option value="Speaker 2">Speaker 2</option><option value="Speaker 3">Speaker 3</option><option value="Speaker 4">Speaker 4</option>{segment.speaker && !['Speaker 1','Speaker 2','Speaker 3','Speaker 4'].includes(segment.speaker) && <option value={segment.speaker}>{segment.speaker}</option>}</select></div>)}</div>
               {!matchingTimedSegments.length && <div className="insight-no-timing">No timed transcript lines match that search.</div>}
               {matchingTimedSegments.length>80 && <button className="timeline-more-button" type="button" onClick={()=>setTimelineShowAll(value=>!value)}>{timelineShowAll?'Show fewer lines':'Show more lines ('+matchingTimedSegments.length.toLocaleString()+')'}</button>}
             </div> : <div className="insight-no-timing">Timestamped speech appears here when the transcription engine returns word or segment timing. You can still use the full transcript below.</div>}
