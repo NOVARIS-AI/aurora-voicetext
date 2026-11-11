@@ -317,8 +317,8 @@ async function subtitleDownload(fileId: number, env: Env) {
     }
   }
   if (!response) throw Object.assign(new Error("OpenSubtitles download request did not return a response."), { status: 503 });
+  responseText = await response.text().catch(() => responseText);
   const payload = (() => { try { return JSON.parse(responseText || "{}") as { link?:string; file_name?:string; message?:string }; } catch { return {} as { link?:string; file_name?:string; message?:string }; } })();
-  if (!responseText && response.ok) responseText = await response.clone().text().catch(() => "");
   if (!response.ok || !payload.link) {
     const transient = [502, 503, 504].includes(response.status);
     const detail = (payload.message || responseText.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim()).slice(0, 180);
