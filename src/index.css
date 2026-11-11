@@ -638,3 +638,7 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .cleaned-audio-preview strong{color:#dff7ff;font-size:11px}
 .cleaned-audio-preview audio{width:100%}
 @media(max-width:560px){.audio-cleanup-panel{padding:12px}.audio-cleanup-heading{flex-direction:column}.cleanup-local-pill{align-self:flex-start}.audio-cleanup-panel .studio-actions{display:grid;grid-template-columns:1fr}.audio-cleanup-panel .studio-actions button{justify-content:center}}
+
+.cleanup-profile-control{display:grid;gap:7px;color:#dceef8;font-size:11px;font-weight:800}
+.cleanup-profile-control select{width:100%;min-height:42px;padding:10px 12px;border:1px solid rgba(92,198,225,.22);border-radius:10px;color:#e5f8ff;background:#101e30;font:inherit;font-weight:600}
+.cleanup-profile-control option{color:#e5f8ff;background:#101e30}
