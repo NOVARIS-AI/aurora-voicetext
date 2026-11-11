@@ -353,3 +353,5 @@ export default {
     }
   },
 };
+
+// Redeploy marker: refresh Worker secrets after the latest GitHub Secrets update.
