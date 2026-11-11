@@ -1255,6 +1255,8 @@ function App() {
     void media.play().catch(() => undefined);
   }
 
+  useEffect(() => { setMediaChapters([]); setSpeakerFilter('all'); setTimelineSearch(''); }, [active?.id]);
+
   // Enrich every subtitle result with matching movie or series metadata.
   useEffect(() => {
     const unresolved = subtitleResults.filter(item => !item.artworkResolved);
