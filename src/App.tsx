@@ -9,7 +9,7 @@ import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, n
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
-  AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check,
+  AudioLines, Upload, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check, Film,
   ShieldCheck, WandSparkles, LoaderCircle, FileText,
   Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
@@ -1180,7 +1180,7 @@ function App() {
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
   const [subtitleType, setSubtitleType] = useState<'movie' | 'episode' | undefined>(undefined);
-  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number}>>([]);
+  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;artworkResolved?:boolean}>>([]);
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
   const [transcriptTargetLanguage, setTranscriptTargetLanguage] = useState('English');
@@ -1200,6 +1200,39 @@ function App() {
   const filesRef = useRef<AudioFile[]>(files);
   filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
+
+  // Enrich subtitle releases with matching movie/series artwork from Cinemeta.
+  // Artwork is optional: subtitle search and downloads remain fully usable if metadata is offline.
+  useEffect(() => {
+    const unresolved = subtitleResults.filter(item => !item.artworkResolved);
+    if (!unresolved.length) return;
+    let cancelled = false;
+    const query = subtitleQuery.trim();
+    if (!query) return;
+    const kinds = subtitleType === 'movie' ? ['movie'] : subtitleType === 'episode' ? ['series'] : ['movie', 'series'];
+    void Promise.all(kinds.map(async kind => {
+      try {
+        const response = await fetch('https://v3-cinemeta.strem.io/catalog/' + kind + '/top/search=' + encodeURIComponent(query) + '.json', { signal: AbortSignal.timeout(9000) });
+        if (!response.ok) return { kind, metas: [] as Array<{name?:string;year?:string|number;poster?:string}> };
+        const payload = await response.json();
+        return { kind, metas: Array.isArray(payload?.metas) ? payload.metas as Array<{name?:string;year?:string|number;poster?:string}> : [] };
+      } catch { return { kind, metas: [] as Array<{name?:string;year?:string|number;poster?:string}> }; }
+    })).then(catalogs => {
+      if (cancelled) return;
+      const normalize = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim();
+      setSubtitleResults(current => current.map(item => {
+        if (item.artworkResolved) return item;
+        const kind = item.season != null || subtitleType === 'episode' ? 'series' : 'movie';
+        const metas = catalogs.find(catalog => catalog.kind === kind)?.metas || [];
+        const target = normalize(item.title);
+        const matches = metas.filter(meta => normalize(meta.name || '') === target);
+        const candidates = matches.length ? matches : metas.filter(meta => normalize(meta.name || '').includes(target) || target.includes(normalize(meta.name || '')));
+        const match = (candidates.length ? candidates : metas)[0];
+        return { ...item, poster: match?.poster, artworkResolved: true };
+      }));
+    });
+    return () => { cancelled = true; };
+  }, [subtitleResults, subtitleQuery, subtitleType]);
 
   // Surface resumable work as soon as the same recording is selected again.
   useEffect(() => {
@@ -2131,7 +2164,20 @@ function App() {
           <div className="studio-grid"><label className="field-label">Content type<AppSelect ariaLabel="Subtitle content type" value={subtitleType || 'all'} onChange={value=>setSubtitleType(value === 'all' ? undefined : value as 'movie' | 'episode')} options={[{value:'all',label:'Movies & series'},{value:'movie',label:'Movie'},{value:'episode',label:'TV episode'}]}/></label><label className="field-label">Find subtitles in<AppSelect ariaLabel="Subtitle language" value={subtitleLanguage} onChange={setSubtitleLanguage} options={[{value:'en',label:'English'},{value:'ar',label:'Arabic'},{value:'bn',label:'Bengali'},{value:'bg',label:'Bulgarian'},{value:'my',label:'Burmese'},{value:'ca',label:'Catalan'},{value:'zh',label:'Chinese'},{value:'hr',label:'Croatian'},{value:'cs',label:'Czech'},{value:'da',label:'Danish'},{value:'nl',label:'Dutch'},{value:'et',label:'Estonian'},{value:'fi',label:'Finnish'},{value:'fr',label:'French'},{value:'de',label:'German'},{value:'el',label:'Greek'},{value:'gu',label:'Gujarati'},{value:'ha',label:'Hausa'},{value:'he',label:'Hebrew'},{value:'hi',label:'Hindi'},{value:'hu',label:'Hungarian'},{value:'is',label:'Icelandic'},{value:'id',label:'Indonesian'},{value:'ga',label:'Irish'},{value:'it',label:'Italian'},{value:'ja',label:'Japanese'},{value:'jv',label:'Javanese'},{value:'kn',label:'Kannada'},{value:'kk',label:'Kazakh'},{value:'km',label:'Khmer'},{value:'ko',label:'Korean'},{value:'lo',label:'Lao'},{value:'lv',label:'Latvian'},{value:'lt',label:'Lithuanian'},{value:'mk',label:'Macedonian'},{value:'ms',label:'Malay'},{value:'ml',label:'Malayalam'},{value:'mr',label:'Marathi'},{value:'mn',label:'Mongolian'},{value:'ne',label:'Nepali'},{value:'no',label:'Norwegian'},{value:'fa',label:'Persian'},{value:'pl',label:'Polish'},{value:'pt',label:'Portuguese'},{value:'pa',label:'Punjabi'},{value:'ro',label:'Romanian'},{value:'ru',label:'Russian'},{value:'sr',label:'Serbian'},{value:'sk',label:'Slovak'},{value:'sl',label:'Slovenian'},{value:'so',label:'Somali'},{value:'es',label:'Spanish'},{value:'sw',label:'Swahili'},{value:'sv',label:'Swedish'},{value:'tl',label:'Tagalog'},{value:'ta',label:'Tamil'},{value:'te',label:'Telugu'},{value:'th',label:'Thai'},{value:'tr',label:'Turkish'},{value:'uk',label:'Ukrainian'},{value:'ur',label:'Urdu'},{value:'uz',label:'Uzbek'},{value:'vi',label:'Vietnamese'},{value:'yo',label:'Yoruba'},{value:'ig',label:'Igbo'},{value:'zu',label:'Zulu'},{value:'am',label:'Amharic'},{value:'af',label:'Afrikaans'},{value:'xh',label:'Xhosa'},{value:'rw',label:'Kinyarwanda'},{value:'ps',label:'Pashto'},{value:'si',label:'Sinhala'},{value:'az',label:'Azerbaijani'},{value:'hy',label:'Armenian'},{value:'ka',label:'Georgian'},{value:'eu',label:'Basque'},{value:'gl',label:'Galician'},{value:'cy',label:'Welsh'},{value:'sq',label:'Albanian'},{value:'bs',label:'Bosnian'},{value:'ceb',label:'Cebuano'},{value:'mg',label:'Malagasy'},{value:'ny',label:'Chichewa'},{value:'sn',label:'Shona'},{value:'su',label:'Sundanese'},{value:'ku',label:'Kurdish'},{value:'gd',label:'Scottish Gaelic'},{value:'mi',label:'Māori'},{value:'lb',label:'Luxembourgish'},{value:'mt',label:'Maltese'},{value:'yi',label:'Yiddish'},{value:'fo',label:'Faroese'},{value:'tt',label:'Tatar'},{value:'tg',label:'Tajik'}]}/></label><label className="field-label">Translate downloaded subtitle to<AppSelect ariaLabel="Translate subtitle to" value={subtitleTranslateLanguage} onChange={setSubtitleTranslateLanguage} options={[{value:'English',label:'English'},{value:'Arabic',label:'Arabic'},{value:'Bengali',label:'Bengali'},{value:'Bulgarian',label:'Bulgarian'},{value:'Burmese',label:'Burmese'},{value:'Catalan',label:'Catalan'},{value:'Chinese',label:'Chinese'},{value:'Croatian',label:'Croatian'},{value:'Czech',label:'Czech'},{value:'Danish',label:'Danish'},{value:'Dutch',label:'Dutch'},{value:'Estonian',label:'Estonian'},{value:'Finnish',label:'Finnish'},{value:'French',label:'French'},{value:'German',label:'German'},{value:'Greek',label:'Greek'},{value:'Gujarati',label:'Gujarati'},{value:'Hausa',label:'Hausa'},{value:'Hebrew',label:'Hebrew'},{value:'Hindi',label:'Hindi'},{value:'Hungarian',label:'Hungarian'},{value:'Icelandic',label:'Icelandic'},{value:'Indonesian',label:'Indonesian'},{value:'Irish',label:'Irish'},{value:'Italian',label:'Italian'},{value:'Japanese',label:'Japanese'},{value:'Javanese',label:'Javanese'},{value:'Kannada',label:'Kannada'},{value:'Kazakh',label:'Kazakh'},{value:'Khmer',label:'Khmer'},{value:'Korean',label:'Korean'},{value:'Lao',label:'Lao'},{value:'Latvian',label:'Latvian'},{value:'Lithuanian',label:'Lithuanian'},{value:'Macedonian',label:'Macedonian'},{value:'Malay',label:'Malay'},{value:'Malayalam',label:'Malayalam'},{value:'Marathi',label:'Marathi'},{value:'Mongolian',label:'Mongolian'},{value:'Nepali',label:'Nepali'},{value:'Norwegian',label:'Norwegian'},{value:'Persian',label:'Persian'},{value:'Polish',label:'Polish'},{value:'Portuguese',label:'Portuguese'},{value:'Punjabi',label:'Punjabi'},{value:'Romanian',label:'Romanian'},{value:'Russian',label:'Russian'},{value:'Serbian',label:'Serbian'},{value:'Slovak',label:'Slovak'},{value:'Slovenian',label:'Slovenian'},{value:'Somali',label:'Somali'},{value:'Spanish',label:'Spanish'},{value:'Swahili',label:'Swahili'},{value:'Swedish',label:'Swedish'},{value:'Tagalog',label:'Tagalog'},{value:'Tamil',label:'Tamil'},{value:'Telugu',label:'Telugu'},{value:'Thai',label:'Thai'},{value:'Turkish',label:'Turkish'},{value:'Ukrainian',label:'Ukrainian'},{value:'Urdu',label:'Urdu'},{value:'Uzbek',label:'Uzbek'},{value:'Vietnamese',label:'Vietnamese'},{value:'Yoruba',label:'Yoruba'},{value:'Igbo',label:'Igbo'},{value:'Zulu',label:'Zulu'},{value:'Amharic',label:'Amharic'},{value:'Afrikaans',label:'Afrikaans'},{value:'Xhosa',label:'Xhosa'},{value:'Kinyarwanda',label:'Kinyarwanda'},{value:'Pashto',label:'Pashto'},{value:'Sinhala',label:'Sinhala'},{value:'Azerbaijani',label:'Azerbaijani'},{value:'Armenian',label:'Armenian'},{value:'Georgian',label:'Georgian'},{value:'Basque',label:'Basque'},{value:'Galician',label:'Galician'},{value:'Welsh',label:'Welsh'},{value:'Albanian',label:'Albanian'},{value:'Bosnian',label:'Bosnian'},{value:'Cebuano',label:'Cebuano'},{value:'Malagasy',label:'Malagasy'},{value:'Chichewa',label:'Chichewa'},{value:'Shona',label:'Shona'},{value:'Sundanese',label:'Sundanese'},{value:'Kurdish',label:'Kurdish'},{value:'Scottish Gaelic',label:'Scottish Gaelic'},{value:'Māori',label:'Māori'},{value:'Luxembourgish',label:'Luxembourgish'},{value:'Maltese',label:'Maltese'},{value:'Yiddish',label:'Yiddish'},{value:'Faroese',label:'Faroese'},{value:'Tatar',label:'Tatar'},{value:'Tajik',label:'Tajik'}]}/></label></div>
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
-          {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}><div className="subtitle-result-main"><strong>{item.title} {item.year?'('+item.year+')':''}</strong><p>{item.language.toUpperCase()} · {item.release||item.fileName}{item.season ? ' · S'+String(item.season).padStart(2,'0')+(item.episode ? ' E'+String(item.episode).padStart(2,'0') : '') : ''}</p><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small></div><div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button></div></article>)}</div>}
+          {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}>
+            <div className="subtitle-poster-wrap">
+              <div className="subtitle-poster-fallback"><Film size={25}/><span>{item.season ? 'SERIES' : 'MOVIE'}</span></div>
+              {item.poster && <img className="subtitle-poster" src={item.poster} alt={item.title + ' poster'} loading="lazy" onError={event=>{event.currentTarget.style.opacity='0';}}/>}
+            </div>
+            <div className="subtitle-result-main">
+              <div className="subtitle-result-kicker">{item.season ? 'TV SERIES' : 'FEATURE FILM'} <span>{item.year || 'TITLE MATCH'}</span></div>
+              <strong>{item.title} {item.year?'('+item.year+')':''}</strong>
+              {item.season != null && <div className="subtitle-episode-tag">SEASON {String(item.season).padStart(2,'0')}{item.episode ? ' · EPISODE '+String(item.episode).padStart(2,'0') : ''}</div>}
+              <p>{item.language.toUpperCase()} <span>·</span> {item.release||item.fileName}</p>
+              <small><Download size={12}/> {item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small>
+            </div>
+            <div className="subtitle-actions"><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button></div>
+          </article>)}</div>}
           {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW</small><h2>{subtitleFilename}</h2></div><span className="count">Editable</span></div><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/><div className="studio-actions"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
         </section>
       </section>}
