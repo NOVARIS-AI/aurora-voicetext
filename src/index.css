@@ -517,3 +517,22 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .subtitle-edit-details summary{padding:9px 0;color:#9eacc1;font-size:11px;cursor:pointer}
 .subtitle-edit-details textarea{width:100%;min-height:150px;padding:10px;border:1px solid rgba(145,171,216,.16);border-radius:10px;color:#eaf0ff;background:rgba(3,7,15,.48);font-size:12px;line-height:1.6}
 @media(max-width:650px){.subtitle-result{grid-template-columns:66px minmax(0,1fr);gap:11px;padding:10px}.subtitle-poster-wrap{width:66px;height:94px}.subtitle-actions{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;width:100%;min-width:0}.subtitle-actions button{padding:8px 4px;font-size:10px}.subtitle-title-button{font-size:12px}.subtitle-detail-backdrop{min-height:300px;padding:18px}.subtitle-detail-copy{padding-top:38px}.subtitle-detail-releases{align-items:flex-start}.subtitle-cue{grid-template-columns:1fr;gap:5px}}
+\n
+/* AI transcript intelligence workspace */
+.insight-quick-actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+.insight-quick-actions button{display:inline-flex;align-items:center;gap:7px;padding:9px 12px;border:1px solid rgba(83,211,222,.22);border-radius:999px;color:#c9f5f7;background:rgba(25,113,128,.12);font-size:11px;font-weight:800;cursor:pointer}
+.insight-quick-actions button:disabled{opacity:.5;cursor:wait}
+.preview-media-panel{display:grid;gap:12px;margin:12px 0 16px;padding:12px;border:1px solid rgba(103,183,208,.16);border-radius:16px;background:rgba(5,14,26,.56)}
+.preview-media-panel .audio-player{width:100%;margin:0}
+.insight-timeline{display:grid;gap:9px}
+.insight-timeline-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.insight-timeline-heading strong{color:#e4f6ff;font-size:12px}
+.insight-timeline-heading small,.insight-more{color:#819bb3;font-size:10px}
+.insight-segments{display:grid;gap:6px;max-height:260px;overflow:auto}
+.insight-segment{display:grid;grid-template-columns:54px minmax(0,1fr);gap:10px;align-items:start;padding:8px 9px;border:1px solid rgba(119,157,190,.12);border-radius:9px;color:#d8e5f1;background:rgba(255,255,255,.025);text-align:left;cursor:pointer}
+.insight-segment time{color:#83e5eb;font-size:10px;font-variant-numeric:tabular-nums}
+.insight-segment span{font-size:11px;line-height:1.5}
+.insight-segment.active{border-color:rgba(83,211,222,.55);background:rgba(35,151,165,.13)}
+.insight-no-timing{padding:10px;color:#8fa5bb;font-size:11px;line-height:1.5}
+.insight-more{display:block}
+@media(max-width:560px){.insight-quick-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.insight-quick-actions button{justify-content:center;padding:10px 7px}.insight-timeline-heading{align-items:flex-start;flex-direction:column}}
