@@ -1175,6 +1175,9 @@ function App() {
   const [timelineSearch, setTimelineSearch] = useState('');
   const [timelineRate, setTimelineRate] = useState('1');
   const [timelineShowAll, setTimelineShowAll] = useState(false);
+  const [mediaChapters, setMediaChapters] = useState<Array<{title:string;summary:string;start:number;end:number}>>([]);
+  const [chaptersBusy, setChaptersBusy] = useState(false);
+  const [speakerFilter, setSpeakerFilter] = useState('all');
   const [editorStart, setEditorStart] = useState(0);
   const [editorEnd, setEditorEnd] = useState(0);
   const [editorDuration, setEditorDuration] = useState(0);
@@ -1211,9 +1214,39 @@ function App() {
   filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
   const selectedSubtitle = subtitleResults.find(item => item.id === selectedSubtitleId) ?? null;
-  const matchingTimedSegments = (active?.timedSegments ?? []).map((segment, index) => ({ ...segment, index })).filter(segment => !timelineSearch.trim() || (segment.text + ' ' + (segment.speaker || '')).toLowerCase().includes(timelineSearch.trim().toLowerCase()));
+  const matchingTimedSegments = (active?.timedSegments ?? []).map((segment, index) => ({ ...segment, index })).filter(segment => (!timelineSearch.trim() || (segment.text + ' ' + (segment.speaker || '')).toLowerCase().includes(timelineSearch.trim().toLowerCase())) && (speakerFilter === 'all' || segment.speaker === speakerFilter));
   const visibleTimedSegments = matchingTimedSegments.slice(0, timelineShowAll ? 500 : 80);
   const detectedSpeakers = [...new Set((active?.timedSegments ?? []).map(segment => segment.speaker).filter((speaker): speaker is string => Boolean(speaker?.trim())))];
+  async function generateMediaChapters() {
+    if (!active?.transcript.trim() || chaptersBusy) return;
+    if (!active.timedSegments?.length) {
+      setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'assistant', text: 'Chapter detection needs timestamped transcript segments. Re-transcribe this recording with an engine that returns timestamps, then try again.' }]);
+      return;
+    }
+    setChaptersBusy(true);
+    try {
+      const timedSource = active.timedSegments.slice(0, 1200).map(segment => ({ start: segment.start, end: segment.end, speaker: segment.speaker || null, text: segment.text }));
+      const prompt = 'Create meaningful chapters for this recording using ONLY the supplied timestamped transcript segments. Return ONLY valid JSON in this exact shape: {"chapters":[{"title":"short title","summary":"one sentence","start":12.3,"end":45.6}]}. Every start and end must be copied from or fall within the supplied segment time range; start must be less than end. Order chapters chronologically, avoid tiny chapters, cover the meaningful topic changes, and do not invent events or timestamps. Transcript text and timed segments: ' + JSON.stringify(timedSource);
+      const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: prompt }] });
+      const raw = String(data?.text || '').trim();
+      const jsonText = raw.match(/\{[\s\S]*\}/)?.[0];
+      if (!jsonText) throw new Error('The chapter service did not return structured chapter data. Please try again.');
+      const parsed = JSON.parse(jsonText) as { chapters?: Array<{title?:string;summary?:string;start?:number;end?:number}> };
+      const source = active.timedSegments;
+      const chapters = (parsed.chapters || []).map(chapter => {
+        const start = Number(chapter.start), end = Number(chapter.end);
+        const startSegment = source.find(segment => start >= segment.start && start <= segment.end) || source.reduce((best, segment) => Math.abs(segment.start-start)<Math.abs(best.start-start)?segment:best, source[0]);
+        const endSegment = source.find(segment => end >= segment.start && end <= segment.end) || source.reduce((best, segment) => Math.abs(segment.end-end)<Math.abs(best.end-end)?segment:best, source[source.length-1]);
+        return { title: String(chapter.title || '').trim().slice(0,100), summary: String(chapter.summary || '').trim().slice(0,240), start: startSegment.start, end: Math.max(startSegment.start, endSegment.end) };
+      }).filter(chapter => chapter.title && Number.isFinite(chapter.start) && Number.isFinite(chapter.end) && chapter.end > chapter.start).sort((a,b)=>a.start-b.start);
+      if (!chapters.length) throw new Error('No reliable chapters could be created from the available timestamps.');
+      setMediaChapters(chapters);
+      setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+1), role: 'assistant', text: 'Created ' + chapters.length + ' timestamp-grounded chapters. Tap a chapter marker in the player to jump to it.' }]);
+    } catch (reason) {
+      setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+2), role: 'assistant', text: reason instanceof Error ? reason.message : 'Chapter detection failed. Please try again.' }]);
+    } finally { setChaptersBusy(false); }
+  }
+
   function jumpToTimedSegment(start: number) {
     const media = previewMediaRef.current;
     if (!media) return;
@@ -2210,6 +2243,8 @@ function App() {
               <div className="insight-timeline-heading"><div><strong>Intelligent transcript player</strong><small>{active.timedSegments.length.toLocaleString()} timed segments · tap any line to seek precisely</small></div><label className="timeline-speed">Speed<select aria-label="Playback speed" value={timelineRate} onChange={event=>{setTimelineRate(event.target.value);if(previewMediaRef.current)previewMediaRef.current.playbackRate=Number(event.target.value);}}><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label></div>
               <label className="timeline-search"><Search size={15}/><input value={timelineSearch} onChange={event=>{setTimelineSearch(event.target.value);setTimelineShowAll(false);}} placeholder="Find a word, phrase or speaker…" aria-label="Search timed transcript"/></label>
               {detectedSpeakers.length>0 && <div className="timeline-speakers"><span>Speaker labels supplied by transcription</span>{detectedSpeakers.map(speaker=><span className="timeline-speaker-chip" key={speaker}>{speaker}</span>)}</div>}
+              <div className="timeline-chapter-tools"><button className="timeline-more-button" type="button" onClick={()=>void generateMediaChapters()} disabled={chaptersBusy}>{chaptersBusy?'Finding chapter breaks…':'✨ Generate AI chapters'}</button>{detectedSpeakers.length>0 ? <label className="timeline-speaker-filter">Speaker view<select value={speakerFilter} onChange={event=>setSpeakerFilter(event.target.value)}><option value="all">All speakers</option>{detectedSpeakers.map(speaker=><option key={speaker} value={speaker}>{speaker}</option>)}</select></label> : <small className="timeline-speaker-note">No speaker labels were returned by the transcription engine. Speaker separation requires an audio diarization provider; AURORA will not guess who is speaking from text alone.</small>}</div>
+              {mediaChapters.length>0 && <div className="media-chapters"><div className="media-chapters-title"><strong>AI chapters</strong><small>{mediaChapters.length} timestamped sections</small></div>{mediaChapters.map((chapter,index)=><button type="button" key={index} className={audioPlayhead>=chapter.start&&audioPlayhead<chapter.end?'media-chapter active':'media-chapter'} onClick={()=>jumpToTimedSegment(chapter.start)}><time>{Math.floor(chapter.start/60).toString().padStart(2,'0')}:{Math.floor(chapter.start%60).toString().padStart(2,'0')}</time><span><b>{chapter.title}</b><small>{chapter.summary}</small></span></button>)}</div>}
               <div className="insight-segments">{visibleTimedSegments.map(segment=><button type="button" key={segment.index} className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'insight-segment active':'insight-segment'} onClick={()=>jumpToTimedSegment(segment.start)}><time>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</time><span>{segment.speaker ? <b>{segment.speaker}: </b> : null}{segment.text}</span></button>)}</div>
               {!matchingTimedSegments.length && <div className="insight-no-timing">No timed transcript lines match that search.</div>}
               {matchingTimedSegments.length>80 && <button className="timeline-more-button" type="button" onClick={()=>setTimelineShowAll(value=>!value)}>{timelineShowAll?'Show fewer lines':'Show more lines ('+matchingTimedSegments.length.toLocaleString()+')'}</button>}
