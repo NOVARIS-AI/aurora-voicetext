@@ -1183,6 +1183,7 @@ function App() {
   const [editorDuration, setEditorDuration] = useState(0);
   const [editorBusy, setEditorBusy] = useState(false);
   const [cleanupStrength, setCleanupStrength] = useState(45);
+  const [cleanupProfile, setCleanupProfile] = useState<'natural' | 'interview' | 'noisy'>('natural');
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupStatus, setCleanupStatus] = useState('');
   const [cleanedAudioUrl, setCleanedAudioUrl] = useState('');
@@ -1694,31 +1695,50 @@ function App() {
       const sampleRate = decoded.sampleRate;
       const channelData = Array.from({length:channels},(_,channel)=>new Float32Array(decoded.getChannelData(channel)));
       const strength = cleanupStrength / 100;
-      const frameSize = Math.max(256, Math.floor(sampleRate * 0.02));
-      let overallSquares = 0, overallCount = 0;
-      for (const channel of channelData) for (let i=0;i<channel.length;i+=4) { overallSquares += channel[i]*channel[i]; overallCount++; }
-      const averageRms = Math.sqrt(overallSquares / Math.max(1,overallCount));
-      const gateThreshold = Math.max(0.0015, averageRms * (0.025 + strength * 0.16));
-      let peak = 0;
-      let smoothedGain = 1;
-      for (let frame=0;frame<decoded.length;frame+=frameSize) {
-        const end=Math.min(decoded.length,frame+frameSize); let square=0,count=0;
-        for(const channel of channelData) for(let i=frame;i<end;i+=2){square+=channel[i]*channel[i];count++;}
-        const rms=Math.sqrt(square/Math.max(1,count));
-        const targetGain = strength===0 ? 1 : Math.max(0.16,Math.min(1,(rms-gateThreshold*0.45)/(gateThreshold*1.8)));
-        smoothedGain += (targetGain-smoothedGain)*0.35;
-        const frameGain = 1 - strength + strength * smoothedGain;
-        for(const channel of channelData) for(let i=frame;i<end;i++){
-          const sample=channel[i]*frameGain;
-          const previous = i ? channel[i-1] : 0;
-          const highPassed = sample - previous * 0.94;
-          const shaped = highPassed * (0.78 + strength*0.22);
-          const compressed = Math.tanh(shaped * (1 + strength*1.1)) / Math.tanh(1 + strength*1.1);
-          channel[i]=compressed;
-          peak=Math.max(peak,Math.abs(compressed));
+      const frameSize = Math.max(256, Math.floor(sampleRate * 0.01));
+      const frameRms:number[] = [];
+      for(let frame=0;frame<decoded.length;frame+=frameSize){
+        const finish=Math.min(decoded.length,frame+frameSize);let square=0,count=0;
+        for(const channel of channelData)for(let i=frame;i<finish;i+=2){square+=channel[i]*channel[i];count++;}
+        frameRms.push(Math.sqrt(square/Math.max(1,count)));
+      }
+      const sortedNoise=[...frameRms].sort((a,b)=>a-b);
+      const noiseFloor=sortedNoise[Math.min(sortedNoise.length-1,Math.floor(sortedNoise.length*0.18))]||0.001;
+      const gateOpen=noiseFloor*(cleanupProfile==='noisy'?2.2:cleanupProfile==='interview'?2.8:3.1);
+      const gateClose=gateOpen*(1.25+strength*0.7);
+      const highPassHz=cleanupProfile==='noisy'?115:cleanupProfile==='interview'?85:65;
+      const presenceDb=cleanupProfile==='interview'?3.2:cleanupProfile==='noisy'?2.2:1.8;
+      const omega=2*Math.PI*2800/sampleRate, alpha=Math.sin(omega)/(2*0.9), A=Math.pow(10,presenceDb/40);
+      const cos=Math.cos(omega);
+      const b0=(1+alpha*A),b1=(-2*cos),b2=(1-alpha*A),a0=(1+alpha/A),a1=(-2*cos),a2=(1-alpha/A);
+      const coeff=[b0/a0,b1/a0,b2/a0,a1/a0,a2/a0];
+      const states=channelData.map(()=>({x1:0,x2:0,y1:0,y2:0,hpInput:0,hpOutput:0,lpOutput:0}));
+      let smoothedGain=1,peak=0;
+      for(let frame=0;frame<decoded.length;frame+=frameSize){
+        const finish=Math.min(decoded.length,frame+frameSize);
+        const rms=frameRms[Math.floor(frame/frameSize)]||0;
+        const targetGate = strength===0 ? 1 : rms<=gateOpen ? Math.max(0.12,1-strength*0.88) : rms>=gateClose ? 1 : Math.max(0.12,1-strength*0.88)+(1-Math.max(0.12,1-strength*0.88))*((rms-gateOpen)/Math.max(0.000001,gateClose-gateOpen));
+        smoothedGain += (targetGate-smoothedGain)*(targetGate<smoothedGain?0.22:0.10);
+        for(let channel=0;channel<channels;channel++){
+          const data=channelData[channel],st=states[channel];
+          const hpA=Math.exp(-2*Math.PI*highPassHz/sampleRate);
+          const lpA=Math.exp(-2*Math.PI*(cleanupProfile==='noisy'?8500:11000)/sampleRate);
+          for(let i=frame;i<finish;i++){
+            const input=data[i];
+            const hp=hpA*(st.hpOutput+input-st.hpInput);st.hpInput=input;st.hpOutput=hp;
+            const filtered=hp;
+            const presence=coeff[0]*filtered+coeff[1]*st.x1+coeff[2]*st.x2-coeff[3]*st.y1-coeff[4]*st.y2;
+            st.x2=st.x1;st.x1=filtered;st.y2=st.y1;st.y1=presence;
+            st.lpOutput=(1-lpA)*presence+lpA*st.lpOutput;
+            const gated=st.lpOutput*smoothedGain;
+            const drive=1+strength*1.2;
+            const compressed=Math.tanh(gated*drive)/Math.tanh(drive);
+            data[i]=compressed;
+            peak=Math.max(peak,Math.abs(compressed));
+          }
         }
       }
-      const normaliseGain = peak > 0 ? Math.min(1.8,0.92/peak) : 1;
+      const normaliseGain = peak > 0 ? Math.min(1.65,0.92/peak) : 1;
       const dataBytes=decoded.length*channels*2;
       const output=new ArrayBuffer(44+dataBytes); const view=new DataView(output);
       const write=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)view.setUint8(offset+i,value.charCodeAt(i));};
@@ -2423,9 +2443,16 @@ function App() {
           </div>
           <p className="field-hint">For large recordings, export shorter sections to keep memory use manageable on your phone. The exported clip is a new WAV file; the source recording is preserved.</p>
           <section className="audio-cleanup-panel">
-            <div className="audio-cleanup-heading"><div><small>02 · AUDIO RESTORATION</small><h3><Sparkles size={17}/> Clean up this recording</h3><p>Reduce steady background noise, soften peaks and bring speech forward. Processing runs on your device.</p></div><span className="cleanup-local-pill">ON-DEVICE</span></div>
+            <div className="audio-cleanup-heading"><div><small>02 · AUDIO RESTORATION</small><h3><Sparkles size={17}/> Clean up this recording</h3><p>Adaptive noise reduction, rumble filtering, speech-presence EQ and gentle compression. Processing runs on your device.</p></div><span className="cleanup-local-pill">ON-DEVICE</span></div>
+            <label className="cleanup-profile-control">Enhancement profile
+              <select value={cleanupProfile} onChange={event=>setCleanupProfile(event.target.value as 'natural'|'interview'|'noisy')}>
+                <option value="natural">Natural voice · balanced</option>
+                <option value="interview">Interview · speech presence</option>
+                <option value="noisy">Noisy room · stronger filtering</option>
+              </select>
+            </label>
             <label className="cleanup-strength-control">Noise reduction strength <strong>{cleanupStrength}%</strong><input type="range" min="0" max="100" step="5" value={cleanupStrength} onChange={event=>setCleanupStrength(Number(event.target.value))}/><span><small>Gentle</small><small>Strong</small></span></label>
-            <div className="cleanup-note"><Volume2 size={16}/><span>Best for steady fan, room and recording hiss. Strong settings may soften quiet speech. This is adaptive noise gating and voice levelling, not a studio spectral AI denoiser.</span></div>
+            <div className="cleanup-note"><Volume2 size={16}/><span>Choose a profile for the recording. Stronger filtering can soften quiet words. This is advanced on-device audio processing, not cloud-based AI source separation or echo cancellation.</span></div>
             <div className="studio-actions"><button className="primary" type="button" disabled={cleanupBusy||!active} onClick={()=>void cleanSelectedAudio()}>{cleanupBusy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {cleanupBusy?'Cleaning audio…':'Generate cleaned preview'}</button>{cleanedAudioUrl&&<button className="secondary" type="button" onClick={()=>void downloadCleanedAudio()}><Download size={16}/> Download cleaned WAV</button>}</div>
             {cleanedAudioUrl&&<div className="cleaned-audio-preview"><strong>Cleaned audio preview</strong><audio controls preload="metadata" src={cleanedAudioUrl}/></div>}
             {cleanupStatus&&<div className="status-message" role="status">{cleanupStatus}</div>}
