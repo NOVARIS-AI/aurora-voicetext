@@ -1662,6 +1662,10 @@ function App() {
   useEffect(() => {
     return () => { if (cleanupAudioUrlRef.current) URL.revokeObjectURL(cleanupAudioUrlRef.current); };
   }, []);
+  useEffect(() => {
+    if (cleanupAudioUrlRef.current) URL.revokeObjectURL(cleanupAudioUrlRef.current);
+    cleanupAudioUrlRef.current = ''; setCleanedAudioUrl(''); setCleanupStatus('');
+  }, [active?.id]);
 
   async function cleanSelectedAudio() {
     if (!active || cleanupBusy) return;
@@ -1696,12 +1700,14 @@ function App() {
       const averageRms = Math.sqrt(overallSquares / Math.max(1,overallCount));
       const gateThreshold = Math.max(0.0015, averageRms * (0.025 + strength * 0.16));
       let peak = 0;
+      let smoothedGain = 1;
       for (let frame=0;frame<decoded.length;frame+=frameSize) {
         const end=Math.min(decoded.length,frame+frameSize); let square=0,count=0;
         for(const channel of channelData) for(let i=frame;i<end;i+=2){square+=channel[i]*channel[i];count++;}
         const rms=Math.sqrt(square/Math.max(1,count));
         const targetGain = strength===0 ? 1 : Math.max(0.16,Math.min(1,(rms-gateThreshold*0.45)/(gateThreshold*1.8)));
-        const frameGain = 1 - strength + strength * targetGain;
+        smoothedGain += (targetGain-smoothedGain)*0.35;
+        const frameGain = 1 - strength + strength * smoothedGain;
         for(const channel of channelData) for(let i=frame;i<end;i++){
           const sample=channel[i]*frameGain;
           const previous = i ? channel[i-1] : 0;
@@ -1739,7 +1745,7 @@ function App() {
     try {
       const response=await fetch(cleanedAudioUrl);
       const blob=await response.blob();
-      const base=active.file.name.replace(/\\.[^.]+$/,'');
+      const base=active.file.name.replace(/\.[^.]+$/,'');
       await downloadFile(safeFileBaseName(base+'-cleaned','aurora-cleaned')+'.wav',blob,'audio/wav');
       setCleanupStatus('Cleaned audio exported successfully. The original file remains unchanged.');
     } catch(reason) { setCleanupStatus(reason instanceof Error?reason.message:'Could not export the cleaned audio.'); }
