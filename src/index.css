@@ -642,3 +642,15 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .cleanup-profile-control{display:grid;gap:7px;color:#dceef8;font-size:11px;font-weight:800}
 .cleanup-profile-control select{width:100%;min-height:42px;padding:10px 12px;border:1px solid rgba(92,198,225,.22);border-radius:10px;color:#e5f8ff;background:#101e30;font:inherit;font-weight:600}
 .cleanup-profile-control option{color:#e5f8ff;background:#101e30}
+
+
+/* Clear guidance when the audio-only restoration tool is opened with a video selected. */
+.cleanup-video-note {
+  border: 1px solid var(--border, rgba(255,255,255,.16));
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--text-secondary, inherit);
+  background: var(--surface-soft, rgba(255,255,255,.04));
+  font-size: .88rem;
+  line-height: 1.5;
+}
