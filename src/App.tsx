@@ -14,7 +14,7 @@ import {
   Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
 
-type Recording = { id: string; name: string; transcript: string; updatedAt: number };
+type Recording = { id: string; name: string; transcript: string; updatedAt: number; folder?: string; kind?: 'audio' | 'video' | 'text' | 'insight'; tags?: string[]; favorite?: boolean; insight?: string };
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
@@ -1194,6 +1194,11 @@ function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
+  const [libraryFolder, setLibraryFolder] = useState('All items');
+  const [libraryKind, setLibraryKind] = useState('all');
+  const [libraryDetailId, setLibraryDetailId] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [libraryFolders, setLibraryFolders] = useState<string[]>(() => { try { const value = JSON.parse(localStorage.getItem('aurora-voicetext-folders-v1') || '[]'); return Array.isArray(value) ? value.filter((x: unknown) => typeof x === 'string') : []; } catch { return []; } });
   const inputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1278,6 +1283,10 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
+
+  useEffect(() => {
+    try { localStorage.setItem('aurora-voicetext-folders-v1', JSON.stringify(libraryFolders)); } catch { /* Folder metadata is best-effort on low-storage devices. */ }
+  }, [libraryFolders]);
 
   // Restore before autosaving, so the initial empty React state cannot erase a session.
   useEffect(() => {
@@ -1603,7 +1612,7 @@ function App() {
 
   function saveToLibrary() {
     if (!active?.transcript.trim()) { setError('Add or transcribe some text before saving.'); return; }
-    const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now() };
+    const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now(), folder: library.find(item => item.id === active.id)?.folder || 'Unsorted', kind: isVideoMediaFile(active.file) ? 'video' : 'audio', tags: library.find(item => item.id === active.id)?.tags || [] };
     setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]);
     setError(''); setStatus('Saved to your on-device library.');
   }
@@ -1618,6 +1627,7 @@ function App() {
         name: item.name,
         transcript: item.transcript,
         updatedAt: item.updatedAt,
+        folder: item.folder || 'Unsorted', kind: item.kind || 'text', tags: item.tags || [], favorite: Boolean(item.favorite), insight: item.insight || '',
       })),
     };
     const stamp = new Date().toISOString().slice(0, 10);
@@ -1648,6 +1658,10 @@ function App() {
           name,
           transcript,
           updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now(),
+          folder: typeof item.folder === 'string' ? item.folder.slice(0, 80) : 'Unsorted',
+          kind: item.kind === 'audio' || item.kind === 'video' || item.kind === 'insight' ? item.kind : 'text',
+          tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 20) : [],
+          favorite: Boolean(item.favorite), insight: typeof item.insight === 'string' ? item.insight.slice(0, 200000) : '',
         });
       }
       if (!imported.length) throw new Error('No valid saved transcripts were found in this backup.');
@@ -2004,7 +2018,27 @@ function App() {
     setFiles(current => current.map(item => item.id === active.id ? { ...item, timedSegments: segments, transcript } : item));
   }
 
-  const filteredLibrary = library.filter(item => (item.name + ' ' + item.transcript).toLowerCase().includes(search.toLowerCase()));
+  const libraryFolderNames = [...new Set(['Unsorted', 'AI Insights', ...libraryFolders, ...library.map(item => item.folder || 'Unsorted')])].sort((x,y)=>x.localeCompare(y));
+  const filteredLibrary = library.filter(item => (libraryFolder === 'All items' || (item.folder || 'Unsorted') === libraryFolder) && (libraryKind === 'all' || (item.kind || 'text') === libraryKind) && (item.name + ' ' + item.transcript + ' ' + (item.tags || []).join(' ')).toLowerCase().includes(search.toLowerCase()));
+  const selectedLibraryItem = library.find(item => item.id === libraryDetailId) || null;
+  function saveCurrentInsight() {
+    const latest = [...previewMessages].reverse().find(message => message.role === 'assistant');
+    if (!active || !latest?.text.trim()) { setError('Generate an AI insight first, then save it here.'); return; }
+    const insight: Recording = { id: 'insight-' + crypto.randomUUID(), name: active.file.name.replace(/\\.[^.]+$/, '') + ' · AI Insight', transcript: latest.text.trim(), insight: latest.text.trim(), updatedAt: Date.now(), folder: 'AI Insights', kind: 'insight', tags: ['AI insight', 'from ' + active.file.name] };
+    setLibrary(current => [insight, ...current]); setStatus('AI insight saved to your Library.'); setError('');
+  }
+  function addLibraryFolder() {
+    const name = newFolderName.trim().slice(0, 48);
+    if (!name) return;
+    if (libraryFolderNames.some(folder => folder.toLowerCase() === name.toLowerCase())) { setError('That folder already exists.'); return; }
+    setLibraryFolders(current => [...current, name]); setLibraryFolder(name); setNewFolderName(''); setError(''); setStatus('Folder created.');
+  }
+  function moveLibraryItem(id: string, folder: string) {
+    setLibrary(current => current.map(item => item.id === id ? { ...item, folder } : item));
+  }
+  function updateLibraryText(id: string, transcript: string) {
+    setLibrary(current => current.map(item => item.id === id ? { ...item, transcript, updatedAt: Date.now() } : item));
+  }
 
   return (
     <main className="app-shell">
@@ -2108,10 +2142,42 @@ function App() {
         </div>
       </section>}
 
-      {page === 'library' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">YOUR NOTES</div><h1>Transcript library</h1><p>Saved text stays in this browser on this device. Audio files themselves are not stored here.</p></div>
-        <div className="library-toolbar"><label className="search-box"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search saved transcripts"/></label><span className="count">{filteredLibrary.length} saved</span></div>
-        {filteredLibrary.length ? <div className="library-grid">{filteredLibrary.map(item => <article className="library-card" key={item.id}><div className="library-card-head"><span className="library-icon"><FileText size={18}/></span><button className="icon-button" aria-label="Delete saved transcript" onClick={() => setLibrary(current => current.filter(entry => entry.id !== item.id))} type="button"><Trash2 size={16}/></button></div><h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}</small><p>{item.transcript.slice(0, 240)}{item.transcript.length > 240 ? '…' : ''}</p><div className="library-actions"><button className="secondary small-button" onClick={() => {setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={15}/> Read aloud</button><button className="secondary small-button" onClick={() => runExportTranscript(item.transcript, item.name.replace(/\.[^.]+$/, '') || 'transcript')} type="button"><Download size={15}/> Export</button><button className="text-button" onClick={() => copyText(item.transcript)} type="button"><Copy size={15}/> Copy</button></div></article>)}</div> : <div className="empty-state library-empty"><BookOpen size={32}/><strong>Your library is empty</strong><span>Transcribe or paste a voice note, then tap Save to library.</span><button className="primary" onClick={() => setPage('transcribe')} type="button">Go to transcribe</button></div>}
+      {page === 'library' && <section className="page-content library-page">
+        <div className="page-heading"><div className="eyebrow">YOUR MEDIA ARCHIVE</div><h1>Library <span className="library-total">{library.length} saved</span></h1><p>Keep transcripts, recordings, video notes and AI insights organised in one searchable place on this device.</p></div>
+        <div className="library-dashboard">
+          <div className="library-stat"><strong>{library.length}</strong><span>Saved items</span></div><div className="library-stat"><strong>{library.filter(item=>item.kind==='audio'||item.kind==='video').length}</strong><span>Media notes</span></div><div className="library-stat"><strong>{library.filter(item=>item.kind==='insight').length}</strong><span>AI insights</span></div><div className="library-stat"><strong>{libraryFolderNames.length}</strong><span>Collections</span></div>
+        </div>
+        <div className="library-toolbar library-toolbar-v2">
+          <label className="search-box"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search titles, transcript and tags"/></label>
+          <select aria-label="Filter by collection" value={libraryFolder} onChange={event=>setLibraryFolder(event.target.value)}><option>All items</option>{libraryFolderNames.map(folder=><option key={folder}>{folder}</option>)}</select>
+          <select aria-label="Filter by media type" value={libraryKind} onChange={event=>setLibraryKind(event.target.value)}><option value="all">All types</option><option value="audio">Audio</option><option value="video">Video</option><option value="insight">AI insights</option><option value="text">Text</option></select>
+          <span className="count">{filteredLibrary.length} shown</span>
+        </div>
+        <div className="library-folder-create"><div><strong>Collections</strong><small>Create folders for classes, meetings, projects or personal notes.</small></div><div className="library-folder-input"><input value={newFolderName} onChange={event=>setNewFolderName(event.target.value)} placeholder="New collection name" maxLength={48}/><button className="secondary small-button" type="button" onClick={addLibraryFolder} disabled={!newFolderName.trim()}><Plus size={14}/> Create</button></div></div>
+        <div className="library-folder-chips"><button type="button" className={libraryFolder==='All items'?'active':''} onClick={()=>setLibraryFolder('All items')}>All items</button>{libraryFolderNames.map(folder=><button type="button" key={folder} className={libraryFolder===folder?'active':''} onClick={()=>setLibraryFolder(folder)}>{folder}</button>)}</div>
+        {filteredLibrary.length ? <div className="library-grid library-grid-v2">{filteredLibrary.map(item => {
+          const linkedFile = files.find(file=>file.id===item.id);
+          const video = item.kind==='video' || (linkedFile ? isVideoMediaFile(linkedFile.file) : false);
+          return <article className="library-card library-card-v2" key={item.id}>
+            <button type="button" className="library-cover" onClick={()=>setLibraryDetailId(item.id)} aria-label={'Open '+item.name}>
+              {linkedFile && video ? <video src={linkedFile.url} muted preload="metadata" playsInline/> : <span className="library-cover-art">{video?<Film size={30}/>:item.kind==='insight'?<Sparkles size={30}/>:item.kind==='audio'?<AudioWaveform size={30}/>:<FileText size={30}/>}</span>}
+              <span className="library-cover-overlay"><Play size={16}/><small>OPEN</small></span>
+              <span className="library-type-pill">{video?'VIDEO':item.kind==='insight'?'AI INSIGHT':item.kind==='audio'?'AUDIO':'TEXT'}</span>
+            </button>
+            <div className="library-card-content"><div className="library-card-head"><span className="library-folder-label">{item.folder||'Unsorted'}</span><button className="icon-button" aria-label="Delete saved item" onClick={()=>{setLibrary(current=>current.filter(entry=>entry.id!==item.id));if(libraryDetailId===item.id)setLibraryDetailId(null);}} type="button"><Trash2 size={15}/></button></div>
+              <h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}</small><p>{item.transcript.slice(0,180)}{item.transcript.length>180?'…':''}</p>
+              <div className="library-tags">{(item.tags||[]).slice(0,3).map(tag=><span key={tag}>{tag}</span>)}</div>
+              <div className="library-actions"><button className="secondary small-button" onClick={()=>{setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={14}/> Read aloud</button><button className="secondary small-button" onClick={()=>runExportTranscript(item.transcript,item.name.replace(/\.[^.]+$/,'')||'transcript')} type="button"><Download size={14}/> Export</button><button className="text-button" onClick={()=>setLibraryDetailId(item.id)} type="button">Details</button></div>
+            </div>
+          </article>;
+        })}</div> : <div className="empty-state library-empty"><BookOpen size={32}/><strong>{library.length?'No matching items':'Your library is empty'}</strong><span>{library.length?'Try another search or collection filter.':'Save a transcript or an AI insight to start building your media archive.'}</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Go to transcribe</button></div>}
+        {selectedLibraryItem && <section className="library-detail-panel">
+          <div className="library-detail-heading"><div><small>LIBRARY ITEM</small><h2>{selectedLibraryItem.name}</h2><span>{selectedLibraryItem.folder||'Unsorted'} · {new Date(selectedLibraryItem.updatedAt).toLocaleString()}</span></div><button className="icon-button" type="button" aria-label="Close details" onClick={()=>setLibraryDetailId(null)}><X size={18}/></button></div>
+          {(()=>{const linkedFile=files.find(file=>file.id===selectedLibraryItem.id);return linkedFile?<div className="library-detail-player">{isVideoMediaFile(linkedFile.file)?<video controls playsInline preload="metadata" src={linkedFile.url}/>:<audio controls preload="metadata" src={linkedFile.url}/>}</div>:<div className="library-media-unavailable"><FileAudio size={18}/> Original media is not attached to this saved transcript on this device. The transcript remains available.</div>;})()}
+          <div className="library-detail-tools"><label>Collection<select value={selectedLibraryItem.folder||'Unsorted'} onChange={event=>moveLibraryItem(selectedLibraryItem.id,event.target.value)}>{libraryFolderNames.map(folder=><option key={folder}>{folder}</option>)}</select></label><button className="secondary small-button" type="button" onClick={()=>{setStudioText(selectedLibraryItem.transcript);setPage('studio');}}><Volume2 size={14}/> Read aloud</button><button className="secondary small-button" type="button" onClick={()=>runExportTranscript(selectedLibraryItem.transcript,selectedLibraryItem.name.replace(/\.[^.]+$/,'')||'transcript')}><Download size={14}/> Export</button><button className="secondary small-button" type="button" onClick={()=>copyText(selectedLibraryItem.transcript)}><Copy size={14}/> Copy</button></div>
+          <textarea className="transcript-input library-detail-text" value={selectedLibraryItem.transcript} onChange={event=>updateLibraryText(selectedLibraryItem.id,event.target.value)} aria-label="Edit saved library transcript"/>
+        </section>}
+        <div className="library-backup-actions"><button className="secondary small-button" type="button" onClick={()=>void exportLibraryBackup()}><Download size={14}/> Backup library</button><button className="secondary small-button" type="button" onClick={()=>libraryImportRef.current?.click()}><Upload size={14}/> Restore backup</button><input ref={libraryImportRef} className="hidden-input" type="file" accept="application/json,.json" onChange={event=>{void importLibraryBackup(event.currentTarget.files?.[0]);event.currentTarget.value='';}}/></div>
       </section>}
 
       {page === 'preview' && <section className="page-content">
@@ -2138,7 +2204,7 @@ function App() {
             <div><small>Transcript attached</small><button className="primary" type="submit" disabled={previewBusy || !previewInput.trim()}><Sparkles size={16}/> Send</button></div>
           </form>
           {active.translatedTranscript && <section className="chat-result"><div className="card-title"><div><small>TRANSLATION</small><h2>{transcriptTargetLanguage}</h2></div><button className="secondary small-button" type="button" onClick={()=>copyText(active.translatedTranscript || '')}><Copy size={14}/> Copy</button></div><textarea className="transcript-input" value={active.translatedTranscript} readOnly aria-label="Translated transcript"/></section>}
-          <div className="studio-actions"><button className="secondary" type="button" onClick={()=>{setPreviewMessages([]);setPreviewInput('@'+active.file.name+' ');}}><Plus size={15}/> New chat</button><button className="secondary" type="button" onClick={saveToLibrary}><Save size={15}/> Save transcript</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={15}/> Export</button></div>
+          <div className="studio-actions"><button className="secondary" type="button" onClick={()=>{setPreviewMessages([]);setPreviewInput('@'+active.file.name+' ');}}><Plus size={15}/> New chat</button><button className="secondary" type="button" onClick={saveToLibrary}><Save size={15}/> Save transcript</button><button className="secondary" type="button" onClick={saveCurrentInsight}><Sparkles size={15}/> Save AI insight</button><button className="secondary" type="button" onClick={()=>exportTranscript(active.transcript,active.file.name.replace(/\.[^.]+$/,'')||'transcript',active.timedSegments)}><Download size={15}/> Export</button></div>
           <details className="preview-edit-details"><summary>Edit transcript and timestamps</summary>
 {isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/> :             <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>}
             {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'timestamp-chip active':'timestamp-chip'} onClick={()=>{const media=videoRef.current||audioRef.current;if(media){media.currentTime=segment.start;void media.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker?segment.speaker+': ':'')+segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/>}
