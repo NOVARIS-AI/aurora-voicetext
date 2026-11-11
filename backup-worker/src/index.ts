@@ -318,25 +318,49 @@ async function subtitleDownload(fileId: number, env: Env) {
   }
   if (!response) throw Object.assign(new Error("OpenSubtitles download request did not return a response."), { status: 503 });
   responseText = await response.text().catch(() => responseText);
-  const payload = (() => { try { return JSON.parse(responseText || "{}") as { link?:string; file_name?:string; message?:string }; } catch { return {} as { link?:string; file_name?:string; message?:string }; } })();
-  if (!response.ok || !payload.link) {
+  let payload: { link?: string; file_name?: string; message?: string } = {};
+  let parseError = "";
+  try {
+    const parsed: unknown = JSON.parse(responseText || "{}");
+    if (typeof parsed === "string") {
+      const nested = JSON.parse(parsed);
+      if (nested && typeof nested === "object") payload = nested as typeof payload;
+    } else if (parsed && typeof parsed === "object") {
+      payload = parsed as typeof payload;
+    }
+  } catch (error) {
+    parseError = error instanceof Error ? error.message : "invalid JSON";
+  }
+  // Some edge responses have a valid download link but malformed JSON
+  // framing. Recover only the explicit link field, then validate its host.
+  if (!payload.link) {
+    const linkMatch = responseText.match(/"link"\\s*:\\s*"([^"]+)"/i);
+    const nameMatch = responseText.match(/"file_name"\\s*:\\s*"([^"]+)"/i);
+    if (linkMatch) payload.link = linkMatch[1].replace(/\\\\\\//g, "/").replace(/\\\\u0026/gi, "&");
+    if (nameMatch) payload.file_name = nameMatch[1];
+  }
+  const downloadUrl = payload.link ? (() => { try { const parsed = new URL(payload.link); return parsed.protocol === "https:" && (parsed.hostname === "opensubtitles.com" || parsed.hostname.endsWith(".opensubtitles.com")) ? parsed.toString() : ""; } catch { return ""; } })() : "";
+  if (!response.ok || !downloadUrl) {
     const transient = [502, 503, 504].includes(response.status);
-    const detail = (payload.message || responseText.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim()).slice(0, 180);
+    const detail = (payload.message || responseText.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim()).slice(0, 220);
     const ray = response.headers.get("cf-ray");
     const retryAfter = response.headers.get("retry-after");
     const server = response.headers.get("server");
+    const contentType = response.headers.get("content-type");
     const diagnostic = [
-      "OpenSubtitles " + (transient ? "temporarily failed" : "rejected") + " the download request (HTTP " + response.status + ").",
+      "OpenSubtitles " + (transient ? "temporarily failed" : response.ok ? "returned an unreadable download response" : "rejected") + " the download request (HTTP " + response.status + ").",
       "Host: " + host.replace("https://", "") + ".",
+      contentType ? "Content-Type: " + contentType + "." : "",
+      parseError ? "Response parse: " + parseError + "." : "",
       ray ? "Request ID: " + ray + "." : "",
       retryAfter ? "Retry-After: " + retryAfter + "." : "",
       server ? "Edge: " + server + "." : "",
       detail ? "Provider detail: " + detail : "",
       transient ? "Please try again later; AURORA already retried once." : "",
     ].filter(Boolean).join(" ");
-    throw Object.assign(new Error(diagnostic), { status: response.status >= 400 && response.status < 500 ? response.status : 503 });
+    throw Object.assign(new Error(diagnostic), { status: response.status >= 400 && response.status < 500 ? response.status : response.ok ? 502 : 503 });
   }
-  const file = await fetch(payload.link, { signal: AbortSignal.timeout(30000) });
+  const file = await fetch(downloadUrl, { signal: AbortSignal.timeout(30000) });
   if (!file.ok) throw new Error("Could not retrieve the authorized subtitle file.");
   const filename = (payload.file_name || "subtitle.srt").replace(/[^A-Za-z0-9._-]/g, "_");
   return new Response(await file.arrayBuffer(), { headers: { "content-type": file.headers.get("content-type") || "application/octet-stream", "content-disposition": 'attachment; filename="' + filename + '"', "cache-control": "no-store", "X-AURORA-Provider": "backup-opensubtitles" } });
