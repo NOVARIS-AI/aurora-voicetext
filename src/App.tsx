@@ -166,8 +166,15 @@ async function requestFeature(path: string, payload: unknown, binary = false): P
     try {
       const response = binary ? await postBinary(url, payload) : await postJson(url, payload);
       if (response.ok) return { response, data: binary ? undefined : await response.json() };
-      const body = binary ? null : await response.json().catch(() => null);
-      lastError = new Error(body?.error || 'The service is temporarily unavailable.');
+      // Binary downloads still return JSON when the provider rejects a request.
+      // Read the error body from a clone so the real backend diagnostic is not hidden.
+      let body: any = null;
+      try { body = await response.clone().json(); }
+      catch {
+        try { const message = (await response.clone().text()).trim(); if (message) body = { error: message }; }
+        catch { /* Keep the safe fallback below when no readable body exists. */ }
+      }
+      lastError = new Error(body?.error || ('The service is temporarily unavailable (HTTP ' + response.status + ').'));
       if (response.status < 500 && response.status !== 408 && response.status !== 429) break;
     } catch (error) { lastError = error; }
   }
