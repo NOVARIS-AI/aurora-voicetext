@@ -602,3 +602,19 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .insight-segment b{color:#8fe8ed;font-weight:800}
 .timeline-more-button{justify-self:start;padding:8px 11px;border:1px solid rgba(83,211,222,.2);border-radius:9px;color:#a9edf0;background:rgba(30,125,139,.12);font-size:10px;font-weight:800;cursor:pointer}
 @media(max-width:560px){.insight-timeline-heading{display:flex;align-items:flex-start;flex-direction:column}.timeline-speed{width:100%;justify-content:space-between}.timeline-search{margin-top:8px}}
+
+
+/* AI chapter navigation and speaker-aware transcript controls */
+.timeline-chapter-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0}
+.timeline-speaker-filter{display:flex;align-items:center;gap:7px;color:#9bb1c5;font-size:10px;font-weight:700}
+.timeline-speaker-filter select{max-width:180px;padding:7px 9px;border:1px solid rgba(139,130,230,.24);border-radius:9px;color:#d9d5ff;background:#17152b;font:inherit}
+.timeline-speaker-note{flex:1;min-width:220px;color:#899db0;font-size:10px;line-height:1.5}
+.media-chapters{display:grid;gap:6px;margin:12px 0;padding:11px;border:1px solid rgba(112,188,220,.16);border-radius:13px;background:rgba(5,15,28,.42)}
+.media-chapters-title{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:3px;color:#d9f7fb;font-size:11px}
+.media-chapters-title small{color:#829bb2;font-size:9px}
+.media-chapter{display:flex;align-items:flex-start;gap:10px;width:100%;padding:9px;border:1px solid transparent;border-radius:9px;text-align:left;color:#d7e6f3;background:rgba(255,255,255,.025);cursor:pointer}
+.media-chapter:hover,.media-chapter.active{border-color:rgba(83,211,222,.35);background:rgba(39,153,165,.12)}
+.media-chapter time{flex:0 0 auto;padding:3px 5px;border-radius:6px;color:#8ee8ed;background:rgba(45,175,187,.12);font-size:10px;font-variant-numeric:tabular-nums}
+.media-chapter span{display:grid;gap:3px;min-width:0}
+.media-chapter b{font-size:10px}
+.media-chapter small{color:#91a7ba;font-size:9px;line-height:1.45}
