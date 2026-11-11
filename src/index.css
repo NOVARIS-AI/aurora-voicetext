@@ -618,3 +618,23 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .media-chapter span{display:grid;gap:3px;min-width:0}
 .media-chapter b{font-size:10px}
 .media-chapter small{color:#91a7ba;font-size:9px;line-height:1.45}
+
+/* On-device audio restoration workspace */
+.audio-cleanup-panel{display:grid;gap:13px;margin-top:18px;padding:16px;border:1px solid rgba(92,210,220,.2);border-radius:16px;background:linear-gradient(145deg,rgba(13,37,51,.72),rgba(10,17,33,.88))}
+.audio-cleanup-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.audio-cleanup-heading>div{display:grid;gap:5px;min-width:0}
+.audio-cleanup-heading small{color:#6bdde6;font-size:9px;font-weight:900;letter-spacing:.15em}
+.audio-cleanup-heading h3{display:flex;align-items:center;gap:8px;margin:0;color:#e7f8ff;font-size:15px}
+.audio-cleanup-heading h3 svg{color:#8de8ec}
+.audio-cleanup-heading p{margin:0;color:#91a9bd;font-size:10px;line-height:1.55}
+.cleanup-local-pill{flex:none;padding:6px 8px;border:1px solid rgba(89,220,190,.2);border-radius:999px;color:#8ce5c6;background:rgba(42,166,129,.08);font-size:8px;font-weight:900;letter-spacing:.1em}
+.cleanup-strength-control{display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;color:#dceef8;font-size:11px;font-weight:800}
+.cleanup-strength-control strong{color:#8de8ec;font-variant-numeric:tabular-nums}
+.cleanup-strength-control input{grid-column:1/-1;width:100%;accent-color:#55dce9}
+.cleanup-strength-control>span{grid-column:1/-1;display:flex;justify-content:space-between;color:#829bb2;font-size:9px;font-weight:500}
+.cleanup-note{display:flex;align-items:flex-start;gap:9px;padding:10px;border:1px solid rgba(92,198,225,.12);border-radius:10px;color:#91a9bd;background:rgba(4,13,24,.45);font-size:10px;line-height:1.55}
+.cleanup-note svg{flex:none;color:#75dce5}
+.cleaned-audio-preview{display:grid;gap:8px;padding:12px;border:1px solid rgba(92,198,225,.14);border-radius:11px;background:rgba(4,13,24,.45)}
+.cleaned-audio-preview strong{color:#dff7ff;font-size:11px}
+.cleaned-audio-preview audio{width:100%}
+@media(max-width:560px){.audio-cleanup-panel{padding:12px}.audio-cleanup-heading{flex-direction:column}.cleanup-local-pill{align-self:flex-start}.audio-cleanup-panel .studio-actions{display:grid;grid-template-columns:1fr}.audio-cleanup-panel .studio-actions button{justify-content:center}}
