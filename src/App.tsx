@@ -1205,6 +1205,9 @@ function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewMediaRef = useRef<HTMLMediaElement>(null);
   const [summary, setSummary] = useState('');
+  const [editorFind, setEditorFind] = useState('');
+  const [editorReplace, setEditorReplace] = useState('');
+  const [editorNotice, setEditorNotice] = useState('');
   const [search, setSearch] = useState('');
   const [libraryFolder, setLibraryFolder] = useState('All items');
   const [libraryKind, setLibraryKind] = useState('all');
@@ -1780,6 +1783,33 @@ function App() {
     setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
   }
 
+  function applyTranscriptFormat(format: 'paragraphs' | 'sentence' | 'heading' | 'speaker') {
+    if (!active) return;
+    const current = active.transcript;
+    let next = current;
+    if (format === 'paragraphs') {
+      next = current.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n+/).map(line => line.trim()).filter(Boolean).join('\n\n');
+      if (next === current) next = current.replace(/(?<=[.!?])\s+(?=[A-Z0-9“"'])/g, '\n\n');
+    } else if (format === 'sentence') {
+      next = current.toLocaleLowerCase().replace(/(^|[.!?]\s+)([a-z])/g, (_match, prefix, letter) => prefix + letter.toLocaleUpperCase());
+    } else if (format === 'heading') {
+      next = current.trim() ? 'SECTION TITLE\n\n' + current.trim() : current;
+    } else if (format === 'speaker') {
+      next = current.trim() ? 'Speaker 1: ' + current.trim() : current;
+    }
+    updateTranscript(next);
+    setEditorNotice('Formatting applied. Your original audio is unchanged.');
+  }
+
+  function replaceTranscriptText() {
+    if (!active || !editorFind) { setEditorNotice('Enter the text you want to find first.'); return; }
+    const escaped = editorFind.replace(/[.*+?^$()|[\]\\]/g, '\\  function saveToLibrary() {');
+    const expression = new RegExp(escaped, 'gi');
+    const matches = active.transcript.match(expression)?.length || 0;
+    if (!matches) { setEditorNotice('No matching text was found.'); return; }
+    updateTranscript(active.transcript.replace(expression, editorReplace));
+    setEditorNotice(matches + ' replacement(s) made.');
+  }
   function saveToLibrary() {
     if (!active?.transcript.trim()) { setError('Add or transcribe some text before saving.'); return; }
     const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now(), folder: library.find(item => item.id === active.id)?.folder || 'Unsorted', kind: isVideoMediaFile(active.file) ? 'video' : 'audio', tags: library.find(item => item.id === active.id)?.tags || [] };
@@ -2296,6 +2326,22 @@ function App() {
               <label className="field-label" htmlFor="transcript">Original transcript <small>{active.detectedLanguage ? 'Detected: ' + active.detectedLanguage : 'Language detection: automatic'}</small></label>
               <textarea id="transcript" className="transcript-input" value={active.transcript} onChange={event => updateTranscript(event.target.value)} placeholder="Speech will appear here in its original language. Review names and wording, then edit anything AURORA missed."/>
               
+              <section className="transcript-pro-tools" aria-label="Transcript formatting tools">
+                <div className="transcript-pro-heading"><div><small>PRO EDITING TOOLS</small><strong>Polish your transcript</strong></div><span>{active.transcript.trim() ? Math.max(1, Math.ceil(active.transcript.trim().split(/\s+/).length / 200)) : 0} min read</span></div>
+                <div className="transcript-format-actions">
+                  <button type="button" className="secondary small-button" onClick={() => applyTranscriptFormat('paragraphs')}>Format paragraphs</button>
+                  <button type="button" className="secondary small-button" onClick={() => applyTranscriptFormat('sentence')}>Fix sentence case</button>
+                  <button type="button" className="secondary small-button" onClick={() => applyTranscriptFormat('heading')}>Add section heading</button>
+                  <button type="button" className="secondary small-button" onClick={() => applyTranscriptFormat('speaker')}>Label Speaker 1</button>
+                </div>
+                <div className="transcript-find-replace">
+                  <input aria-label="Find text" value={editorFind} onChange={event=>setEditorFind(event.target.value)} placeholder="Find words or names"/>
+                  <input aria-label="Replace with" value={editorReplace} onChange={event=>setEditorReplace(event.target.value)} placeholder="Replace with"/>
+                  <button type="button" className="primary small-button" onClick={replaceTranscriptText}>Replace all</button>
+                </div>
+                {editorNotice && <p className="transcript-editor-notice" role="status">{editorNotice}</p>}
+                <p className="transcript-editor-hint">Edits are saved automatically in your current workspace. Save to Library to keep a permanent transcript copy.</p>
+              </section>
               <div className="editor-tools"><span>{active.transcript.trim() ? active.transcript.trim().split(/\s+/).length : 0} words</span><button className="secondary small-button" type="button" onClick={saveToLibrary}><Save size={15}/> Save to library</button></div>
               <div className="summary-box"><div className="summary-head"><Sparkles size={16}/><strong>Quick key points</strong><button type="button" className="text-button" onClick={() => setSummary(makeSummary(active.transcript))}>Create summary</button></div><p>{summary || 'Create a short extractive summary from the current transcript. Review it before sharing.'}</p></div>
               <section className="export-panel"><div className="export-panel-heading"><div><small>YOUR DOCUMENT</small><strong>Choose an export style</strong></div><FileDown size={20}/></div>
