@@ -2374,6 +2374,18 @@ function App() {
             </> : <div className="empty-state"><FileAudio size={30}/><strong>No recording selected</strong><span>Choose an audio file to begin, or paste text in a saved library item.</span></div>}
           </section>
         </div>
+
+        <section className="transcribe-feature-hub" aria-label="AURORA tools available from Transcribe">
+          <div className="transcribe-hub-heading"><div><small>YOUR WORKSPACE</small><h2>Everything you can do with AURORA</h2><p>Import a recording above to unlock transcript editing. These tools are ready to open at any time.</p></div><span className="transcribe-hub-count">6 TOOLS</span></div>
+          <div className="transcribe-hub-grid">
+            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><Sparkles/></span><strong>AI Preview</strong><small>Summaries, chapters, action items, meeting notes and translation.</small><b>Open AI Preview →</b></button>
+            <button type="button" onClick={() => setPage('studio')}><span className="hub-icon"><AudioWaveform/></span><strong>Audio editor & cleanup</strong><small>Trim audio, preview edits, clean noise and export a restored audio copy.</small><b>Open Voice Workspace →</b></button>
+            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Languages/></span><strong>Subtitle Finder</strong><small>Find subtitle releases, preview them, translate and export SRT or VTT.</small><b>Find subtitles →</b></button>
+            <button type="button" onClick={() => setPage('library')}><span className="hub-icon"><BookOpen/></span><strong>Media Library</strong><small>Search saved transcripts, recordings, folders and AI insights.</small><b>Open Library →</b></button>
+            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><AudioLines/></span><strong>Intelligent transcript player</strong><small>Search timed lines, change playback speed, jump to speech and assign speaker labels.</small><b>Open transcript player →</b></button>
+            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Film/></span><strong>Film & series details</strong><small>Open a matched title for artwork, cast information and legal streaming searches.</small><b>Explore titles →</b></button>
+          </div>
+        </section>
       </section>}
 
       {page === 'library' && <section className="page-content library-page">
@@ -2452,7 +2464,12 @@ function App() {
 {isVideoMediaFile(active.file) ? <video ref={videoRef} className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/> :             <audio ref={audioRef} className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>}
             {active.timedSegments?.length ? <div className="preview-timeline">{active.timedSegments.map((segment,index)=><div className="preview-segment" key={index}><button type="button" className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'timestamp-chip active':'timestamp-chip'} onClick={()=>{const media=videoRef.current||audioRef.current;if(media){media.currentTime=segment.start;void media.play();}}}>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</button><textarea value={(segment.speaker?segment.speaker+': ':'')+segment.text} rows={2} onChange={event=>updateTimedSegment(index,event.target.value.replace(/^[^:]{1,30}:\s*/,''))} aria-label={'Edit transcript segment '+(index+1)}/></div>)}</div> : <textarea className="transcript-input" value={active.transcript} onChange={event=>updateTranscript(event.target.value)} aria-label="Edit transcript"/>}
           </details>
-        </section> : <div className="empty-state"><AudioWaveform/><strong>Select a transcript first</strong><span>Choose or transcribe an audio file to start a chat.</span><button className="primary" onClick={()=>setPage('transcribe')} type="button">Open Transcribe</button></div>}
+        </section> : <section className="preview-start-panel">
+          <div className="preview-start-hero"><span className="preview-start-orb"><Sparkles size={27}/></span><div><small>AURORA // AI WORKSPACE</small><h2>Your transcript tools are ready.</h2><p>Choose a recording to unlock AI summaries, chapters, action items, meeting notes, translation and the intelligent player.</p></div></div>
+          <div className="preview-start-actions"><button className="primary" type="button" onClick={()=>setPage('transcribe')}><Upload size={16}/> Import or choose a recording</button><button className="secondary" type="button" onClick={()=>setPage('library')}><BookOpen size={16}/> Browse saved Library</button></div>
+          {files.length>0 && <div className="preview-recent-files"><strong>Choose a recording already in this session</strong>{files.map(item=><button key={item.id} type="button" onClick={()=>{setActiveId(item.id);setPreviewInput('@'+item.file.name+' ');}}><FileAudio size={16}/><span>{item.file.name}</span><small>{item.transcript.trim()?'Transcript ready':'Not transcribed'}</small></button>)}</div>}
+          <div className="preview-capability-grid"><article><Sparkles/><strong>AI insights</strong><span>Summaries, chapters and action items grounded in your transcript.</span></article><article><AudioWaveform/><strong>Playback intelligence</strong><span>Timestamp navigation, searchable lines and speaker labels.</span></article><article><Languages/><strong>Language & subtitles</strong><span>Translate text and create or find SRT/VTT subtitles.</span></article></div>
+        </section>}
       </section>}
 
       {page === 'studio' && <section className="page-content voice-editor-page">
