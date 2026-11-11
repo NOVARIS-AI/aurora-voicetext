@@ -1541,8 +1541,8 @@ function App() {
   }
 
 
-  async function sendPreviewMessage() {
-    const prompt = previewInput.trim();
+  async function sendPreviewMessage(overridePrompt?: string) {
+    const prompt = (overridePrompt ?? previewInput).trim();
     if (!prompt || previewBusy) return;
     if (!active?.transcript.trim()) { setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'assistant', text: 'Choose a transcript in Transcribe before using AI Preview.' }]); return; }
     const userMessage: PreviewMessage = { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'user', text: prompt };
@@ -1557,9 +1557,27 @@ function App() {
         setFiles(current => current.map(item => item.id === active.id ? { ...item, translatedTranscript: result } : item));
         setTranscriptTargetLanguage(target);
         result = `Here is the transcript translated into ${target}:\n\n${result}`;
-      } else if (/\b(summar|key points|main points|brief)\b/.test(lower)) {
-        result = makeSummary(active.transcript) || 'There is not enough transcript text to summarize.';
-      } else if (/\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\b/.test(lower)) {
+      } else if (/\b(summar|key points|main points|brief|chapter|action item|task list|meeting notes|decision|quote)\b/.test(lower)) {
+        const task = /\b(chapter|chapters|timeline)\b/.test(lower)
+          ? 'Create a chapter outline with concise chapter titles and timestamps only when timestamps are present in the supplied transcript. Never invent timestamps.'
+          : /\b(action item|task list|tasks|todo)\b/.test(lower)
+            ? 'Extract clear action items. Include an owner or due date only if explicitly stated; otherwise write “Not specified”.'
+            : /\b(meeting notes|meeting minutes|decisions)\b/.test(lower)
+              ? 'Create structured meeting notes with overview, discussion points, decisions and action items. Do not invent attendees or decisions.'
+              : /\b(quote|quotes)\b/.test(lower)
+                ? 'Extract a short list of useful verbatim quotes from the transcript. Do not invent quotations.'
+                : 'Create a useful summary with an overview, key points, important names or facts, and any explicit next steps.';
+        const source = active.transcript;
+        const chunks = splitLongText(source, 10000);
+        if (chunks.length > 12) throw new Error('This transcript is very long. Please split it into smaller recordings so the AI can analyse every section reliably.');
+        const insights: string[] = [];
+        for (let index = 0; index < chunks.length; index++) {
+          const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: task + '\\n\\nTranscript section ' + (index + 1) + ' of ' + chunks.length + ':\\n' + chunks[index] }] });
+          if (!data?.text) throw new Error('AURORA could not analyse transcript section ' + (index + 1) + '.');
+          insights.push(String(data.text).trim());
+        }
+        result = insights.length === 1 ? insights[0] : insights.map((item, index) => 'SECTION ' + (index + 1) + '\\n' + item).join('\\n\\n');
+      } else if (/\\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\\b/.test(lower)) {
         const chunks = splitLongText(active.transcript, 18000); const output: string[] = [];
         for (const chunk of chunks) {
           const { data } = await requestFeature('/api/assist', { text: chunk });
@@ -1568,7 +1586,9 @@ function App() {
         }
         result = output.join('\n\n'); updateTranscript(result);
       } else {
-        result = 'I can work with this transcript by translating it, polishing the wording, or creating a summary. Try a request such as “Translate this transcript to Yoruba”, “Polish the transcript”, or “Summarize the main points”.';
+        const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: 'Answer the following request using only the supplied transcript as source material. Be clear about uncertainty and never invent facts. Request: ' + prompt + '\\n\\nTranscript:\\n' + active.transcript.slice(0, 11000) + (active.transcript.length > 11000 ? '\\n\\n[Transcript excerpt: remaining text omitted. Ask for a specific section if needed.]' : '') }] });
+        result = String(data?.text || '').trim();
+        if (!result) throw new Error('AURORA could not complete that transcript request.');
       }
       setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+1), role: 'assistant', text: result }]);
     } catch (reason) {
@@ -2098,6 +2118,16 @@ function App() {
         <div className="page-heading"><div className="eyebrow">AI PREVIEW</div><h1>Work with your transcript.</h1><p>Ask for a translation, a cleaner draft, or a quick summary.</p></div>
         {active ? <section className="card preview-chat-card">
           <div className="preview-context"><span className="context-dot"/><span>@{active.file.name}</span><button type="button" onClick={()=>setPage('transcribe')}>Change transcript</button></div>
+          <div className="insight-quick-actions" aria-label="AI transcript tools">
+            <button type="button" disabled={previewBusy} onClick={()=>void sendPreviewMessage('Summarize this transcript into an overview and key points.')}> <Sparkles size={14}/> Summary</button>
+            <button type="button" disabled={previewBusy} onClick={()=>void sendPreviewMessage('Create chapters from this transcript. Use timestamps only where supplied.')}> <AudioWaveform size={14}/> Chapters</button>
+            <button type="button" disabled={previewBusy} onClick={()=>void sendPreviewMessage('Extract action items and tasks. Mark missing owners or dates as not specified.')}> <Check size={14}/> Action items</button>
+            <button type="button" disabled={previewBusy} onClick={()=>void sendPreviewMessage('Create structured meeting notes with decisions and follow-ups.')}> <FileText size={14}/> Meeting notes</button>
+          </div>
+          <div className="preview-media-panel">
+            {isVideoMediaFile(active.file) ? <video className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/> : <audio className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>}
+            {active.timedSegments?.length ? <div className="insight-timeline"><div className="insight-timeline-heading"><strong>Transcript timeline</strong><small>Tap a time to jump to that moment</small></div><div className="insight-segments">{active.timedSegments.slice(0,80).map((segment,index)=><button type="button" key={index} className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'insight-segment active':'insight-segment'} onClick={()=>{const media=document.querySelector<HTMLMediaElement>('.preview-media-panel audio, .preview-media-panel video');if(media){media.currentTime=segment.start;void media.play();}}}><time>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</time><span>{segment.speaker ? segment.speaker+': ' : ''}{segment.text}</span></button>)}</div>{active.timedSegments.length>80&&<small className="insight-more">Showing the first 80 transcript segments. Full transcript remains available below.</small>}</div> : <div className="insight-no-timing">Timestamped speech appears here when the transcription engine returns word or segment timing.</div>}
+          </div>
           <div className="preview-chat-feed" aria-live="polite">
             {!previewMessages.length && <div className="chat-welcome"><Sparkles size={22}/><strong>What would you like to do with this transcript?</strong><p>Try “Translate this transcript to Yoruba”, “Polish the wording”, or “Summarize the main points”.</p></div>}
             {previewMessages.map(message=><article key={message.id} className={'chat-message '+message.role}><span>{message.role === 'user' ? 'You' : 'AURORA'}</span><p>{message.text}</p></article>)}
