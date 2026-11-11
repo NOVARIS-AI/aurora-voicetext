@@ -2292,6 +2292,17 @@ function App() {
           <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
           <button onClick={() => setPage('studio')} type="button"><Volume2/><strong>Voice Studio</strong><span>Generate and download AI voiceovers with adjustable delivery.</span></button>
         </div>
+        <section className="transcribe-feature-hub" aria-label="AURORA tools available from Transcribe">
+          <div className="transcribe-hub-heading"><div><small>YOUR WORKSPACE</small><h2>Everything you can do with AURORA</h2><p>Import a recording above to unlock transcript editing. These tools are ready to open at any time.</p></div><span className="transcribe-hub-count">6 TOOLS</span></div>
+          <div className="transcribe-hub-grid">
+            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><Sparkles/></span><strong>AI Preview</strong><small>Summaries, chapters, action items, meeting notes and translation.</small><b>Open AI Preview →</b></button>
+            <button type="button" onClick={() => setPage('studio')}><span className="hub-icon"><AudioWaveform/></span><strong>Audio editor & cleanup</strong><small>Trim audio, preview edits, clean noise and export a restored audio copy.</small><b>Open Voice Workspace →</b></button>
+            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Languages/></span><strong>Subtitle Finder</strong><small>Find subtitle releases, preview them, translate and export SRT or VTT.</small><b>Find subtitles →</b></button>
+            <button type="button" onClick={() => setPage('library')}><span className="hub-icon"><BookOpen/></span><strong>Media Library</strong><small>Search saved transcripts, recordings, folders and AI insights.</small><b>Open Library →</b></button>
+            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><AudioLines/></span><strong>Intelligent transcript player</strong><small>Search timed lines, change playback speed, jump to speech and assign speaker labels.</small><b>Open transcript player →</b></button>
+            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Film/></span><strong>Film & series details</strong><small>Open a matched title for artwork, cast information and legal streaming searches.</small><b>Explore titles →</b></button>
+          </div>
+        </section>
       </section>}
 
       {page === 'transcribe' && <section className="page-content">
@@ -2375,17 +2386,6 @@ function App() {
           </section>
         </div>
 
-        <section className="transcribe-feature-hub" aria-label="AURORA tools available from Transcribe">
-          <div className="transcribe-hub-heading"><div><small>YOUR WORKSPACE</small><h2>Everything you can do with AURORA</h2><p>Import a recording above to unlock transcript editing. These tools are ready to open at any time.</p></div><span className="transcribe-hub-count">6 TOOLS</span></div>
-          <div className="transcribe-hub-grid">
-            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><Sparkles/></span><strong>AI Preview</strong><small>Summaries, chapters, action items, meeting notes and translation.</small><b>Open AI Preview →</b></button>
-            <button type="button" onClick={() => setPage('studio')}><span className="hub-icon"><AudioWaveform/></span><strong>Audio editor & cleanup</strong><small>Trim audio, preview edits, clean noise and export a restored audio copy.</small><b>Open Voice Workspace →</b></button>
-            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Languages/></span><strong>Subtitle Finder</strong><small>Find subtitle releases, preview them, translate and export SRT or VTT.</small><b>Find subtitles →</b></button>
-            <button type="button" onClick={() => setPage('library')}><span className="hub-icon"><BookOpen/></span><strong>Media Library</strong><small>Search saved transcripts, recordings, folders and AI insights.</small><b>Open Library →</b></button>
-            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><AudioLines/></span><strong>Intelligent transcript player</strong><small>Search timed lines, change playback speed, jump to speech and assign speaker labels.</small><b>Open transcript player →</b></button>
-            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Film/></span><strong>Film & series details</strong><small>Open a matched title for artwork, cast information and legal streaming searches.</small><b>Explore titles →</b></button>
-          </div>
-        </section>
       </section>}
 
       {page === 'library' && <section className="page-content library-page">
