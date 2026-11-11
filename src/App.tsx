@@ -1172,6 +1172,9 @@ function App() {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
   const [audioPlayhead, setAudioPlayhead] = useState(0);
+  const [timelineSearch, setTimelineSearch] = useState('');
+  const [timelineRate, setTimelineRate] = useState('1');
+  const [timelineShowAll, setTimelineShowAll] = useState(false);
   const [editorStart, setEditorStart] = useState(0);
   const [editorEnd, setEditorEnd] = useState(0);
   const [editorDuration, setEditorDuration] = useState(0);
@@ -1192,6 +1195,7 @@ function App() {
   const [subtitleText, setSubtitleText] = useState('');
   const [subtitleFilename, setSubtitleFilename] = useState('subtitle');
   const audioRef = useRef<HTMLAudioElement>(null);
+  const previewMediaRef = useRef<HTMLMediaElement>(null);
   const [summary, setSummary] = useState('');
   const [search, setSearch] = useState('');
   const [libraryFolder, setLibraryFolder] = useState('All items');
@@ -1207,6 +1211,16 @@ function App() {
   filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
   const selectedSubtitle = subtitleResults.find(item => item.id === selectedSubtitleId) ?? null;
+  const matchingTimedSegments = (active?.timedSegments ?? []).map((segment, index) => ({ ...segment, index })).filter(segment => !timelineSearch.trim() || (segment.text + ' ' + (segment.speaker || '')).toLowerCase().includes(timelineSearch.trim().toLowerCase()));
+  const visibleTimedSegments = matchingTimedSegments.slice(0, timelineShowAll ? 500 : 80);
+  const detectedSpeakers = [...new Set((active?.timedSegments ?? []).map(segment => segment.speaker).filter((speaker): speaker is string => Boolean(speaker?.trim())))];
+  function jumpToTimedSegment(start: number) {
+    const media = previewMediaRef.current;
+    if (!media) return;
+    media.currentTime = Math.max(0, start);
+    media.playbackRate = Number(timelineRate) || 1;
+    void media.play().catch(() => undefined);
+  }
 
   // Enrich every subtitle result with matching movie or series metadata.
   useEffect(() => {
@@ -2191,8 +2205,15 @@ function App() {
             <button type="button" disabled={previewBusy} onClick={()=>void sendPreviewMessage('Create structured meeting notes with decisions and follow-ups.')}> <FileText size={14}/> Meeting notes</button>
           </div>
           <div className="preview-media-panel">
-            {isVideoMediaFile(active.file) ? <video className="audio-player" controls playsInline preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/> : <audio className="audio-player" controls preload="metadata" src={active.url} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>}
-            {active.timedSegments?.length ? <div className="insight-timeline"><div className="insight-timeline-heading"><strong>Transcript timeline</strong><small>Tap a time to jump to that moment</small></div><div className="insight-segments">{active.timedSegments.slice(0,80).map((segment,index)=><button type="button" key={index} className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'insight-segment active':'insight-segment'} onClick={()=>{const media=document.querySelector<HTMLMediaElement>('.preview-media-panel audio, .preview-media-panel video');if(media){media.currentTime=segment.start;void media.play();}}}><time>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</time><span>{segment.speaker ? segment.speaker+': ' : ''}{segment.text}</span></button>)}</div>{active.timedSegments.length>80&&<small className="insight-more">Showing the first 80 transcript segments. Full transcript remains available below.</small>}</div> : <div className="insight-no-timing">Timestamped speech appears here when the transcription engine returns word or segment timing.</div>}
+            {isVideoMediaFile(active.file) ? <video ref={previewMediaRef as React.RefObject<HTMLVideoElement>} className="audio-player" controls playsInline preload="metadata" src={active.url} onLoadedMetadata={event=>{event.currentTarget.playbackRate=Number(timelineRate)||1;}} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/> : <audio ref={previewMediaRef as React.RefObject<HTMLAudioElement>} className="audio-player" controls preload="metadata" src={active.url} onLoadedMetadata={event=>{event.currentTarget.playbackRate=Number(timelineRate)||1;}} onTimeUpdate={event=>setAudioPlayhead(event.currentTarget.currentTime)}/>}
+            {active.timedSegments?.length ? <div className="insight-timeline">
+              <div className="insight-timeline-heading"><div><strong>Intelligent transcript player</strong><small>{active.timedSegments.length.toLocaleString()} timed segments · tap any line to seek precisely</small></div><label className="timeline-speed">Speed<select aria-label="Playback speed" value={timelineRate} onChange={event=>{setTimelineRate(event.target.value);if(previewMediaRef.current)previewMediaRef.current.playbackRate=Number(event.target.value);}}><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label></div>
+              <label className="timeline-search"><Search size={15}/><input value={timelineSearch} onChange={event=>{setTimelineSearch(event.target.value);setTimelineShowAll(false);}} placeholder="Find a word, phrase or speaker…" aria-label="Search timed transcript"/></label>
+              {detectedSpeakers.length>0 && <div className="timeline-speakers"><span>Speaker labels supplied by transcription</span>{detectedSpeakers.map(speaker=><span className="timeline-speaker-chip" key={speaker}>{speaker}</span>)}</div>}
+              <div className="insight-segments">{visibleTimedSegments.map(segment=><button type="button" key={segment.index} className={audioPlayhead>=segment.start&&audioPlayhead<segment.end?'insight-segment active':'insight-segment'} onClick={()=>jumpToTimedSegment(segment.start)}><time>{Math.floor(segment.start/60).toString().padStart(2,'0')}:{Math.floor(segment.start%60).toString().padStart(2,'0')}</time><span>{segment.speaker ? <b>{segment.speaker}: </b> : null}{segment.text}</span></button>)}</div>
+              {!matchingTimedSegments.length && <div className="insight-no-timing">No timed transcript lines match that search.</div>}
+              {matchingTimedSegments.length>80 && <button className="timeline-more-button" type="button" onClick={()=>setTimelineShowAll(value=>!value)}>{timelineShowAll?'Show fewer lines':'Show more lines ('+matchingTimedSegments.length.toLocaleString()+')'}</button>}
+            </div> : <div className="insight-no-timing">Timestamped speech appears here when the transcription engine returns word or segment timing. You can still use the full transcript below.</div>}
           </div>
           <div className="preview-chat-feed" aria-live="polite">
             {!previewMessages.length && <div className="chat-welcome"><Sparkles size={22}/><strong>What would you like to do with this transcript?</strong><p>Try “Translate this transcript to Yoruba”, “Polish the wording”, or “Summarize the main points”.</p></div>}
