@@ -31,7 +31,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'settings' | 'admin';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'movieDetails' | 'settings' | 'admin';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -1191,7 +1191,7 @@ function App() {
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
   const [subtitleType, setSubtitleType] = useState<'movie' | 'episode' | undefined>(undefined);
-  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;backdrop?:string;overview?:string;genres?:string[];rating?:string;artworkResolved?:boolean}>>([]);
+  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;backdrop?:string;overview?:string;genres?:string[];rating?:string;imdbId?:string;cast?:string[];director?:string[];runtime?:string;country?:string[];artworkResolved?:boolean}>>([]);
   const [selectedSubtitleId, setSelectedSubtitleId] = useState<string | null>(null);
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
@@ -1280,7 +1280,7 @@ function App() {
         const response = await fetch('https://v3-cinemeta.strem.io/catalog/' + kind + '/top/search=' + encodeURIComponent(title) + '.json', { signal: AbortSignal.timeout(9000) });
         if (!response.ok) return { id: item.id, meta: null as any };
         const payload = await response.json();
-        const metas = Array.isArray(payload?.metas) ? payload.metas as Array<{name?:string;year?:string|number;poster?:string;background?:string;description?:string;genres?:string[];imdbRating?:string}> : [];
+        const metas = Array.isArray(payload?.metas) ? payload.metas as Array<{id?:string;name?:string;year?:string|number;poster?:string;background?:string;description?:string;genres?:string[];imdbRating?:string;cast?:string[];director?:string[];runtime?:string;country?:string[]}> : [];
         const target = normalize(title);
         const exact = metas.filter(meta => normalize(meta.name || '') === target);
         const candidates = exact.length ? exact : metas.filter(meta => {
@@ -1296,7 +1296,7 @@ function App() {
       setSubtitleResults(current => current.map(item => {
         if (item.artworkResolved) return item;
         const meta = byId.get(item.id);
-        return { ...item, poster: meta?.poster, backdrop: meta?.background, overview: meta?.description, genres: meta?.genres, rating: meta?.imdbRating, artworkResolved: true };
+        return { ...item, poster: meta?.poster, backdrop: meta?.background, overview: meta?.description, genres: meta?.genres, rating: meta?.imdbRating, imdbId: meta?.id, cast: meta?.cast, director: meta?.director, runtime: meta?.runtime, country: meta?.country, artworkResolved: true };
       }));
     });
     return () => { cancelled = true; };
@@ -2527,14 +2527,14 @@ function App() {
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
           {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}>
-            <button className="subtitle-poster-wrap subtitle-detail-trigger" type="button" onClick={()=>setSelectedSubtitleId(item.id)} aria-label={'View details for '+item.title}>
+            <button className="subtitle-poster-wrap subtitle-detail-trigger" type="button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}} aria-label={'View details for '+item.title}>
               <span className="subtitle-poster-fallback"><Film size={25}/><span>{item.season != null ? 'SERIES' : 'MOVIE'}</span></span>
-              {item.poster && <img className="subtitle-poster" src={item.poster} alt={item.title + ' poster'} loading="lazy" onError={event=>{event.currentTarget.style.opacity='0';}}/>}
+              {(item.poster || item.imdbId) && <img className="subtitle-poster" src={item.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId || '')+'/img'} alt={item.title + ' poster'} loading="lazy" onError={event=>{const image=event.currentTarget;if(item.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId)+'/img';}else{image.style.display='none';}}}/>}
               <span className="subtitle-poster-open"><Clapperboard size={14}/> DETAILS</span>
             </button>
             <div className="subtitle-result-main">
               <div className="subtitle-result-kicker">{item.season != null ? 'TV SERIES' : 'FEATURE FILM'} <span>{item.year || 'TITLE MATCH'}</span></div>
-              <button className="subtitle-title-button" type="button" onClick={()=>setSelectedSubtitleId(item.id)}>{item.title} {item.year?'('+item.year+')':''}</button>
+              <button className="subtitle-title-button" type="button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}}>{item.title} {item.year?'('+item.year+')':''}</button>
               {item.season != null && <div className="subtitle-episode-tag">SEASON {String(item.season).padStart(2,'0')}{item.episode != null ? ' · EPISODE '+String(item.episode).padStart(2,'0') : ''}</div>}
               <p>{item.language.toUpperCase()} <span>·</span> {item.release||item.fileName}</p>
               <small><Download size={12}/> {item.downloads.toLocaleString()} downloads{item.hearingImpaired ? ' · SDH' : ''}</small>
@@ -2546,26 +2546,53 @@ function App() {
               <button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button>
             </div>
           </article>)}</div>}
-          {selectedSubtitle && <section className="subtitle-detail-panel" aria-label="Film details">
-            <div className="subtitle-detail-backdrop" style={selectedSubtitle.backdrop ? {backgroundImage:'linear-gradient(90deg,rgba(5,9,17,.96),rgba(5,9,17,.62),rgba(5,9,17,.18)),url('+selectedSubtitle.backdrop+')'} : undefined}>
-              <button className="subtitle-detail-close" type="button" onClick={()=>setSelectedSubtitleId(null)} aria-label="Close film details"><X size={17}/></button>
-              <div className="subtitle-detail-copy">
-                <span className="subtitle-detail-kicker">{selectedSubtitle.season != null ? 'SERIES INFORMATION' : 'MOVIE INFORMATION'}</span>
-                <h2>{selectedSubtitle.title}{selectedSubtitle.year ? ' · '+selectedSubtitle.year : ''}</h2>
-                {selectedSubtitle.rating && <span className="subtitle-detail-rating"><Star size={14}/> {selectedSubtitle.rating}/10</span>}
-                {selectedSubtitle.genres?.length ? <div className="subtitle-detail-genres">{selectedSubtitle.genres.slice(0,4).map(genre=><span key={genre}>{genre}</span>)}</div> : null}
-                <p>{selectedSubtitle.overview || 'Film information is not available for this title, but the subtitle releases below are still searchable and downloadable.'}</p>
-                {selectedSubtitle.season != null && <span className="subtitle-episode-tag">SEASON {selectedSubtitle.season}{selectedSubtitle.episode != null ? ' · EPISODE '+selectedSubtitle.episode : ''}</span>}
-                <small>{subtitleResults.filter(item=>item.title===selectedSubtitle.title).length} subtitle release(s) found for this title</small>
-              </div>
-            </div>
-            <div className="subtitle-detail-releases"><strong>Selected subtitle release</strong><span>{selectedSubtitle.language.toUpperCase()} · {selectedSubtitle.release || selectedSubtitle.fileName}</span><button className="secondary small-button" type="button" disabled={subtitleBusy||!selectedSubtitle.fileId} onClick={()=>downloadSubtitle(selectedSubtitle.fileId!,false,selectedSubtitle.fileName,true)}><Play size={14}/> Preview this release</button></div>
-          </section>}
           {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW · TIMING CHECK</small><h2>{subtitleFilename}</h2><p>Review captions and timestamps before exporting.</p></div><span className="count">Editable</span></div>
             <div className="subtitle-cue-list">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).slice(0,8).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <div className="subtitle-cue" key={index}><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div>;})}</div>
             <details className="subtitle-edit-details"><summary>Edit full subtitle file</summary><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/></details>
             <div className="studio-actions"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
         </section>
+      </section>}
+
+
+      {page === 'movieDetails' && <section className="page-content movie-detail-page">
+        <div className="movie-detail-toolbar"><button className="secondary small-button" type="button" onClick={()=>setPage('subtitles')}><ArrowLeft size={15}/> Back to Subtitle Finder</button><span> MOVIE & SERIES GUIDE</span></div>
+        {selectedSubtitle ? <section className="movie-detail-shell">
+          <div className="movie-detail-hero" style={selectedSubtitle.backdrop ? {backgroundImage:'linear-gradient(90deg,rgba(5,9,17,.97),rgba(5,9,17,.76),rgba(5,9,17,.38)),url('+selectedSubtitle.backdrop+')'} : undefined}>
+            <div className="movie-detail-poster">
+              <span className="subtitle-poster-fallback"><Film size={28}/><span>POSTER</span></span>
+              {(selectedSubtitle.poster || selectedSubtitle.imdbId) && <img src={selectedSubtitle.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId || '')+'/img'} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(selectedSubtitle.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img';}else image.style.display='none';}}/>}
+            </div>
+            <div className="movie-detail-copy">
+              <small>{selectedSubtitle.season != null ? 'TV SERIES' : 'MOVIE'} · {selectedSubtitle.year || 'YEAR NOT LISTED'}</small>
+              <h1>{selectedSubtitle.title}</h1>
+              <div className="movie-detail-facts">
+                {selectedSubtitle.rating && <span><Star size={14}/> {selectedSubtitle.rating}/10</span>}
+                {selectedSubtitle.runtime && <span>{selectedSubtitle.runtime}</span>}
+                {selectedSubtitle.country?.length ? <span>{selectedSubtitle.country.slice(0,2).join(', ')}</span> : null}
+                <span>{subtitleResults.filter(item=>item.title===selectedSubtitle.title).length} subtitle release(s)</span>
+              </div>
+              {selectedSubtitle.genres?.length ? <div className="subtitle-detail-genres">{selectedSubtitle.genres.map(genre=><span key={genre}>{genre}</span>)}</div> : null}
+              <p>{selectedSubtitle.overview || 'A synopsis is not available for this title yet.'}</p>
+              {selectedSubtitle.season != null && <span className="subtitle-episode-tag">SEASON {selectedSubtitle.season}{selectedSubtitle.episode != null ? ' · EPISODE '+selectedSubtitle.episode : ''}</span>}
+            </div>
+          </div>
+          <div className="movie-detail-body">
+            <section className="movie-detail-section"><div><small>WHERE TO WATCH</small><h2>Open a streaming service</h2><p>These buttons search the selected service. Availability depends on your country and subscription.</p></div>
+              <div className="movie-stream-grid">
+                <a href={'https://www.justwatch.com/ng/search?q='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">JustWatch <span>Find available services ↗</span></a>
+                <a href={'https://www.netflix.com/search?q='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Netflix <span>Search title ↗</span></a>
+                <a href={'https://www.primevideo.com/search/ref=atv_nb_sr?phrase='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Prime Video <span>Search title ↗</span></a>
+                <a href={'https://www.youtube.com/results?search_query='+encodeURIComponent(selectedSubtitle.title+' official movie')} target="_blank" rel="noopener noreferrer">YouTube <span>Find official listings ↗</span></a>
+                <a href={'https://tv.apple.com/search?term='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Apple TV <span>Search title ↗</span></a>
+                <a href={'https://www.google.com/search?q='+encodeURIComponent(selectedSubtitle.title+' watch online legal streaming Nigeria')} target="_blank" rel="noopener noreferrer">More services <span>Check legal options ↗</span></a>
+              </div>
+            </section>
+            {(selectedSubtitle.cast?.length || selectedSubtitle.director?.length) ? <section className="movie-detail-section movie-cast-section"><small>PEOPLE</small><h2>Cast & crew</h2>{selectedSubtitle.director?.length ? <p><strong>Director:</strong> {selectedSubtitle.director.join(', ')}</p> : null}{selectedSubtitle.cast?.length ? <p><strong>Cast:</strong> {selectedSubtitle.cast.slice(0,12).join(', ')}</p> : null}</section> : null}
+            <section className="movie-detail-section movie-release-section"><div><small>SUBTITLE FINDER</small><h2>Available subtitle releases</h2><p>Choose a release to preview or download captions.</p></div>
+              {subtitleResults.filter(item=>item.title===selectedSubtitle.title).map((item,index)=><div className="movie-release-row" key={item.id+'-'+index}><div><strong>{item.language.toUpperCase()} · {item.release || item.fileName}</strong><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired?' · SDH':''}</small></div><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName,true)} type="button"><Play size={14}/> Preview</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button></div>)}
+            </section>
+          </div>
+        </section> : <div className="empty-state">Choose a movie from Subtitle Finder to see its details.</div>}
       </section>}
 
       {page === 'settings' && <section className="page-content"><div className="page-heading"><div className="eyebrow">PREFERENCES</div><h1>Settings & privacy</h1><p>Manage your saved transcripts and exported work.</p></div><section className="card settings-card"><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Administrator access</strong><p>Restricted service diagnostics and user bug reports.</p></div><button className="secondary small-button" type="button" onClick={()=>setPage('admin')}>Open admin</button></div><div className="setting-row"><span className="setting-icon"><ShieldCheck/></span><div><strong>Offline use</strong><p>Prepare this device once to make offline transcription available.</p></div></div><div className="setting-row"><span className="setting-icon"><BookOpen/></span><div><strong>Saved transcripts</strong><p>{library.length} transcript(s) saved on this device. Your library stays on this device unless you export a backup.</p></div><button className="secondary small-button" onClick={() => {if (window.confirm('Delete all saved transcripts from this browser?')) setLibrary([]);}} type="button"><Trash2 size={15}/> Clear library</button></div><div className="setting-row"><span className="setting-icon"><Download/></span><div><strong>Back up your library</strong><p>Export a JSON backup or restore one later. Importing merges saved transcripts and keeps existing entries.</p></div><div className="library-actions"><button className="secondary small-button" type="button" onClick={()=>void exportLibraryBackup().catch(reason=>setError(reason instanceof Error?reason.message:'Could not export library backup.'))}><Download size={15}/> Export backup</button><button className="secondary small-button" type="button" onClick={()=>libraryImportRef.current?.click()}><Upload size={15}/> Import backup</button><input ref={libraryImportRef} className="hidden-input" type="file" accept=".json,application/json" onChange={event=>void importLibraryBackup(event.currentTarget.files?.[0])}/></div></div><div className="setting-row"><span className="setting-icon"><Mic2/></span><div><strong>Voice Studio</strong><p>Create a voice version of your text and download the finished audio.</p></div></div><div className="setting-row"><span className="setting-icon"><FileText/></span><div><strong>Export your work</strong><p>Download transcripts and subtitles in the format you need.</p></div></div></section></section>}
