@@ -1201,38 +1201,44 @@ function App() {
   filesRef.current = files;
   const active = files.find(item => item.id === activeId) ?? files[0] ?? null;
 
-  // Enrich subtitle releases with matching movie/series artwork from Cinemeta.
-  // Artwork is optional: subtitle search and downloads remain fully usable if metadata is offline.
+  // Resolve artwork separately for each subtitle title. A single broad search can
+  // return one popular catalogue entry; reusing that list's first poster made every
+  // result display the same cover. Never assign a poster unless its title matches.
   useEffect(() => {
     const unresolved = subtitleResults.filter(item => !item.artworkResolved);
     if (!unresolved.length) return;
     let cancelled = false;
-    const query = subtitleQuery.trim();
-    if (!query) return;
-    const kinds = subtitleType === 'movie' ? ['movie'] : subtitleType === 'episode' ? ['series'] : ['movie', 'series'];
-    void Promise.all(kinds.map(async kind => {
+    const normalize = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim();
+    void Promise.all(unresolved.map(async item => {
+      const kind = item.season != null || subtitleType === 'episode' ? 'series' : 'movie';
+      const title = item.title.trim();
+      if (!title) return { id: item.id, poster: undefined as string | undefined };
       try {
-        const response = await fetch('https://v3-cinemeta.strem.io/catalog/' + kind + '/top/search=' + encodeURIComponent(query) + '.json', { signal: AbortSignal.timeout(9000) });
-        if (!response.ok) return { kind, metas: [] as Array<{name?:string;year?:string|number;poster?:string}> };
+        const response = await fetch('https://v3-cinemeta.strem.io/catalog/' + kind + '/top/search=' + encodeURIComponent(title) + '.json', { signal: AbortSignal.timeout(9000) });
+        if (!response.ok) return { id: item.id, poster: undefined as string | undefined };
         const payload = await response.json();
-        return { kind, metas: Array.isArray(payload?.metas) ? payload.metas as Array<{name?:string;year?:string|number;poster?:string}> : [] };
-      } catch { return { kind, metas: [] as Array<{name?:string;year?:string|number;poster?:string}> }; }
-    })).then(catalogs => {
+        const metas = Array.isArray(payload?.metas) ? payload.metas as Array<{name?:string;year?:string|number;poster?:string}> : [];
+        const target = normalize(title);
+        const exact = metas.filter(meta => normalize(meta.name || '') === target);
+        const candidates = exact.length ? exact : metas.filter(meta => {
+          const name = normalize(meta.name || '');
+          return name.length > 2 && (name.includes(target) || target.includes(name));
+        });
+        const yearMatch = item.year ? candidates.find(meta => String(meta.year || '') === String(item.year)) : undefined;
+        const match = yearMatch || candidates[0];
+        return { id: item.id, poster: match?.poster };
+      } catch {
+        return { id: item.id, poster: undefined as string | undefined };
+      }
+    })).then(artworks => {
       if (cancelled) return;
-      const normalize = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim();
-      setSubtitleResults(current => current.map(item => {
-        if (item.artworkResolved) return item;
-        const kind = item.season != null || subtitleType === 'episode' ? 'series' : 'movie';
-        const metas = catalogs.find(catalog => catalog.kind === kind)?.metas || [];
-        const target = normalize(item.title);
-        const matches = metas.filter(meta => normalize(meta.name || '') === target);
-        const candidates = matches.length ? matches : metas.filter(meta => normalize(meta.name || '').includes(target) || target.includes(normalize(meta.name || '')));
-        const match = (candidates.length ? candidates : metas)[0];
-        return { ...item, poster: match?.poster, artworkResolved: true };
-      }));
+      const byId = new Map(artworks.map(item => [item.id, item.poster]));
+      setSubtitleResults(current => current.map(item => item.artworkResolved
+        ? item
+        : { ...item, poster: byId.get(item.id), artworkResolved: true }));
     });
     return () => { cancelled = true; };
-  }, [subtitleResults, subtitleQuery, subtitleType]);
+  }, [subtitleResults, subtitleType]);
 
   // Surface resumable work as soon as the same recording is selected again.
   useEffect(() => {
