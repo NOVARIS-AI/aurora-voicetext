@@ -25,8 +25,6 @@ const VERCEL_API_ENDPOINTS = new Set([
   "assist",
   "translate",
   "voice-chat",
-  "subtitles",
-  "subtitles-download",
   "admin",
   "bug-report",
   "diagnostics",
