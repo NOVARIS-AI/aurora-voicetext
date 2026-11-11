@@ -43,9 +43,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const transcriptionHealth = getTranscriptionHealth(process.env);
   const backupHealth = await getBackupHealth(process.env);
   const providers = transcriptionHealth.providers;
+  const backupProviders = backupHealth.providers as Record<string, boolean> | undefined;
   const primaryAvailable = transcriptionHealth.onlineTranscriptionAvailable;
   const backupAvailable = backupHealth.status === "ok" &&
-    Boolean(backupHealth.providers?.transcription);
+    Boolean(backupProviders?.transcription);
 
   return res.status(200).json({
     app: "AURORA VoiceText",
@@ -66,21 +67,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       openai: providers.openai,
       backupBackend: backupHealth.status === "ok",
       aiSpeech: Boolean(providers.openai || process.env.ELEVENLABS_API_KEY ||
-        backupHealth.providers?.speech),
+        backupProviders?.speech),
       elevenLabs: Boolean(process.env.ELEVENLABS_API_KEY),
       openRouter: Boolean(process.env.OPENROUTER_API_KEY ||
-        backupHealth.providers?.openrouter),
+        backupProviders?.openrouter),
       voiceChat: Boolean(process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY ||
-        process.env.OPENAI_API_KEY || backupHealth.providers?.voiceChat),
+        process.env.OPENAI_API_KEY || backupProviders?.voiceChat),
       translation: Boolean(process.env.OPENROUTER_API_KEY || providers.openai || providers.groq ||
-        backupHealth.providers?.translation),
+        backupProviders?.translation),
       transcriptPolish: Boolean(process.env.OPENROUTER_API_KEY || providers.openai || providers.groq ||
-        backupHealth.providers?.transcriptPolish),
+        backupProviders?.transcriptPolish),
       subtitleSearch: Boolean(process.env.OPENSUBTITLES_API_KEY ||
-        backupHealth.providers?.subtitles),
+        backupProviders?.subtitles),
       subtitleDownload: Boolean(
         (process.env.OPENSUBTITLES_API_KEY && process.env.OPENSUBTITLES_TOKEN) ||
-        backupHealth.providers?.subtitleDownload
+        backupProviders?.subtitleDownload
       ),
     },
     checkedAt: new Date().toISOString(),
