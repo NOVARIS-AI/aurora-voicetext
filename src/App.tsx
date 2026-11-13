@@ -2265,7 +2265,7 @@ function App() {
       <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} type="button" aria-label="AURORA VoiceText home">
           <span className="brand-mark"><img src="/aurora-mark.svg" alt="" /></span>
-          <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE NOTES, MADE READABLE</small></span>
+          <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE + DOCUMENT INTELLIGENCE</small></span>
         </button>
         <span className="local-badge"><span /> VOICE + DOCUMENT AI</span>
       </header>
