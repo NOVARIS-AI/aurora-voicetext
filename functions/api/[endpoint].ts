@@ -6,7 +6,6 @@ interface Env {
 const ALLOWED_ENDPOINTS = new Set([
   "transcribe",
   "tts",
-  "assist",
   "translate",
   "voice-chat",
   "subtitles",
