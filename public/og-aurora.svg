@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#54e2ec"/><stop offset=".55" stop-color="#8ebaff"/><stop offset="1" stop-color="#b8a5ff"/></linearGradient><radialGradient id="bg"><stop stop-color="#17304a"/><stop offset="1" stop-color="#070b14"/></radialGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/><circle cx="980" cy="100" r="340" fill="#54e2ec" opacity=".07"/><circle cx="100" cy="600" r="300" fill="#b8a5ff" opacity=".07"/>
+<rect x="90" y="130" width="132" height="132" rx="34" fill="#080d18" stroke="#3b7182" stroke-width="3"/>
+<path d="M116 212v-48c0-10 8-18 18-18s18 8 18 18v48m-36-24h36m28-48v84m18-66v48m18-30v12" fill="none" stroke="url(#g)" stroke-width="8" stroke-linecap="round"/>
+<text x="90" y="340" fill="#f3f8ff" font-family="Arial,sans-serif" font-size="72" font-weight="700">AURORA VoiceText</text>
+<text x="94" y="410" fill="#9db3ca" font-family="Arial,sans-serif" font-size="30">AI-powered voice and document workspace</text>
+<text x="94" y="485" fill="#67dce8" font-family="Arial,sans-serif" font-size="24">Transcribe • Edit • Write • Organise • Export</text>
+</svg>
