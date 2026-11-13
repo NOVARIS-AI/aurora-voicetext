@@ -96,6 +96,7 @@ export default function DocumentStudio({ onAssist }: Props) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [proposal, setProposal] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingTask, setPendingTask] = useState('chat');
   const [undoText, setUndoText] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -138,6 +139,8 @@ export default function DocumentStudio({ onAssist }: Props) {
       setName(file.name.replace(/\.(docx|txt|md)$/i, '') || 'Imported document');
       setText(imported);
       setProposal('');
+      setPreviewOpen(false);
+      setUndoText(null);
       setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
       setStatus('Document imported. Your original file has not been changed.');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not import this document.'); }
@@ -153,8 +156,9 @@ export default function DocumentStudio({ onAssist }: Props) {
     try {
       const result = await onAssist({ text: current, instruction: prompt, task });
       if (!result?.trim()) throw new Error('The AI returned an empty response.');
-      setProposal(result.trim());
-      setMessages(items => [...items, { id: String(Date.now() + 1), role: 'assistant', text: task === 'chat' ? result.trim() : 'I prepared an edited version. Review the preview below before applying it to your document.' }]);
+      setProposal(task === 'chat' ? '' : result.trim());
+      setPreviewOpen(task !== 'chat');
+      setMessages(items => [...items, { id: String(Date.now() + 1), role: 'assistant', text: task === 'chat' ? result.trim() : 'Your revised document is ready. I opened the full preview so you can review every paragraph before applying it.' }]);
     } catch (reason) {
       setMessages(items => [...items, { id: String(Date.now() + 2), role: 'assistant', text: reason instanceof Error ? reason.message : 'The AI assistant is unavailable right now.' }]);
     } finally { setBusy(false); }
@@ -170,6 +174,7 @@ export default function DocumentStudio({ onAssist }: Props) {
     setUndoText(text);
     setText(proposal);
     setProposal('');
+    setPreviewOpen(false);
     setStatus('AI changes applied. Your previous saved copy is still available through undo in the editor.');
   };
 
@@ -233,7 +238,7 @@ export default function DocumentStudio({ onAssist }: Props) {
             {busy && <div className="document-chat-message assistant"><small>AURORA</small><p>Working on your document…</p></div>}
             <div ref={chatEndRef}/>
           </div>
-          {proposal && <div className="document-proposal"><div><strong>AI result ready</strong><button type="button" aria-label="Dismiss suggestion" onClick={() => setProposal('')}><X size={14}/></button></div><p>{proposal.slice(0,500)}{proposal.length > 500 ? '…' : ''}</p><div><button className="secondary small-button" type="button" onClick={() => { setProposal(''); setStatus('AI suggestion discarded.'); }}>Discard</button>{pendingTask !== 'chat' && <button className="primary small-button" type="button" onClick={applyProposal}><Check size={14}/> Apply to document</button>}</div></div>}
+
           <form className="document-chat-composer" onSubmit={event => { event.preventDefault(); const prompt = chatInput.trim(); if (!prompt || busy) return; setChatInput(''); void runAssist(prompt, /rewrite|reorgan|arrange|proofread|correct|edit|improve|make this/i.test(prompt) ? 'rewrite' : 'chat'); }}>
             <textarea value={chatInput} onChange={event => setChatInput(event.target.value)} placeholder="Ask AURORA about this document…" rows={2} aria-label="Message AURORA"/>
             <button className="primary" type="submit" disabled={busy || !chatInput.trim()} aria-label="Send message">{busy ? <span className="document-spinner"/> : <Send size={16}/>}</button>
@@ -241,6 +246,17 @@ export default function DocumentStudio({ onAssist }: Props) {
           <p className="document-privacy-note"><AlertCircle size={13}/> When you ask AI for help, the current document text is sent to the configured AI service. Don't submit sensitive information.</p>
         </aside>
       </div>
+      {previewOpen && proposal && <div className="document-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
+        <section className="document-preview-modal" role="dialog" aria-modal="true" aria-labelledby="document-preview-title">
+          <header className="document-preview-header">
+            <div className="document-preview-brand"><span><Sparkles size={18}/></span><div><small>AURORA AI · DOCUMENT REVIEW</small><h2 id="document-preview-title">Your revised document</h2><p>Review the complete result before applying changes.</p></div></div>
+            <button className="document-preview-close" type="button" aria-label="Close preview" onClick={() => setPreviewOpen(false)}><X size={19}/></button>
+          </header>
+          <div className="document-preview-meta"><span><FileText size={14}/>{name || 'Untitled document'}</span><span>{proposal.length.toLocaleString()} characters</span><span>{proposal.trim() ? proposal.trim().split(/\\s+/).length.toLocaleString() : 0} words</span></div>
+          <article className="document-preview-content"><pre>{proposal}</pre></article>
+          <footer className="document-preview-footer"><span>Your original document remains unchanged until you apply this version.</span><div><button className="secondary small-button" type="button" onClick={() => { setProposal(''); setPreviewOpen(false); setStatus('AI suggestion discarded.'); }}>Discard</button><button className="primary small-button" type="button" onClick={applyProposal}><Check size={15}/> Apply to document</button></div></footer>
+        </section>
+      </div>}
       {status && <div className="status-message" role="status">{status}</div>}
       {error && <div className="error-message" role="alert"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><X size={15}/></button></div>}
     </section>
