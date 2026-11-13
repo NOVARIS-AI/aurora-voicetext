@@ -9,39 +9,6 @@ type Props = { onAssist: (input: AssistInput) => Promise<string> };
 const STORAGE_KEY = 'aurora-voicetext-document-studio-v1';
 const DOCX_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
-function readZipEntry(bytes: Uint8Array, name: string): Uint8Array {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let end = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
-    if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
-  }
-  if (end < 0) throw new Error('This does not look like a valid DOCX file.');
-  const count = view.getUint16(end + 10, true);
-  let cursor = view.getUint32(end + 16, true);
-  for (let i = 0; i < count; i++) {
-    if (view.getUint32(cursor, true) !== 0x02014b50) break;
-    const method = view.getUint16(cursor + 10, true);
-    const compressedSize = view.getUint32(cursor + 20, true);
-    const nameLength = view.getUint16(cursor + 28, true);
-    const extraLength = view.getUint16(cursor + 30, true);
-    const commentLength = view.getUint16(cursor + 32, true);
-    const localOffset = view.getUint32(cursor + 42, true);
-    const entryName = new TextDecoder().decode(bytes.slice(cursor + 46, cursor + 46 + nameLength));
-    if (entryName === name) {
-      const localNameLength = view.getUint16(localOffset + 26, true);
-      const localExtraLength = view.getUint16(localOffset + 28, true);
-      const start = localOffset + 30 + localNameLength + localExtraLength;
-      const compressed = bytes.slice(start, start + compressedSize);
-      if (method === 0) return compressed;
-      if (method !== 8) throw new Error('This DOCX uses an unsupported compression method.');
-      if (typeof DecompressionStream === 'undefined') throw new Error('DOCX extraction is not supported by this browser. Please update Chrome or use the web app.');
-      return compressed;
-    }
-    cursor += 46 + nameLength + extraLength + commentLength;
-  }
-  throw new Error('The DOCX file is missing its main document content.');
-}
-
 async function extractDocx(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -126,7 +93,6 @@ export default function DocumentStudio({ onAssist }: Props) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [proposal, setProposal] = useState('');
-  const [pendingPrompt, setPendingPrompt] = useState('');
   const [pendingTask, setPendingTask] = useState('chat');
   const [undoText, setUndoText] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -179,7 +145,7 @@ export default function DocumentStudio({ onAssist }: Props) {
     const current = text.trim();
     if (!current) { setError('Import or write a document first.'); return; }
     if (current.length > 22000) { setError('For now, AI editing supports documents up to 22,000 characters. Split a longer document into sections.'); return; }
-    setError(''); setBusy(true); setProposal(''); setPendingPrompt(prompt); setPendingTask(task);
+    setError(''); setBusy(true); setProposal(''); setPendingTask(task);
     setMessages(items => [...items, { id: String(Date.now()), role: 'user', text: prompt }]);
     try {
       const result = await onAssist({ text: current, instruction: prompt, task });
