@@ -13,12 +13,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (input.instruction.length > 1200) return res.status(400).json({ error: "Please shorten the instruction." });
     try { return res.status(200).json(await assistDocumentWithFallback({ text, instruction: input.instruction.trim(), task: input.task })); }
     catch (primaryError) {
-      try {
-        const backup = await callBackup("/api/assist", { text, instruction: input.instruction.trim(), task: input.task });
-        if (backup?.ok) return res.status(200).json(await backup.json());
-      } catch (error) { console.error("Backup document assistance failed", error); }
       const message = primaryError instanceof Error ? primaryError.message : "AI document assistance unavailable.";
-      return res.status(503).json({ error: message.slice(0, 350), fallbackAttempted: true });
+      return res.status(503).json({ error: message.slice(0, 350), fallbackAttempted: false });
     }
   }
   try { return res.status(200).json(await polishTranscriptWithFallback({ text, language: input.language })); }
