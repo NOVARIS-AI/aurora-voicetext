@@ -13,7 +13,8 @@
 
 Configure these in the hosting provider's server-side environment settings (Production and Preview as appropriate):
 
-- `GROQ_API_KEY` — primary transcription provider.
+- `GROQ_API_KEY` — primary transcription provider and optional AI text/chat provider.
+- Groq text defaults use `openai/gpt-oss-20b` for translation, transcript cleanup and document assistance, and `openai/gpt-oss-120b` for voice chat. Retired Llama 3.1/3.3 model overrides are automatically mapped to their recommended replacements.
 - `OPENAI_API_KEY` — secondary transcription provider and future AI features.
 - `ELEVENLABS_API_KEY` — reserved for AI speech generation integration.
 - `BACKUP_BACKEND_URL` — Cloudflare Worker origin, without a trailing slash.
