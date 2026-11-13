@@ -426,3 +426,27 @@ button:disabled{filter:saturate(.65)}
 .document-spinner{width:15px;height:15px;border:2px solid rgba(4,18,27,.3);border-top-color:#06131b;border-radius:50%;animation:spin 1s linear infinite}
 @media(max-width:800px){.document-workspace{grid-template-columns:1fr}.document-ai-card{position:static}.document-editor{min-height:42vh}.document-toolbar-actions>*{flex:1}.document-chat-thread{max-height:320px}}
 @media(max-width:440px){.brand-mark img{width:30px;height:30px}.document-toolbar{padding:12px}.document-editor-card,.document-ai-card{padding:13px}.document-panel-heading{flex-direction:column}.document-save-state{font-size:9px}.document-quick-actions button{flex:1 1 calc(50% - 7px);justify-content:center}.document-editor{min-height:46vh;padding:12px;font-size:12px}}
+
+
+/* Full-document AI review: no clipped excerpt, with a focused reading surface. */
+.document-preview-backdrop{position:fixed;z-index:1200;inset:0;display:grid;place-items:center;padding:clamp(10px,3vw,28px);background:rgba(2,5,12,.82);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:documentPreviewFade .18s ease-out}
+.document-preview-modal{display:flex;flex-direction:column;width:min(920px,100%);max-height:min(92dvh,1000px);overflow:hidden;border:1px solid rgba(125,205,222,.24);border-radius:22px;background:linear-gradient(155deg,#121e30 0%,#0a1220 48%,#080e19 100%);box-shadow:0 28px 100px rgba(0,0,0,.62),0 0 55px rgba(67,202,220,.08);animation:documentPreviewRise .22s ease-out}
+.document-preview-header{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:clamp(16px,3vw,25px);border-bottom:1px solid rgba(145,171,216,.13);background:radial-gradient(ellipse at 0 0,rgba(84,226,236,.1),transparent 65%)}
+.document-preview-brand{display:flex;align-items:flex-start;gap:13px;min-width:0}
+.document-preview-brand>span{display:grid;place-items:center;flex:none;width:42px;height:42px;border:1px solid rgba(84,226,236,.3);border-radius:14px;color:#8cebf0;background:rgba(84,226,236,.09)}
+.document-preview-brand small{color:#7fe2e9;font-size:9px;font-weight:900;letter-spacing:.15em}
+.document-preview-brand h2{margin:5px 0;color:#f2f7ff;font-size:clamp(18px,3vw,24px);letter-spacing:-.03em}
+.document-preview-brand p{margin:0;color:#94a9c0;font-size:11px;line-height:1.5}
+.document-preview-close{display:grid;place-items:center;flex:none;width:36px;height:36px;border:1px solid rgba(145,171,216,.17);border-radius:11px;color:#c7d5e6;background:rgba(255,255,255,.045)}
+.document-preview-meta{display:flex;flex-wrap:wrap;gap:9px 18px;padding:11px clamp(16px,3vw,25px);border-bottom:1px solid rgba(145,171,216,.1);color:#8fa5bd;font-size:10px}
+.document-preview-meta span{display:inline-flex;align-items:center;gap:6px}
+.document-preview-meta span:first-child{color:#c6d8e9}
+.document-preview-content{min-height:0;flex:1;overflow:auto;padding:clamp(18px,4vw,36px);background:linear-gradient(180deg,rgba(3,9,17,.35),rgba(3,9,17,.12))}
+.document-preview-content pre{max-width:760px;margin:0 auto;color:#e4edf7;font:14px/1.95 'DM Sans',sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:4}
+.document-preview-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px clamp(16px,3vw,25px);border-top:1px solid rgba(145,171,216,.14);background:rgba(4,10,19,.72)}
+.document-preview-footer>span{max-width:380px;color:#8298b0;font-size:10px;line-height:1.5}
+.document-preview-footer>div{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+@keyframes documentPreviewFade{from{opacity:0}to{opacity:1}}
+@keyframes documentPreviewRise{from{opacity:0;transform:translateY(12px) scale(.99)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:560px){.document-preview-backdrop{padding:0;align-items:end}.document-preview-modal{width:100%;max-height:95dvh;border-radius:20px 20px 0 0}.document-preview-header{padding:16px}.document-preview-content{padding:18px 16px}.document-preview-content pre{font-size:13px;line-height:1.85}.document-preview-footer{align-items:stretch;flex-direction:column;padding:13px 16px calc(13px + env(safe-area-inset-bottom))}.document-preview-footer>div{display:grid;grid-template-columns:1fr 1.5fr}.document-preview-footer button{justify-content:center;min-height:42px}}
+@media(prefers-reduced-motion:reduce){.document-preview-backdrop,.document-preview-modal{animation:none}}
