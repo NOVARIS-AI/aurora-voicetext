@@ -1,9 +1,20 @@
 {
+  "id": "/",
   "name": "AURORA VoiceText",
-  "short_name": "VoiceText",
-  "description": "Convert audio recordings into editable text and subtitles.",
+  "short_name": "AURORA",
+  "description": "AI voice and document workspace for transcription, Word editing and writing assistance.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#080c16",
-  "theme_color": "#080c16"
+  "theme_color": "#080c16",
+  "icons": [
+    {
+      "src": "/aurora-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
