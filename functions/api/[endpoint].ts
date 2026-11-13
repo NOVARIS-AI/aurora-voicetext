@@ -6,6 +6,7 @@ interface Env {
 const ALLOWED_ENDPOINTS = new Set([
   "transcribe",
   "tts",
+  "assist",
   "translate",
   "voice-chat",
   "subtitles",
@@ -17,11 +18,10 @@ const ALLOWED_ENDPOINTS = new Set([
   "aurora-transcribe",
 ]);
 const VERCEL_API_ENDPOINTS = new Set([
-  // Vercel is the primary API and already hands provider failures to the
-  // independently deployed Worker. Pages is the public same-origin gateway.
+  // Vercel remains primary for the other API routes. Document assistance
+  // uses the Worker directly so its model fallback is available immediately.
   "transcribe",
   "tts",
-  "assist",
   "translate",
   "voice-chat",
   "admin",
