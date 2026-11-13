@@ -44,6 +44,14 @@ const allowedOrigins = new Set(["https://aurora-voicetext.pages.dev","https://au
 const json = (data: unknown, status = 200, headers?: HeadersInit) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...Object.fromEntries(new Headers(headers || {}).entries()) } });
 const safeRate = (value: unknown) => Number.isFinite(Number(value)) ? Math.min(2, Math.max(0.5, Number(value))) : 1;
 
+// Keep older Worker secrets compatible after Groq retired the Llama IDs.
+function groqChatModel(configured: string | undefined, fallback: string) {
+  const model = (configured || fallback).trim();
+  if (model === "llama-3.1-8b-instant") return "openai/gpt-oss-20b";
+  if (model === "llama-3.3-70b-versatile") return "openai/gpt-oss-120b";
+  return model;
+}
+
 async function transcribe(bytes: Uint8Array, mime: string, env: Env, languageHint?: string) {
   const failures: string[] = [];
   // Keep the Worker request inside the Pages/Vercel proxy timeout, leaving
@@ -176,7 +184,7 @@ async function translate(input: TranslateBody, env: Env) {
   const providers = [
     { name: "openrouter", key: env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
     { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} },
-    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile", headers: {} },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(env.GROQ_TRANSLATION_MODEL, "openai/gpt-oss-120b"), headers: {} },
   ].filter(p => p.key);
   const failures: string[] = [];
   for (const provider of providers) {
@@ -195,7 +203,7 @@ async function polishTranscript(text: string, env: Env): Promise<{ text: string;
   const providers = [
     { name: "openrouter", key: env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
     { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} },
-    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_TRANSLATION_MODEL || "llama-3.3-70b-versatile", headers: {} },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(env.GROQ_TRANSLATION_MODEL, "openai/gpt-oss-120b"), headers: {} },
   ].filter(p => p.key);
   const failures: string[] = [];
   for (const provider of providers) {
@@ -229,7 +237,7 @@ async function voiceChat(input: ChatBody, env: Env): Promise<{ text: string; pro
   const system = "You are AURORA, a helpful, natural conversational AI inside AURORA VoiceText. Answer the user's actual question directly and warmly. When asked to write something for speech, produce a polished, natural spoken script. Preserve the user's requested language, names, facts and tone. Do not claim to have generated audio; the app handles speech generation separately. Keep ordinary answers concise unless detail is requested.";
   const providers = [
     { name: "openrouter", key: env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: env.OPENROUTER_CHAT_MODEL || env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
-    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: env.GROQ_CHAT_MODEL || "llama-3.3-70b-versatile", headers: {} },
+    { name: "groq", key: env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(env.GROQ_CHAT_MODEL, "openai/gpt-oss-120b"), headers: {} },
     { name: "openai", key: env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: env.OPENAI_CHAT_MODEL || "gpt-4o-mini", headers: {} },
   ].filter(provider => Boolean(provider.key));
   const failures: string[] = [];
