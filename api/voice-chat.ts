@@ -3,6 +3,13 @@ import { callBackup } from "./_lib/backup.js";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
+function groqChatModel(configured: string | undefined) {
+  const model = (configured || "openai/gpt-oss-120b").trim();
+  if (model === "llama-3.1-8b-instant") return "openai/gpt-oss-20b";
+  if (model === "llama-3.3-70b-versatile") return "openai/gpt-oss-120b";
+  return model;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).json({ error: "Method not allowed." }); }
   res.setHeader("Cache-Control", "no-store");
@@ -20,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const system = "You are AURORA, a helpful, natural conversational AI inside AURORA VoiceText. Answer the user's actual question directly and warmly. When asked to write something for speech, produce a polished, natural spoken script. Preserve the user's requested language, names, facts and tone. Do not claim to have generated audio; the app handles speech generation separately. Keep ordinary answers concise unless detail is requested.";
   const providers = [
     { name: "OpenRouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
-    { name: "Groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_CHAT_MODEL || "llama-3.3-70b-versatile", headers: {} as Record<string, string> },
+    { name: "Groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(process.env.GROQ_CHAT_MODEL), headers: {} as Record<string, string> },
     { name: "OpenAI", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini", headers: {} as Record<string, string> },
   ].filter(provider => Boolean(provider.key));
   const failures: string[] = [];
