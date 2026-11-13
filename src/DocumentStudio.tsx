@@ -10,6 +10,7 @@ const STORAGE_KEY = 'aurora-voicetext-document-studio-v1';
 const DOCX_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 async function extractDocx(file: File): Promise<string> {
+  if (file.size > 20 * 1024 * 1024) throw new Error('Please choose a DOCX file smaller than 20 MB.');
   const bytes = new Uint8Array(await file.arrayBuffer());
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = -1;
@@ -24,12 +25,14 @@ async function extractDocx(file: File): Promise<string> {
     if (view.getUint32(cursor, true) !== 0x02014b50) break;
     const method = view.getUint16(cursor + 10, true);
     const compressedSize = view.getUint32(cursor + 20, true);
+    const uncompressedSize = view.getUint32(cursor + 24, true);
     const nameLength = view.getUint16(cursor + 28, true);
     const extraLength = view.getUint16(cursor + 30, true);
     const commentLength = view.getUint16(cursor + 32, true);
     const localOffset = view.getUint32(cursor + 42, true);
     const entryName = new TextDecoder().decode(bytes.slice(cursor + 46, cursor + 46 + nameLength));
     if (entryName === 'word/document.xml') {
+      if (uncompressedSize > 15 * 1024 * 1024) throw new Error('This Word document contains too much text to open safely.');
       const localNameLength = view.getUint16(localOffset + 26, true);
       const localExtraLength = view.getUint16(localOffset + 28, true);
       const start = localOffset + 30 + localNameLength + localExtraLength;
