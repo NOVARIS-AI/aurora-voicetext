@@ -2,6 +2,16 @@ export type VoiceRequest = { text: string; voice?: string; style?: string; rate?
 export type TranslationRequest = { text: string; targetLanguage: string; sourceLanguage?: string };
 export type SubtitleSearchRequest = { query: string; languages?: string; type?: "movie" | "episode" };
 
+// Groq retired these Llama model IDs on 16 August 2026. Normalize stale
+// deployment overrides as well as defaults so existing hosting variables
+// cannot keep sending requests to a retired model.
+function groqChatModel(configured: string | undefined, fallback: string) {
+  const model = (configured || fallback).trim();
+  if (model === "llama-3.1-8b-instant") return "openai/gpt-oss-20b";
+  if (model === "llama-3.3-70b-versatile") return "openai/gpt-oss-120b";
+  return model;
+}
+
 function safeRate(value: unknown, fallback = 1) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.min(2, Math.max(0.5, n)) : fallback;
@@ -67,7 +77,7 @@ export async function translateWithFallback(input: TranslationRequest): Promise<
   const providers = [
     { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} as Record<string, string> },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant", headers: {} as Record<string, string> },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(process.env.GROQ_TRANSLATION_MODEL, "openai/gpt-oss-20b"), headers: {} as Record<string, string> },
   ].filter(p => Boolean(p.key));
   const failures: string[] = [];
   for (const provider of providers) {
@@ -136,7 +146,7 @@ export async function polishTranscriptWithFallback(input: { text: string; langua
   const providers = [
     { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} as Record<string, string> },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant", headers: {} as Record<string, string> },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(process.env.GROQ_TRANSLATION_MODEL, "openai/gpt-oss-20b"), headers: {} as Record<string, string> },
   ].filter(p => Boolean(p.key));
   const failures: string[] = [];
   const languageGuidance = input.language === "nigerian-english-pidgin"
@@ -169,7 +179,7 @@ export async function assistDocumentWithFallback(input: { text: string; instruct
   const providers = [
     { name: "openrouter", key: process.env.OPENROUTER_API_KEY, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini", headers: { "HTTP-Referer": "https://aurora-voicetext.pages.dev", "X-Title": "AURORA VoiceText" } },
     { name: "openai", key: process.env.OPENAI_API_KEY, url: "https://api.openai.com/v1/chat/completions", model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-4o-mini", headers: {} as Record<string, string> },
-    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: process.env.GROQ_TRANSLATION_MODEL || "llama-3.1-8b-instant", headers: {} as Record<string, string> },
+    { name: "groq", key: process.env.GROQ_API_KEY, url: "https://api.groq.com/openai/v1/chat/completions", model: groqChatModel(process.env.GROQ_TRANSLATION_MODEL, "openai/gpt-oss-20b"), headers: {} as Record<string, string> },
   ].filter(provider => Boolean(provider.key));
   const failures: string[] = [];
   for (const provider of providers) {
