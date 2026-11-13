@@ -127,6 +127,8 @@ export default function DocumentStudio({ onAssist }: Props) {
   const [error, setError] = useState('');
   const [proposal, setProposal] = useState('');
   const [pendingPrompt, setPendingPrompt] = useState('');
+  const [pendingTask, setPendingTask] = useState('chat');
+  const [undoText, setUndoText] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -177,7 +179,7 @@ export default function DocumentStudio({ onAssist }: Props) {
     const current = text.trim();
     if (!current) { setError('Import or write a document first.'); return; }
     if (current.length > 22000) { setError('For now, AI editing supports documents up to 22,000 characters. Split a longer document into sections.'); return; }
-    setError(''); setBusy(true); setProposal(''); setPendingPrompt(prompt);
+    setError(''); setBusy(true); setProposal(''); setPendingPrompt(prompt); setPendingTask(task);
     setMessages(items => [...items, { id: String(Date.now()), role: 'user', text: prompt }]);
     try {
       const result = await onAssist({ text: current, instruction: prompt, task });
@@ -191,11 +193,12 @@ export default function DocumentStudio({ onAssist }: Props) {
 
   const applyProposal = () => {
     if (!proposal) return;
-    if (pendingPrompt && /summari[sz]e|outline|explain|review|feedback|what|why|how/i.test(pendingPrompt)) {
+    if (pendingTask === 'chat') {
       setStatus('This looks like an answer or summary, so it has not replaced your original document.');
       setProposal('');
       return;
     }
+    setUndoText(text);
     setText(proposal);
     setProposal('');
     setStatus('AI changes applied. Your previous saved copy is still available through undo in the editor.');
@@ -242,7 +245,7 @@ export default function DocumentStudio({ onAssist }: Props) {
         <section className="card document-editor-card">
           <div className="document-panel-heading"><div><small>DOCUMENT CANVAS</small><h2>{name || 'Untitled document'}</h2></div><span>{text.length.toLocaleString()} characters</span></div>
           <textarea ref={editorRef} className="document-editor" value={text} onChange={event => { setText(event.target.value); setProposal(''); }} placeholder={'Import a .docx file or start writing here…\n\nUse blank lines to separate paragraphs. Start a heading with # or ##.'} spellCheck />
-          <div className="document-editor-footer"><span>Autosaved on this device</span><button className="text-button" type="button" onClick={() => { setText(savedText); setProposal(''); setStatus('Restored the last saved copy.'); }}><RotateCcw size={13}/> Restore saved copy</button></div>
+          <div className="document-editor-footer"><span>Autosaved on this device</span><button className="text-button" type="button" disabled={!undoText} onClick={() => { if (undoText !== null) setText(undoText); setUndoText(null); setStatus('Undid the last AI document edit.'); }}><RotateCcw size={13}/> Undo AI edit</button></div>
           <div className="document-quick-actions">
             <button type="button" onClick={() => void runAssist('Rewrite this document in clear, polished, natural language. Preserve all facts, names, dates, figures and important details. Return only the revised document.', 'rewrite')} disabled={busy || !text.trim()}><WandSparkles size={15}/> Rewrite</button>
             <button type="button" onClick={() => void runAssist('Organise this document with a logical title, clear sections, useful headings and well-ordered paragraphs. Preserve all information and do not invent facts. Return only the reorganised document.', 'organise')} disabled={busy || !text.trim()}><FileText size={15}/> Organise</button>
@@ -253,7 +256,7 @@ export default function DocumentStudio({ onAssist }: Props) {
         <aside className="card document-ai-card">
           <div className="document-ai-heading"><span><Sparkles size={17}/></span><div><small>YOUR WRITING PARTNER</small><h2>AURORA AI</h2><p>Ask questions or request edits to the open document.</p></div></div>
           <div className="document-ai-suggestions">
-            {['Make this more professional','Arrange into clear sections','Explain this in simpler words'].map(prompt => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, prompt.startsWith('Arrange') ? 'organise' : 'chat')}>{prompt}</button>)}
+            {['Make this more professional','Arrange into clear sections','Explain this in simpler words'].map(prompt => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, prompt.startsWith('Arrange') || prompt.startsWith('Make') ? 'rewrite' : 'chat')}>{prompt}</button>)}
           </div>
           <div className="document-chat-thread" aria-live="polite">
             {messages.length === 0 && <div className="document-chat-empty"><MessageCircle size={25}/><strong>Let’s work on your document</strong><span>Import a DOCX, then ask me to explain, improve or reorganise it.</span></div>}
