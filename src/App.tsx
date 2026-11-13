@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import AdminPanel from './AdminPanel';
 import BugReporter from './BugReporter';
+import DocumentStudio from './DocumentStudio';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -31,7 +32,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'movieDetails' | 'settings' | 'admin';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'movieDetails' | 'settings' | 'admin' | 'documents';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -334,7 +335,7 @@ async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: 
       const nativePath = meta.nativePath || saved?.nativePath || undefined;
       return { ...meta, file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), nativePath } as AudioFile;
     }));
-    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','movieDetails','settings','admin'];
+    const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','movieDetails','settings','admin','documents'];
     return { files, activeId: typeof snapshot.activeId === 'string' ? snapshot.activeId : files[0]?.id ?? null, page: pages.includes(snapshot.page) ? snapshot.page : 'home' };
   } finally { db.close(); }
 }
@@ -2263,14 +2264,14 @@ function App() {
       <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
       <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} type="button" aria-label="AURORA VoiceText home">
-          <span className="brand-mark"><AudioLines size={24} /></span>
+          <span className="brand-mark"><img src="/aurora-mark.svg" alt="" /></span>
           <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE NOTES, MADE READABLE</small></span>
         </button>
-        <span className="local-badge"><span /> VOICE TO TEXT</span>
+        <span className="local-badge"><span /> VOICE + DOCUMENT AI</span>
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
-        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
+        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['documents','Documents',FileText],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
           <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); }}><Icon size={16}/><span>{label}</span></button>
         )}
       </nav>
@@ -2291,9 +2292,10 @@ function App() {
           <button onClick={() => setPage('transcribe')} type="button"><FileAudio/><strong>Transcribe</strong><span>Import, listen and correct audio text.</span></button>
           <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
           <button onClick={() => setPage('studio')} type="button"><Volume2/><strong>Voice Studio</strong><span>Generate and download AI voiceovers with adjustable delivery.</span></button>
+          <button onClick={() => setPage('documents')} type="button"><FileText/><strong>Document Studio</strong><span>Import Word documents, improve writing and organise your work with AI.</span></button>
         </div>
         <section className="transcribe-feature-hub" aria-label="AURORA tools available from Transcribe">
-          <div className="transcribe-hub-heading"><div><small>YOUR WORKSPACE</small><h2>Everything you can do with AURORA</h2><p>Import a recording above to unlock transcript editing. These tools are ready to open at any time.</p></div><span className="transcribe-hub-count">6 TOOLS</span></div>
+          <div className="transcribe-hub-heading"><div><small>YOUR WORKSPACE</small><h2>Everything you can do with AURORA</h2><p>Import a recording above to unlock transcript editing. These tools are ready to open at any time.</p></div><span className="transcribe-hub-count">7 TOOLS</span></div>
           <div className="transcribe-hub-grid">
             <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><Sparkles/></span><strong>AI Preview</strong><small>Summaries, chapters, action items, meeting notes and translation.</small><b>Open AI Preview →</b></button>
             <button type="button" onClick={() => setPage('studio')}><span className="hub-icon"><AudioWaveform/></span><strong>Audio editor & cleanup</strong><small>Trim audio, preview edits, clean noise and export a restored audio copy.</small><b>Open Voice Workspace →</b></button>
@@ -2301,6 +2303,7 @@ function App() {
             <button type="button" onClick={() => setPage('library')}><span className="hub-icon"><BookOpen/></span><strong>Media Library</strong><small>Search saved transcripts, recordings, folders and AI insights.</small><b>Open Library →</b></button>
             <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><AudioLines/></span><strong>Intelligent transcript player</strong><small>Search timed lines, change playback speed, jump to speech and assign speaker labels.</small><b>Open transcript player →</b></button>
             <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Film/></span><strong>Film & series details</strong><small>Open a matched title for artwork, cast information and legal streaming searches.</small><b>Explore titles →</b></button>
+            <button type="button" onClick={() => setPage('documents')}><span className="hub-icon"><FileText/></span><strong>Document Studio</strong><small>Import DOCX, rewrite paragraphs, proofread, organise sections and export polished documents.</small><b>Open Document Studio →</b></button>
           </div>
         </section>
       </section>}
@@ -2387,6 +2390,8 @@ function App() {
         </div>
 
       </section>}
+
+      {page === 'documents' && <DocumentStudio onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
 
       {page === 'library' && <section className="page-content library-page">
         <div className="page-heading"><div className="eyebrow">YOUR MEDIA ARCHIVE</div><h1>Library <span className="library-total">{library.length} saved</span></h1><p>Keep transcripts, recordings, video notes and AI insights organised in one searchable place on this device.</p></div>
