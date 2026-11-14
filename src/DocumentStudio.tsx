@@ -4,9 +4,10 @@ import { FileUp, FileText, Sparkles, Send, Download, RotateCcw, X, WandSparkles,
 
 type AssistInput = { text: string; instruction: string; task: string };
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
-type Props = { onAssist: (input: AssistInput) => Promise<string> };
+type Props = { onAssist: (input: AssistInput) => Promise<string>; workspaceId: string };
 
 const STORAGE_KEY = 'aurora-voicetext-document-studio-v1';
+const workspaceStorageKey = (id: string) => STORAGE_KEY + ':' + id;
 const DOCX_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 async function extractDocx(file: File): Promise<string> {
@@ -85,7 +86,7 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export default function DocumentStudio({ onAssist }: Props) {
+export default function DocumentStudio({ onAssist, workspaceId }: Props) {
   const [name, setName] = useState('Untitled document');
   const [text, setText] = useState('');
   const [savedText, setSavedText] = useState('');
@@ -105,24 +106,28 @@ export default function DocumentStudio({ onAssist }: Props) {
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      const saved = JSON.parse(localStorage.getItem(workspaceStorageKey(workspaceId)) || (workspaceId === 'legacy-work' ? localStorage.getItem(STORAGE_KEY) : null) || 'null');
       if (saved && typeof saved.text === 'string') {
         setName(typeof saved.name === 'string' ? saved.name : 'Untitled document');
         setText(saved.text);
         setSavedText(saved.text);
+        setMessages(Array.isArray(saved.messages) ? saved.messages : []);
+        setProposal(typeof saved.proposal === 'string' ? saved.proposal : '');
+      } else {
+        setName('Untitled document'); setText(''); setSavedText(''); setMessages([]); setProposal('');
       }
     } catch { /* Ignore an invalid local draft and keep the empty editor usable. */ }
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ name, text, savedAt: Date.now() }));
+        localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() }));
         setSavedText(text);
       } catch { setStatus('This document is too large for local browser storage. Please export a copy.'); }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [name, text]);
+  }, [name, text, messages, proposal, workspaceId]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, busy]);
 
