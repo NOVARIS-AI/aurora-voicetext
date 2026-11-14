@@ -170,17 +170,18 @@ async function requestElevenLabsSpeech(text: string, voiceId: string, input: Voi
   });
 }
 
-async function resolveElevenLabsFallbackVoice(env: Env): Promise<string> {
+async function resolveElevenLabsFallbackVoices(env: Env): Promise<string[]> {
   const response = await fetch("https://api.elevenlabs.io/v1/voices", {
     headers: { "xi-api-key": env.ELEVENLABS_API_KEY!, Accept: "application/json" },
     signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error("ElevenLabs voice list returned HTTP " + response.status);
-  const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string }> };
-  const voices = Array.isArray(payload.voices) ? payload.voices : [];
-  const voice = voices.find(item => item.category === "premade" && item.voice_id) || voices.find(item => item.voice_id);
-  if (!voice?.voice_id) throw new Error("ElevenLabs has no usable voice on this account.");
-  return voice.voice_id;
+  const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string; name?: string }> };
+  const voices = Array.isArray(payload.voices) ? payload.voices.filter(item => item.voice_id) : [];
+  voices.sort((a,b) => Number(b.category === "premade") - Number(a.category === "premade"));
+  const ids = [...new Set(voices.map(item => item.voice_id!).filter(Boolean))].slice(0, 6);
+  if (!ids.length) throw new Error("ElevenLabs has no usable voice on this account.");
+  return ids;
 }
 
 async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuffer; provider: string }> {
@@ -206,11 +207,15 @@ async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuf
       let response = await requestElevenLabsSpeech(text, voiceId, input, env);
       let provider = "elevenlabs";
       if (response.status === 404) {
-        const replacementVoiceId = await resolveElevenLabsFallbackVoice(env);
-        response = await requestElevenLabsSpeech(text, replacementVoiceId, input, env);
-        provider = "elevenlabs-account-fallback";
+        const fallbackVoiceIds = await resolveElevenLabsFallbackVoices(env);
+        for (const fallbackVoiceId of fallbackVoiceIds) {
+          if (fallbackVoiceId === voiceId) continue;
+          response = await requestElevenLabsSpeech(text, fallbackVoiceId, input, env);
+          if (response.ok) { provider = "elevenlabs-account-fallback"; break; }
+          if (response.status !== 404) break;
+        }
       }
-      if (!response.ok) throw new Error("ElevenLabs TTS HTTP " + response.status);
+      if (!response.ok) throw new Error("ElevenLabs TTS HTTP " + response.status + ". Check account voice and selected TTS model access.");
       return { audio: await response.arrayBuffer(), provider };
     } catch (error) { failures.push(error instanceof Error ? error.message : "ElevenLabs TTS failed"); }
   }
