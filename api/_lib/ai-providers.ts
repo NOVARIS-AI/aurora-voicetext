@@ -143,7 +143,7 @@ export async function searchSubtitles(input: SubtitleSearchRequest) {
     headers: { "Api-Key": key, "User-Agent": process.env.OPENSUBTITLES_USER_AGENT || "AURORA-VoiceText/1.0" },
     signal: AbortSignal.timeout(25000),
   });
-  const payload = await response.json().catch(() => ({})) as { data?: Array<{ id?: string; attributes?: { language?: string; release?: string; hearing_impaired?: boolean; foreign_parts_only?: boolean; download_count?: number; upload_date?: string; feature_details?: { title?: string; year?: number; movie_name?: string; episode_number?: number; season_number?: number }; files?: Array<{ file_id?: number; file_name?: string }> } }>; message?: string };
+  const payload = await response.json().catch(() => ({})) as { data?: Array<{ id?: string; attributes?: { language?: string; release?: string; hearing_impaired?: boolean; foreign_parts_only?: boolean; download_count?: number; upload_date?: string; feature_details?: { title?: string; year?: number; movie_name?: string; imdb_id?: number | string; episode_number?: number; season_number?: number }; files?: Array<{ file_id?: number; file_name?: string }> } }>; message?: string };
   if (!response.ok) throw Object.assign(new Error(payload.message || "Subtitle provider returned HTTP " + response.status), { status: response.status });
   return (payload.data || []).slice(0, 30).map(item => {
     const a = item.attributes || {};
@@ -156,6 +156,7 @@ export async function searchSubtitles(input: SubtitleSearchRequest) {
       release: a.release || "",
       title: a.feature_details?.movie_name || a.feature_details?.title || input.query,
       year: a.feature_details?.year || null,
+      imdbId: a.feature_details?.imdb_id ? (String(a.feature_details.imdb_id).startsWith('tt') ? String(a.feature_details.imdb_id) : 'tt' + String(a.feature_details.imdb_id).padStart(7, '0')) : null,
       season: a.feature_details?.season_number || null,
       episode: a.feature_details?.episode_number || null,
       hearingImpaired: Boolean(a.hearing_impaired),
