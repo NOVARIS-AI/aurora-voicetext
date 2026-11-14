@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { ArrowLeft, FileText, FilePlus2, FolderOpen, Search, Clock3, MoreHorizontal, Download, Printer, Save, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Heading1, Heading2, ImagePlus, Link2, Table2, Undo2, Redo2, Sparkles, X, Check, FileUp, Layout, Eye, Type, Replace, Trash2, ChevronDown, Plus, PanelRightClose } from 'lucide-react';
+import { ArrowLeft, FileText, FilePlus2, FolderOpen, Search, Clock3, Download, Printer, Save, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Heading1, Heading2, ImagePlus, Link2, Table2, Undo2, Redo2, Sparkles, X, Check, FileUp, Layout, Eye, Type, Replace, Trash2, Plus, PanelRightClose } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
 type Props = { onAssist: (input: AssistInput) => Promise<string>; onSaveToLibrary: (record: { name: string; text: string }) => void; workspaceId: string; onBack: () => void };
@@ -45,13 +45,12 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
   const [showPageSettings, setShowPageSettings] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [savedAt, setSavedAt] = useState(Date.now());
   const plainText = useMemo(() => { const el = document.createElement('div'); el.innerHTML = html; return (el.innerText || el.textContent || '').trim(); }, [html]);
   const words = plainText ? plainText.split(/\s+/).length : 0;
   const pages = Math.max(1, Math.ceil(plainText.length / 2800));
 
   useEffect(() => { try { const value = JSON.parse(localStorage.getItem(storageKey) || '[]'); if (Array.isArray(value)) setDocs(value); } catch { setDocs([]); } }, [storageKey]);
-  useEffect(() => { if (screen !== 'editor' || !activeId) return; const timer = window.setTimeout(() => { const next = { id: activeId, name, html, updatedAt: Date.now() }; setDocs(current => { const updated = [next, ...current.filter(d => d.id !== activeId)].slice(0, 80); try { localStorage.setItem(storageKey, JSON.stringify(updated)); } catch { setError('Device storage is full. Export a copy to keep this document safe.'); } return updated; }); setSavedAt(Date.now()); }, 350); return () => window.clearTimeout(timer); }, [screen, activeId, name, html, storageKey]);
+  useEffect(() => { if (screen !== 'editor' || !activeId) return; const timer = window.setTimeout(() => { const next = { id: activeId, name, html, updatedAt: Date.now() }; setDocs(current => { const updated = [next, ...current.filter(d => d.id !== activeId)].slice(0, 80); try { localStorage.setItem(storageKey, JSON.stringify(updated)); } catch { setError('Device storage is full. Export a copy to keep this document safe.'); } return updated; });; }, 350); return () => window.clearTimeout(timer); }, [screen, activeId, name, html, storageKey]);
   useEffect(() => { if (screen === 'editor' && editorRef.current && editorRef.current.innerHTML !== html) editorRef.current.innerHTML = html; }, [screen, activeId]);
   const openDoc = (doc: SavedDoc) => { setActiveId(doc.id); setName(doc.name); setHtml(doc.html); setScreen('editor'); setError(''); setStatus(''); setProposal(''); };
   const newDoc = () => { const id = 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2,7); setActiveId(id); setName('Untitled document'); setHtml('<p><br></p>'); setScreen('editor'); setTab('Home'); setAiOpen(false); setProposal(''); setStatus(''); setError(''); window.setTimeout(() => editorRef.current?.focus(), 80); };
