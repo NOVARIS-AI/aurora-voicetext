@@ -480,7 +480,51 @@ function isVideoMediaFile(file: File): boolean {
   return file.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name);
 }
 
+function getAmrDurationSeconds(bytes: Uint8Array): number | null {
+  // AMR frame timing is fixed at 20 ms. Read the file signature and TOC
+  // frame types directly so duration does not depend on browser codec support.
+  const startsWith = (signature: string) => {
+    if (bytes.length < signature.length) return false;
+    for (let i = 0; i < signature.length; i++) {
+      if (bytes[i] !== signature.charCodeAt(i)) return false;
+    }
+    return true;
+  };
+  const wideband = startsWith('#!AMR-WB\\n');
+  const narrowband = !wideband && startsWith('#!AMR\\n');
+  if (!wideband && !narrowband) return null;
+
+  const headerLength = wideband ? 9 : 6;
+  const frameSizes = wideband
+    ? [18, 24, 33, 37, 41, 47, 51, 59, 61, 6]
+    : [13, 14, 16, 18, 20, 21, 27, 32, 6];
+  let offset = headerLength;
+  let frames = 0;
+  while (offset < bytes.length) {
+    const toc = bytes[offset];
+    const frameType = (toc >> 3) & 0x0f;
+    let frameSize = frameSizes[frameType];
+    if (frameType === 15 || (wideband && frameType === 14)) frameSize = 1;
+    if (!frameSize || offset + frameSize > bytes.length) return null;
+    offset += frameSize;
+    frames++;
+  }
+  return frames > 0 ? frames * 0.02 : null;
+}
+
+async function getAmrFileDurationSeconds(file: File): Promise<number | null> {
+  if (!/\\.amr$/i.test(file.name) && file.type !== 'audio/amr' && file.type !== 'audio/3gpp') return null;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return getAmrDurationSeconds(bytes);
+  } catch {
+    return null;
+  }
+}
+
 async function getAudioDurationSeconds(file: File): Promise<number> {
+  const amrDuration = await getAmrFileDurationSeconds(file);
+  if (amrDuration && Number.isFinite(amrDuration) && amrDuration > 0) return amrDuration;
   // Web Audio can decode supported audio files even when the media element's
   // metadata event reports 0/NaN on some mobile browsers.
   if (!isVideoMediaFile(file) && typeof AudioContext !== 'undefined') {
@@ -538,6 +582,8 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
 
 
 async function getMediaDurationSeconds(ffmpeg: FFmpeg, inputPath: string, file: File): Promise<number> {
+  const amrDuration = await getAmrFileDurationSeconds(file);
+  if (amrDuration && Number.isFinite(amrDuration) && amrDuration > 0) return amrDuration;
   try {
     return await getAudioDurationSeconds(file);
   } catch (browserError) {
