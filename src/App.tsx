@@ -1238,8 +1238,8 @@ function App() {
   const [subtitleQuery, setSubtitleQuery] = useState('');
   const [subtitleLanguage, setSubtitleLanguage] = useState('en');
   const [subtitleType, setSubtitleType] = useState<'movie' | 'episode' | undefined>(undefined);
-  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;backdrop?:string;overview?:string;genres?:string[];rating?:string;imdbId?:string;cast?:string[];director?:string[];runtime?:string;country?:string[];artworkResolved?:boolean}>>(() => { try { const saved = JSON.parse(localStorage.getItem('aurora-voicetext-subtitles-v1') || '[]'); return Array.isArray(saved) ? saved : []; } catch { return []; } });
-  const [selectedSubtitleId, setSelectedSubtitleId] = useState<string | null>(() => { try { return localStorage.getItem('aurora-voicetext-selected-subtitle-v1'); } catch { return null; } });
+  const [subtitleResults, setSubtitleResults] = useState<Array<{id:string;fileId:number|null;fileName:string;language:string;release:string;title:string;year:number|null;season?:number|null;episode?:number|null;hearingImpaired?:boolean;downloads:number;poster?:string;backdrop?:string;overview?:string;genres?:string[];rating?:string;imdbId?:string;cast?:string[];director?:string[];runtime?:string;country?:string[];artworkResolved?:boolean}>>([]);
+  const [selectedSubtitleId, setSelectedSubtitleId] = useState<string | null>(null);
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const [subtitleTranslateLanguage, setSubtitleTranslateLanguage] = useState('English');
   const [transcriptTargetLanguage, setTranscriptTargetLanguage] = useState('English');
@@ -1393,14 +1393,6 @@ function App() {
     try { localStorage.setItem('aurora-voicetext-folders-v1', JSON.stringify(libraryFolders)); } catch { /* Folder metadata is best-effort on low-storage devices. */ }
   }, [libraryFolders]);
 
-  useEffect(() => {
-    try { localStorage.setItem('aurora-voicetext-subtitles-v1', JSON.stringify(subtitleResults)); } catch { /* Subtitle metadata is small and best-effort. */ }
-  }, [subtitleResults]);
-
-  useEffect(() => {
-    try { if (selectedSubtitleId) localStorage.setItem('aurora-voicetext-selected-subtitle-v1', selectedSubtitleId); else localStorage.removeItem('aurora-voicetext-selected-subtitle-v1'); } catch { /* Keep navigation usable when storage is unavailable. */ }
-  }, [selectedSubtitleId]);
-
   // Restore before autosaving, so the initial empty React state cannot erase a session.
   useEffect(() => {
     let cancelled = false;
@@ -1417,6 +1409,7 @@ function App() {
         if (typeof drafts.summary === 'string') setSummary(drafts.summary);
         if (typeof drafts.subtitleText === 'string') setSubtitleText(drafts.subtitleText);
         if (typeof drafts.subtitleQuery === 'string') setSubtitleQuery(drafts.subtitleQuery);
+        if (Array.isArray(drafts.subtitleResults)) setSubtitleResults(drafts.subtitleResults);
         if (typeof drafts.voiceRate === 'number') setVoiceRate(drafts.voiceRate);
         if (typeof drafts.voicePitch === 'number') setVoicePitch(drafts.voicePitch);
         try { localStorage.setItem('aurora-voicetext-active-project-v1', saved.projectId); } catch {}
@@ -1434,7 +1427,7 @@ function App() {
 
   useEffect(() => {
     if (!sessionHydrated) return;
-    void saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
+    void saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
   }, [files, activeId, page, projectId, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch]);
 
   useEffect(() => {
@@ -1485,11 +1478,12 @@ function App() {
 
   async function startNewWork() {
     if (busy || exportBusy || voiceBusy || previewBusy) { setError('Finish or cancel the current operation before starting new work.'); return; }
-    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
+    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
     const nextId = (crypto.randomUUID?.() || ('work-' + Date.now()));
     setProjectId(nextId); setFiles([]); setActiveId(null); setPage('home');
     setPreviewMessages([]); setPreviewInput(''); setSummary(''); setStudioText(''); setVoiceChatMessages([]); setVoiceChatInput('');
-    setSubtitleText(''); setSubtitleQuery(''); setSelectedSubtitleId(null); setMediaChapters([]);
+    setSubtitleText(''); setSubtitleQuery(''); setSubtitleResults([]); setSelectedSubtitleId(null); setSubtitleStatus(''); setSubtitleFilename('subtitle'); setSubtitleType(undefined); setSubtitleLanguage('en'); setSubtitleTranslateLanguage('English'); setMediaChapters([]);
+    try { localStorage.removeItem('aurora-voicetext-subtitles-v1'); localStorage.removeItem('aurora-voicetext-selected-subtitle-v1'); } catch {}
     setError(''); setStatus('New work started. Your previous work is saved in Recent Work.');
     try { localStorage.setItem('aurora-voicetext-active-project-v1', nextId); } catch {}
   }
@@ -2670,7 +2664,7 @@ function App() {
       </section>}
 
       {page === 'subtitles' && <section className="page-content">
-        <div className="page-heading"><div className="eyebrow">SUBTITLE WORKSPACE</div><h1>Create or find subtitles.</h1><p>Make subtitles from your transcript, or find an existing subtitle file for a film or episode.</p></div>
+        <div className="page-heading subtitle-page-heading"><div><div className="eyebrow">SUBTITLE WORKSPACE</div><h1>Create or find subtitles.</h1><p>Make subtitles from your transcript, or find an existing subtitle file for a film or episode.</p></div><button className="secondary small-button" type="button" onClick={()=>{setSubtitleQuery('');setSubtitleResults([]);setSelectedSubtitleId(null);setSubtitleText('');setSubtitleFilename('subtitle');setSubtitleStatus('Fresh subtitle search ready.');setPage('subtitles');}}><Plus size={15}/> New Search</button></div>
         <section className="card subtitle-create-card">
           <div className="subtitle-section-heading"><div><small>01 · CREATE</small><h2>Make subtitles from your audio</h2><p>{active?.transcript.trim() ? 'Ready to create subtitles from ' + active.file.name : 'Choose and transcribe an audio file first.'}</p></div><span className="subtitle-step-icon"><AudioWaveform size={20}/></span></div>
           {active?.transcript.trim() ? <div className="subtitle-create-actions"><button className="primary" type="button" onClick={()=>createSubtitlesFromTranscript('srt')}><FileDown size={16}/> Create SRT</button><button className="secondary" type="button" onClick={()=>createSubtitlesFromTranscript('vtt')}><FileDown size={16}/> Create VTT</button><button className="text-button" type="button" onClick={()=>setPage('transcribe')}>Review transcript</button></div> : <button className="primary" type="button" onClick={()=>setPage('transcribe')}>Open Transcribe</button>}
