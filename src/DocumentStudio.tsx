@@ -283,7 +283,6 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
     setSavedText('');
     setMessages([]);
     setProposal('');
-    setUndoText(null);
     setUndoStack([]);
     setRedoStack([]);
     setStatus('New blank document ready.');
