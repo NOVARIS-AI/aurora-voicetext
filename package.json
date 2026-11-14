@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm test && vite build",
+    "build": "npm test && npm run typecheck && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.mjs && node --test tests/aurora-plugin.test.mjs"
+    "test": "node --test tests/*.test.mjs && node --test tests/aurora-plugin.test.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
