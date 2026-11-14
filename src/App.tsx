@@ -2854,7 +2854,7 @@ function App() {
               <div className="subtitle-match-tags"><span><Star size={11}/> {item.rating ? item.rating+'/10' : 'TITLE MATCH'}</span>{item.season != null && <span><CalendarDays size={11}/> S{item.season} E{item.episode ?? '—'}</span>}</div>
             </div>
             <div className="subtitle-actions">
-              <button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>{setSelectedSubtitleId(item.id);void downloadSubtitle(item.fileId!,false,item.fileName,true);}} type="button"><Play size={14}/> Preview</button>
+              <button className="secondary small-button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}} type="button"><Play size={14}/> Preview film</button>
               <button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button>
               <button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button>
             </div>
@@ -2931,6 +2931,9 @@ function App() {
                 <a href={'https://www.primevideo.com/search/ref=atv_nb_sr?phrase='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Prime Video <span>Search title ↗</span></a>
                 <a href={'https://www.youtube.com/results?search_query='+encodeURIComponent(selectedSubtitle.title+' official movie')} target="_blank" rel="noopener noreferrer">YouTube <span>Find official listings ↗</span></a>
                 <a href={'https://tv.apple.com/search?term='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Apple TV <span>Search title ↗</span></a>
+                <a href={'https://open.spotify.com/search/'+encodeURIComponent(selectedSubtitle.title+' soundtrack')} target="_blank" rel="noopener noreferrer">Spotify <span>Find soundtrack & audio ↗</span></a>
+                <a href={'https://www.showmax.com/ng/search?q='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Showmax <span>Search title ↗</span></a>
+                <a href={'https://www.disneyplus.com/search?q='+encodeURIComponent(selectedSubtitle.title)} target="_blank" rel="noopener noreferrer">Disney+ <span>Search title ↗</span></a>
                 <a href={'https://www.google.com/search?q='+encodeURIComponent(selectedSubtitle.title+' watch online legal streaming Nigeria')} target="_blank" rel="noopener noreferrer">More services <span>Check legal options ↗</span></a>
               </div>
             </section>
