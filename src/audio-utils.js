@@ -206,8 +206,8 @@ export function getAmrDurationSeconds(bytes) {
     }
     return true;
   };
-  const wideband = startsWith('#!AMR-WB\\n');
-  const narrowband = !wideband && startsWith('#!AMR\\n');
+  const wideband = startsWith('#!AMR-WB\n');
+  const narrowband = !wideband && startsWith('#!AMR\n');
   if (!wideband && !narrowband) return null;
   const headerLength = wideband ? 9 : 6;
   const frameSizes = wideband
