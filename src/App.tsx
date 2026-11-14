@@ -1509,7 +1509,7 @@ function App() {
 
   useEffect(() => {
     if (!sessionHydrated) return;
-    void saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
+    void saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} setRecentProjects(current => [{ id: projectId, title: projectTitle.trim() || 'Untitled project', fileCount: files.length, savedAt: Date.now(), page }, ...current.filter(item => item.id !== projectId)].sort((a,b) => b.savedAt - a.savedAt).slice(0,12)); }).catch(() => undefined);
   }, [files, activeId, page, projectId, projectTitle, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch]);
 
   useEffect(() => {
@@ -2499,7 +2499,7 @@ function App() {
           <h1>Bring your information<br/><span>together.</span></h1>
           <p>Capture ideas, understand recordings, work with documents and turn information into something useful.</p>
           <div className="home-primary-actions">
-            <button className="home-action home-action-primary" type="button" onClick={() => { setPage('transcribe'); window.setTimeout(() => inputRef.current?.click(), 80); }}>
+            <button className="home-action home-action-primary" type="button" onClick={() => { setPage('transcribe'); window.setTimeout(() => videoInputRef.current?.click(), 100); }}>
               <span className="home-action-icon"><Upload size={19}/></span><span><strong>Import audio or video</strong><small>Transcribe and explore media</small></span><ChevronDown size={16} className="home-action-arrow"/>
             </button>
             <button className="home-action" type="button" onClick={() => setPage('documents')}>
@@ -2540,7 +2540,7 @@ function App() {
             <div className="card-title"><div><small>STEP 01</small><h2>Your recordings</h2></div><span className="count">{files.length}</span></div>
             <button className="upload-box" type="button" onClick={() => void pickNativeAudioFiles()}><span className="upload-symbol"><Upload/></span><strong>Choose audio files</strong><span>Browse your phone storage</span><small>OPUS · OGG · MP3 · M4A · WAV · AAC</small></button>
             {/* The audio picker stays mounted across pages so the Home shortcut can open it immediately. */}
-             <input ref={videoInputRef} className="hidden-input" type="file" accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+             <input ref={videoInputRef} className="hidden-input" type="file" accept="audio/*,video/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm,.mp4,.mov,.mkv,.avi,.m4v" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
              <button className="text-button" type="button" onClick={() => videoInputRef.current?.click()}><Plus size={16}/> Import video</button>
             <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round((item.nativeSize ?? item.file.size) / 1024))} KB{item.nativeDurationMs && item.nativeDurationMs > 0 ? ' · ' + Math.floor(item.nativeDurationMs / 60000) + ':' + String(Math.floor((item.nativeDurationMs % 60000) / 1000)).padStart(2, '0') : item.nativePath ? ' · Reading duration…' : ''}{item.nativeAudioInfo?.sampleRate ? ' · ' + Math.round(item.nativeAudioInfo.sampleRate / 1000) + ' kHz' : ''} · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => void pickNativeAudioFiles()}><Plus size={16}/> Add more audio</button>}
