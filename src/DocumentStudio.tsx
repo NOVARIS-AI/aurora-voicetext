@@ -1,434 +1,99 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { ArrowLeft, FileUp, FileText, Sparkles, Send, Download, Redo2, X, WandSparkles, Check, AlertCircle, Save, Bold, Italic, Underline, List, ListOrdered, Heading1, Heading2, AlignLeft, AlignCenter, AlignRight, Search, Replace, Printer, Trash2, Table, Link2, Undo2 } from 'lucide-react';
+import { ArrowLeft, FileText, FilePlus2, FolderOpen, Search, Clock3, MoreHorizontal, Download, Printer, Save, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Heading1, Heading2, ImagePlus, Link2, Table2, Undo2, Redo2, Sparkles, X, Check, FileUp, Layout, Eye, Type, Replace, Trash2, ChevronDown, Plus, PanelRightClose } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
-type Message = { id: string; role: 'user' | 'assistant'; text: string };
 type Props = { onAssist: (input: AssistInput) => Promise<string>; onSaveToLibrary: (record: { name: string; text: string }) => void; workspaceId: string; onBack: () => void };
-
-const STORAGE_KEY = 'aurora-voicetext-document-studio-v1';
-const workspaceStorageKey = (id: string) => STORAGE_KEY + ':' + id;
-const DOCX_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-
-async function extractDocx(file: File): Promise<string> {
+type SavedDoc = { id: string; name: string; html: string; updatedAt: number };
+const KEY = 'aurora-docs-library-v2:';
+const esc = (value: string) => value.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c);
+function downloadBlob(blob: Blob, filename: string) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1500); }
+async function readDocx(file: File): Promise<string> {
   if (file.size > 20 * 1024 * 1024) throw new Error('Please choose a DOCX file smaller than 20 MB.');
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let end = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
-    if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
-  }
+  const bytes = new Uint8Array(await file.arrayBuffer()); const view = new DataView(bytes.buffer); let end = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
   if (end < 0) throw new Error('This does not look like a valid DOCX file.');
-  const count = view.getUint16(end + 10, true);
-  let cursor = view.getUint32(end + 16, true);
-  let xmlBytes: Uint8Array | null = null;
-  for (let i = 0; i < count; i++) {
-    if (view.getUint32(cursor, true) !== 0x02014b50) break;
-    const method = view.getUint16(cursor + 10, true);
-    const compressedSize = view.getUint32(cursor + 20, true);
-    const uncompressedSize = view.getUint32(cursor + 24, true);
-    const nameLength = view.getUint16(cursor + 28, true);
-    const extraLength = view.getUint16(cursor + 30, true);
-    const commentLength = view.getUint16(cursor + 32, true);
-    const localOffset = view.getUint32(cursor + 42, true);
-    const entryName = new TextDecoder().decode(bytes.slice(cursor + 46, cursor + 46 + nameLength));
-    if (entryName === 'word/document.xml') {
-      if (uncompressedSize > 15 * 1024 * 1024) throw new Error('This Word document contains too much text to open safely.');
-      const localNameLength = view.getUint16(localOffset + 26, true);
-      const localExtraLength = view.getUint16(localOffset + 28, true);
-      const start = localOffset + 30 + localNameLength + localExtraLength;
-      const compressed = bytes.slice(start, start + compressedSize);
-      if (method === 0) xmlBytes = compressed;
-      else if (method === 8) {
-        const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-        xmlBytes = new Uint8Array(await new Response(stream).arrayBuffer());
-      } else throw new Error('This DOCX uses an unsupported compression method.');
-      break;
-    }
-    cursor += 46 + nameLength + extraLength + commentLength;
-  }
-  if (!xmlBytes) throw new Error('The DOCX file is missing its main document content.');
-  const xml = new DOMParser().parseFromString(new TextDecoder().decode(xmlBytes), 'application/xml');
-  if (xml.querySelector('parsererror')) throw new Error('The document content could not be read.');
-  const paragraphs = Array.from(xml.getElementsByTagNameNS(DOCX_NS, 'p')).map(paragraph => {
-    let value = '';
-    const walk = (node: Node) => {
-      node.childNodes.forEach(child => {
-        if (child.nodeType === Node.ELEMENT_NODE) {
-          const element = child as Element;
-          if (element.namespaceURI === DOCX_NS && element.localName === 't') value += element.textContent || '';
-          else if (element.namespaceURI === DOCX_NS && element.localName === 'tab') value += '    ';
-          else if (element.namespaceURI === DOCX_NS && element.localName === 'br') value += '\n';
-          else walk(child);
-        }
-      });
-    };
-    walk(paragraph);
-    const style = paragraph.getElementsByTagNameNS(DOCX_NS, 'pStyle')[0]?.getAttributeNS(DOCX_NS, 'val') || '';
-    const trimmed = value.trim();
-    if (!trimmed) return '';
-    if (/^Title$/i.test(style)) return '# ' + trimmed;
-    if (/^Heading1$/i.test(style)) return '## ' + trimmed;
-    if (/^Heading2$/i.test(style)) return '### ' + trimmed;
-    return trimmed;
-  }).filter(Boolean);
-  return paragraphs.join('\n\n');
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+  const count = view.getUint16(end + 10, true); let cursor = view.getUint32(end + 16, true); let xmlBytes: Uint8Array | null = null;
+  for (let i = 0; i < count; i++) { if (view.getUint32(cursor, true) !== 0x02014b50) break; const method = view.getUint16(cursor + 10, true); const size = view.getUint32(cursor + 20, true); const nameLen = view.getUint16(cursor + 28, true); const extra = view.getUint16(cursor + 30, true); const comment = view.getUint16(cursor + 32, true); const offset = view.getUint32(cursor + 42, true); const filename = new TextDecoder().decode(bytes.slice(cursor + 46, cursor + 46 + nameLen));
+    if (filename === 'word/document.xml') { const start = offset + 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true); const compressed = bytes.slice(start, start + size); if (method === 0) xmlBytes = compressed; else if (method === 8) xmlBytes = new Uint8Array(await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); break; } cursor += 46 + nameLen + extra + comment; }
+  if (!xmlBytes) throw new Error('The Word document content could not be read.');
+  const xml = new DOMParser().parseFromString(new TextDecoder().decode(xmlBytes), 'application/xml'); if (xml.querySelector('parsererror')) throw new Error('The document content could not be read.');
+  return Array.from(xml.getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'p')).map(p => Array.from(p.getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 't')).map(t => t.textContent || '').join('')).filter(Boolean).map(p => '<p>' + esc(p) + '</p>').join('');
 }
 
 export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId, onBack }: Props) {
+  const storageKey = KEY + workspaceId;
+  const [screen, setScreen] = useState<'home'|'editor'>('home');
+  const [docs, setDocs] = useState<SavedDoc[]>([]);
+  const [activeId, setActiveId] = useState('');
   const [name, setName] = useState('Untitled document');
-  const [text, setText] = useState('');
-  const [savedText, setSavedText] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [importBusy, setImportBusy] = useState(false);
+  const [html, setHtml] = useState('');
+  const [tab, setTab] = useState('Home');
+  const [zoom, setZoom] = useState(100);
+  const [fontSize, setFontSize] = useState('12');
+  const [find, setFind] = useState('');
+  const [replace, setReplace] = useState('');
+  const [query, setQuery] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
   const [proposal, setProposal] = useState('');
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [pendingTask, setPendingTask] = useState('chat');
-  const [undoStack, setUndoStack] = useState<string[]>([]);
-  const [redoStack, setRedoStack] = useState<string[]>([]);
-  const [findText, setFindText] = useState('');
-  const [replaceText, setReplaceText] = useState('');
-  const [fontSize, setFontSize] = useState(12);
-  const [zoom, setZoom] = useState(100);
-  const [textAlign, setTextAlign] = useState<'left'|'center'|'right'|'justify'>('left');
+  const [messages, setMessages] = useState<{role:string;text:string}[]>([]);
+  const [showPageSettings, setShowPageSettings] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [savedAt, setSavedAt] = useState(Date.now());
+  const plainText = useMemo(() => { const el = document.createElement('div'); el.innerHTML = html; return (el.innerText || el.textContent || '').trim(); }, [html]);
+  const words = plainText ? plainText.split(/\s+/).length : 0;
+  const pages = Math.max(1, Math.ceil(plainText.length / 2800));
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(workspaceStorageKey(workspaceId)) || (workspaceId === 'legacy-work' ? localStorage.getItem(STORAGE_KEY) : null) || 'null');
-      if (saved && typeof saved.text === 'string') {
-        setName(typeof saved.name === 'string' ? saved.name : 'Untitled document');
-        setText(saved.text);
-        setSavedText(saved.text);
-        setMessages(Array.isArray(saved.messages) ? saved.messages : []);
-        setProposal(typeof saved.proposal === 'string' ? saved.proposal : '');
-      } else {
-        setName('Untitled document'); setText(''); setSavedText(''); setMessages([]); setProposal('');
-      }
-    } catch { /* Ignore an invalid local draft and keep the empty editor usable. */ }
-  }, [workspaceId]);
+  useEffect(() => { try { const value = JSON.parse(localStorage.getItem(storageKey) || '[]'); if (Array.isArray(value)) setDocs(value); } catch { setDocs([]); } }, [storageKey]);
+  useEffect(() => { if (screen !== 'editor' || !activeId) return; const timer = window.setTimeout(() => { const next = { id: activeId, name, html, updatedAt: Date.now() }; setDocs(current => { const updated = [next, ...current.filter(d => d.id !== activeId)].slice(0, 80); try { localStorage.setItem(storageKey, JSON.stringify(updated)); } catch { setError('Device storage is full. Export a copy to keep this document safe.'); } return updated; }); setSavedAt(Date.now()); }, 350); return () => window.clearTimeout(timer); }, [screen, activeId, name, html, storageKey]);
+  useEffect(() => { if (screen === 'editor' && editorRef.current && editorRef.current.innerHTML !== html) editorRef.current.innerHTML = html; }, [screen, activeId]);
+  const openDoc = (doc: SavedDoc) => { setActiveId(doc.id); setName(doc.name); setHtml(doc.html); setScreen('editor'); setError(''); setStatus(''); setProposal(''); };
+  const newDoc = () => { const id = 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2,7); setActiveId(id); setName('Untitled document'); setHtml('<p><br></p>'); setScreen('editor'); setTab('Home'); setAiOpen(false); setProposal(''); setStatus(''); setError(''); window.setTimeout(() => editorRef.current?.focus(), 80); };
+  const syncEditor = () => { if (editorRef.current) setHtml(editorRef.current.innerHTML); };
+  const command = (cmd: string, value?: string) => { editorRef.current?.focus(); document.execCommand(cmd, false, value); syncEditor(); };
+  const setBlock = (tag: string) => command('formatBlock', tag);
+  const insertTable = () => { const table = '<table style="width:100%;border-collapse:collapse" border="1"><tbody><tr><th>Heading 1</th><th>Heading 2</th></tr><tr><td>Text</td><td>Text</td></tr><tr><td>Text</td><td>Text</td></tr></tbody></table><p><br></p>'; command('insertHTML', table); };
+  const insertLink = () => { const url = window.prompt('Enter the web address'); if (url && /^https?:\/\//i.test(url)) command('createLink', url); else if (url) setError('Use a full link beginning with https://'); };
+  const insertImage = () => { const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*'; input.onchange = () => { const file = input.files?.[0]; if (!file) return; if (file.size > 5 * 1024 * 1024) { setError('Choose an image smaller than 5 MB.'); return; } const reader = new FileReader(); reader.onload = () => { command('insertImage', String(reader.result)); }; reader.readAsDataURL(file); }; input.click(); };
+  const importFile = async (file?: File) => { if (!file) return; try { let next = ''; if (file.name.toLowerCase().endsWith('.docx')) next = await readDocx(file); else if (/\.(txt|md)$/i.test(file.name)) next = (await file.text()).split(/\n{2,}/).map(p => '<p>' + esc(p).replace(/\n/g,'<br>') + '</p>').join(''); else throw new Error('Choose a Word (.docx), text (.txt) or Markdown (.md) file.'); setName(file.name.replace(/\.(docx|txt|md)$/i,'')); setHtml(next || '<p><br></p>'); setActiveId('doc-' + Date.now()); setScreen('editor'); setStatus('File opened. Review the imported layout before editing.'); } catch (e) { setError(e instanceof Error ? e.message : 'Could not open this file.'); } finally { if (fileRef.current) fileRef.current.value = ''; } };
+  const exportDocx = async () => { const blocks = plainText.split(/\n+/).filter(Boolean); const children = blocks.map(line => new Paragraph({ text: line, heading: /^title:/i.test(line) ? HeadingLevel.TITLE : undefined, spacing: { after: 160 } })); const blob = await Packer.toBlob(new Document({ sections: [{ children }] })); downloadBlob(blob, (name || 'Document') + '.docx'); setStatus('Word document exported.'); };
+  const saveLibrary = () => { if (!plainText) return; onSaveToLibrary({ name, text: plainText }); setStatus('A copy was added to your AURORA Library.'); };
+  const runAI = async (instruction: string, task = 'rewrite') => { if (!plainText) { setError('Write or open a document first.'); return; } if (plainText.length > 22000) { setError('AI editing currently supports up to 22,000 characters.'); return; } setBusy(true); setError(''); try { const result = await onAssist({ text: plainText, instruction, task }); if (!result?.trim()) throw new Error('AURORA returned an empty response.'); setProposal(result.trim()); setMessages(m => [...m, { role:'user', text:instruction }, { role:'assistant', text:'A suggestion is ready. Review it before applying.' }]); setAiOpen(true); } catch (e) { setError(e instanceof Error ? e.message : 'AURORA AI is unavailable.'); } finally { setBusy(false); } };
+  const applyProposal = () => { setHtml(proposal.split(/\n{2,}/).map(p => '<p>' + esc(p).replace(/\n/g,'<br>') + '</p>').join('')); setProposal(''); setStatus('AI revision applied.'); };
+  const replaceAll = () => { if (!find) return; const next = plainText.split(find).join(replace); setHtml(next.split(/\n+/).map(p => '<p>' + esc(p) + '</p>').join('')); setStatus('Replace completed in plain text.'); };
+  const deleteDoc = (id: string) => { if (!window.confirm('Delete this saved document from this device?')) return; setDocs(current => { const next = current.filter(d => d.id !== id); localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); };
+  const ribbonButton = (label: string, icon: React.ReactNode, action: () => void) => <button type="button" title={label} aria-label={label} onMouseDown={e => e.preventDefault()} onClick={action}>{icon}</button>;
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() }));
-        setSavedText(text);
-      } catch { setStatus('This document is too large for local browser storage. Please export a copy.'); }
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [name, text, messages, proposal, workspaceId]);
-
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, busy]);
-
-  useEffect(() => {
-    const onShortcut = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) return;
-      const key = event.key.toLowerCase();
-      if (key === 's') {
-        event.preventDefault();
-        try {
-          localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() }));
-          setSavedText(text); setStatus('Document saved locally.');
-        } catch { setError('Could not save this document on the device. Export a DOCX copy.'); }
-      } else if (key === 'b' && document.activeElement === editorRef.current) {
-        event.preventDefault(); wrapSelection('**');
-      } else if (key === 'i' && document.activeElement === editorRef.current) {
-        event.preventDefault(); wrapSelection('*');
-      } else if (key === 'z' && !event.shiftKey) {
-        event.preventDefault(); undoDocument();
-      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
-        event.preventDefault(); redoDocument();
-      }
-    };
-    window.addEventListener('keydown', onShortcut);
-    return () => window.removeEventListener('keydown', onShortcut);
-  }, [name, text, messages, proposal, workspaceId, undoStack, redoStack]);
-
-  const importFile = async (file?: File) => {
-    if (!file) return;
-    if (text.trim() && !window.confirm('Replace the current document with “' + file.name + '”? Save or export a copy first if you want to keep the current text.')) { if (fileRef.current) fileRef.current.value = ''; return; }
-    setImportBusy(true); setError(''); setStatus('');
-    try {
-      const lower = file.name.toLowerCase();
-      let imported = '';
-      if (lower.endsWith('.docx')) imported = await extractDocx(file);
-      else if (lower.endsWith('.txt') || lower.endsWith('.md')) imported = await file.text();
-      else throw new Error('Choose a Word document (.docx), text file (.txt) or Markdown file (.md).');
-      if (!imported.trim()) throw new Error('No readable text was found in this file.');
-      setName(file.name.replace(/\.(docx|txt|md)$/i, '') || 'Imported document');
-      setText(imported);
-      setUndoStack([]);
-      setRedoStack([]);
-      setProposal('');
-      setPreviewOpen(false);
-        setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
-      setStatus('Document imported. Your original file has not been changed.');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not import this document.'); }
-    finally { setImportBusy(false); if (fileRef.current) fileRef.current.value = ''; }
-  };
-
-  const runAssist = async (prompt: string, task = 'chat') => {
-    const current = text.trim();
-    if (!current) { setError('Import or write a document first.'); return; }
-    if (current.length > 22000) { setError('For now, AI editing supports documents up to 22,000 characters. Split a longer document into sections.'); return; }
-    setError(''); setBusy(true); setProposal(''); setPendingTask(task);
-    setMessages(items => [...items, { id: String(Date.now()), role: 'user', text: prompt }]);
-    try {
-      const result = await onAssist({ text: current, instruction: prompt, task });
-      if (!result?.trim()) throw new Error('The AI returned an empty response.');
-      setProposal(task === 'chat' ? '' : result.trim());
-      setPreviewOpen(task !== 'chat');
-      setMessages(items => [...items, { id: String(Date.now() + 1), role: 'assistant', text: task === 'chat' ? result.trim() : 'Your revised document is ready. I opened the full preview so you can review every paragraph before applying it.' }]);
-    } catch (reason) {
-      setMessages(items => [...items, { id: String(Date.now() + 2), role: 'assistant', text: reason instanceof Error ? reason.message : 'The AI assistant is unavailable right now.' }]);
-    } finally { setBusy(false); }
-  };
-
-  const applyProposal = () => {
-    if (!proposal) return;
-    if (pendingTask === 'chat') {
-      setStatus('This looks like an answer or summary, so it has not replaced your original document.');
-      setProposal('');
-      return;
-    }
-    setUndoStack(stack => [...stack.slice(-39), text]);
-    setRedoStack([]);
-    setText(proposal);
-    setProposal('');
-    setPreviewOpen(false);
-    setStatus('AI changes applied. Your previous saved copy is still available through undo in the editor.');
-  };
-
-  const exportDocx = async () => {
-    if (!text.trim()) { setError('There is no document to export yet.'); return; }
-    try {
-      const paragraphs = text.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean).map(block => {
-        if (block.startsWith('### ')) return new Paragraph({ text: block.slice(4), heading: HeadingLevel.HEADING_2, spacing: { after: 140 } });
-        if (block.startsWith('## ')) return new Paragraph({ text: block.slice(3), heading: HeadingLevel.HEADING_1, spacing: { after: 180 } });
-        if (block.startsWith('# ')) return new Paragraph({ text: block.slice(2), heading: HeadingLevel.TITLE, spacing: { after: 260 } });
-        return new Paragraph({ children: [new TextRun(block)], spacing: { after: 160 } });
-      });
-      const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] });
-      const blob = await Packer.toBlob(doc);
-      downloadBlob(blob, (name.replace(/\.(docx|txt|md)$/i, '') || 'aurora-document') + '.docx');
-      setStatus('DOCX export created.');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export DOCX.'); }
-  };
-
-
-  const updateDocumentText = (next: string) => {
-    if (!next.trim() && text.trim() && !window.confirm('Clear the entire document? This cannot be undone.')) return;
-    if (next !== text) {
-      setUndoStack(stack => [...stack.slice(-39), text]);
-      setRedoStack([]);
-    }
-    setText(next);
-    setProposal('');
-  };
-
-  const wrapSelection = (before: string, after = before) => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const start = editor.selectionStart;
-    const end = editor.selectionEnd;
-    const selected = text.slice(start, end);
-    const value = selected || 'text';
-    const next = text.slice(0, start) + before + value + after + text.slice(end);
-    setUndoStack(stack => [...stack.slice(-39), text]);
-    setRedoStack([]);
-    setText(next);
-    window.setTimeout(() => {
-      editor.focus();
-      const selectionStart = start + before.length;
-      editor.setSelectionRange(selectionStart, selectionStart + value.length);
-    }, 0);
-  };
-
-  const prefixCurrentLine = (prefix: string) => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const start = editor.selectionStart;
-    const lineStart = text.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
-    const next = text.slice(0, lineStart) + prefix + text.slice(lineStart);
-    setUndoStack(stack => [...stack.slice(-39), text]);
-    setRedoStack([]);
-    setText(next);
-    window.setTimeout(() => { editor.focus(); editor.setSelectionRange(start + prefix.length, start + prefix.length); }, 0);
-  };
-
-  const undoDocument = () => {
-    if (!undoStack.length) return;
-    const previous = undoStack[undoStack.length - 1];
-    setRedoStack(stack => [...stack, text]);
-    setUndoStack(stack => stack.slice(0, -1));
-    setText(previous);
-    setStatus('Last document edit undone.');
-  };
-
-  const redoDocument = () => {
-    if (!redoStack.length) return;
-    const next = redoStack[redoStack.length - 1];
-    setUndoStack(stack => [...stack, text]);
-    setRedoStack(stack => stack.slice(0, -1));
-    setText(next);
-    setStatus('Document edit restored.');
-  };
-
-  const replaceAll = () => {
-    if (!findText) { setError('Enter the text you want to find first.'); return; }
-    if (!text.includes(findText)) { setStatus('No matching text was found.'); return; }
-    if (!replaceText && !window.confirm('Remove every occurrence of “' + findText + '” from this document?')) return;
-    const next = text.split(findText).join(replaceText);
-    setUndoStack(stack => [...stack.slice(-39), text]);
-    setRedoStack([]);
-    setText(next);
-    setStatus('Replaced ' + (text.split(findText).length - 1) + ' occurrence(s).');
-  };
-
-  const createNewDocument = () => {
-    if ((text.trim() || messages.length) && !window.confirm('Replace the current document with a blank one? Save or export a copy first if you want to keep it. This cannot be undone.')) return;
-    setName('Untitled document');
-    setText('');
-    setSavedText('');
-    setMessages([]);
-    setProposal('');
-    setUndoStack([]);
-    setRedoStack([]);
-    setStatus('New blank document ready.');
-  };
-
-  const insertTable = () => {
-    const table = '| Heading 1 | Heading 2 | Heading 3 |\n| --- | --- | --- |\n| Text | Text | Text |\n\n';
-    const editor = editorRef.current;
-    const start = editor?.selectionStart ?? text.length;
-    const end = editor?.selectionEnd ?? text.length;
-    const next = text.slice(0, start) + table + text.slice(end);
-    setUndoStack(stack => [...stack.slice(-39), text]);
-    setRedoStack([]);
-    setText(next);
-    window.setTimeout(() => { editor?.focus(); editor?.setSelectionRange(start + table.length, start + table.length); }, 0);
-  };
-
-  const saveAsText = () => {
-    downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), (name || 'aurora-document') + '.txt');
-    setStatus('Text copy exported.');
-  };
-
-  return (
-    <section className="document-studio document-fullpage">
-      <header className="document-appbar">
-        <button className="document-back-button" type="button" onClick={onBack}><ArrowLeft size={17}/> Back to workspace</button>
-        <div className="document-appbar-title"><FileText size={18}/><span>AURORA Docs</span><small>DOCUMENT EDITOR</small></div>
-        <span className="document-save-state">{text === savedText ? <><Check size={13}/> Saved locally</> : 'Saving…'}</span>
-      </header>
-      <div className="document-toolbar card">
-        <div className="document-name-wrap"><FileText size={18}/><input aria-label="Document name" value={name} onChange={event => setName(event.target.value)} maxLength={100}/></div>
-        <div className="document-toolbar-actions">
-          <button className="secondary small-button" type="button" onClick={createNewDocument}><FileText size={15}/> New</button>
-          <button className="secondary small-button" type="button" onClick={() => fileRef.current?.click()} disabled={importBusy}>{importBusy ? 'Opening…' : <><FileUp size={15}/> Open</>}</button>
-          <button className="secondary small-button" type="button" onClick={() => { if (!text.trim()) return; onSaveToLibrary({ name: name.trim() || 'Untitled document', text: text.trim() }); setStatus('Document saved to your Library.'); }} disabled={!text.trim()}><Save size={15}/> Save</button>
-          <button className="secondary small-button" type="button" onClick={saveAsText} disabled={!text.trim()}><Download size={15}/> TXT</button>
-          <button className="primary small-button" type="button" onClick={() => void exportDocx()} disabled={!text.trim()}><Download size={15}/> DOCX</button>
-          <button className="secondary small-button" type="button" onClick={() => window.print()} disabled={!text.trim()}><Printer size={15}/> Print / PDF</button>
-          <button className="secondary small-button document-delete-button" type="button" onClick={createNewDocument} title="Start a blank document"><Trash2 size={15}/></button>
-        </div>
-        <input ref={fileRef} className="hidden-input" type="file" accept=".docx,.txt,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => void importFile(event.currentTarget.files?.[0])}/>
+  return <section className="aurora-docs">
+    <header className="aurora-docs-top"><button className="docs-back" onClick={screen === 'editor' ? () => setScreen('home') : onBack} type="button"><ArrowLeft size={17}/>{screen === 'editor' ? 'All documents' : 'Back to workspace'}</button><div className="docs-brand"><span className="docs-brand-icon"><FileText size={19}/></span><span><b>AURORA Docs</b><small>DOCUMENT WORKSPACE</small></span></div><span className="docs-save-indicator"><Check size={14}/> {screen === 'editor' ? 'Saved on device' : 'Your documents'}</span></header>
+    {screen === 'home' ? <main className="docs-home">
+      <div className="docs-home-heading"><div><span className="docs-eyebrow">YOUR WRITING SPACE</span><h1>Documents</h1><p>Create, edit and organise your files in one place.</p></div><button className="docs-primary" onClick={newDoc}><Plus size={18}/> New document</button></div>
+      <div className="docs-create-grid"><button onClick={newDoc}><span className="docs-template-icon"><FilePlus2/></span><b>Blank document</b><small>Start with a clean page</small></button><button onClick={() => fileRef.current?.click()}><span className="docs-template-icon"><FolderOpen/></span><b>Open a file</b><small>DOCX, TXT or Markdown</small></button><button onClick={() => { newDoc(); window.setTimeout(() => setBlock('h1'), 100); }}><span className="docs-template-icon"><Heading1/></span><b>Report</b><small>Start with a report heading</small></button></div>
+      <div className="docs-recent-head"><div><h2>Recent documents</h2><p>Saved automatically on this device</p></div><label className="docs-search"><Search size={16}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search documents"/></label></div>
+      <div className="docs-recent-list">{docs.filter(d => d.name.toLowerCase().includes(query.toLowerCase())).length ? docs.filter(d => d.name.toLowerCase().includes(query.toLowerCase())).map(doc => <article className="docs-recent-item" key={doc.id}><button className="docs-recent-open" onClick={() => openDoc(doc)}><span><FileText size={20}/></span><div><b>{doc.name}</b><small><Clock3 size={12}/> Edited {new Date(doc.updatedAt).toLocaleString()}</small></div></button><button className="docs-icon-button" onClick={() => deleteDoc(doc.id)} aria-label={'Delete '+doc.name}><Trash2 size={16}/></button></article>) : <div className="docs-empty"><FileText size={30}/><b>{query ? 'No matching documents' : 'No documents yet'}</b><p>Create a blank document or open an existing Word file to get started.</p></div>}</div>
+      <input ref={fileRef} hidden type="file" accept=".docx,.txt,.md" onChange={e => void importFile(e.currentTarget.files?.[0])}/>
+    </main> : <>
+      <div className="docs-editor-head"><div className="docs-title-field"><FileText size={18}/><input value={name} onChange={e => setName(e.target.value)} aria-label="Document name"/><span>{plainText ? '•' : ''}</span></div><div className="docs-head-actions"><span className="docs-saved"><Check size={13}/> Saved</span><button onClick={saveLibrary} disabled={!plainText}><Save size={15}/> Library</button><button onClick={() => void exportDocx()} disabled={!plainText}><Download size={15}/> DOCX</button><button onClick={() => window.print()} disabled={!plainText}><Printer size={15}/> PDF / Print</button><button className="docs-primary" onClick={() => setAiOpen(v => !v)}><Sparkles size={15}/> AURORA AI</button></div></div>
+      <nav className="docs-tabs" aria-label="Document tools">{['File','Home','Insert','Layout','Review','View'].map(t => <button key={t} className={tab===t?'active':''} onClick={() => setTab(t)}>{t}</button>)}</nav>
+      <div className="docs-ribbon">
+        {tab === 'File' && <><button onClick={() => setScreen('home')}><FolderOpen/> Open recent</button><button onClick={() => fileRef.current?.click()}><FileUp/> Import file</button><button onClick={() => void exportDocx()}><Download/> Export DOCX</button><button onClick={() => window.print()}><Printer/> Print / PDF</button><button onClick={saveLibrary}><Save/> Save to Library</button></>}
+        {tab === 'Home' && <><div className="docs-tool-group"><button title="Undo" onClick={() => command('undo')}><Undo2/></button><button title="Redo" onClick={() => command('redo')}><Redo2/></button></div><div className="docs-tool-group"><select aria-label="Font family" onChange={e => command('fontName',e.target.value)} defaultValue="Arial"><option>Arial</option><option>Georgia</option><option>Times New Roman</option><option>Verdana</option><option>Courier New</option></select><select aria-label="Font size" value={fontSize} onChange={e => {setFontSize(e.target.value); command('fontSize', e.target.value==='12'?'3':e.target.value==='14'?'4':e.target.value==='16'?'4':e.target.value==='18'?'5':e.target.value==='24'?'6':'7');}}>{['10','11','12','14','16','18','24','32'].map(s=><option key={s} value={s}>{s}</option>)}</select></div><div className="docs-tool-group">{ribbonButton('Bold',<Bold/>,()=>command('bold'))}{ribbonButton('Italic',<Italic/>,()=>command('italic'))}{ribbonButton('Underline',<Underline/>,()=>command('underline'))}{ribbonButton('Strikethrough',<Strikethrough/>,()=>command('strikeThrough'))}<input aria-label="Text colour" type="color" title="Text colour" onChange={e => command('foreColor',e.target.value)}/></div><div className="docs-tool-group">{ribbonButton('Heading 1',<Heading1/>,()=>setBlock('h1'))}{ribbonButton('Heading 2',<Heading2/>,()=>setBlock('h2'))}{ribbonButton('Normal text',<Type/>,()=>setBlock('p'))}</div><div className="docs-tool-group">{ribbonButton('Align left',<AlignLeft/>,()=>command('justifyLeft'))}{ribbonButton('Center',<AlignCenter/>,()=>command('justifyCenter'))}{ribbonButton('Align right',<AlignRight/>,()=>command('justifyRight'))}{ribbonButton('Justify',<AlignJustify/>,()=>command('justifyFull'))}</div><div className="docs-tool-group">{ribbonButton('Bulleted list',<List/>,()=>command('insertUnorderedList'))}{ribbonButton('Numbered list',<ListOrdered/>,()=>command('insertOrderedList'))}</div></>}
+        {tab === 'Insert' && <><button onClick={insertTable}><Table2/> Table</button><button onClick={insertImage}><ImagePlus/> Picture</button><button onClick={insertLink}><Link2/> Link</button><button onClick={() => command('insertHorizontalRule')}><Plus/> Horizontal line</button><button onClick={() => command('insertText','\n\n')}><FileText/> Page break</button></>}
+        {tab === 'Layout' && <><button onClick={() => setShowPageSettings(v => !v)}><Layout/> Page setup</button><button onClick={() => command('justifyFull')}><AlignJustify/> Justify paragraphs</button><label className="docs-ribbon-label">Zoom <select value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[70,80,90,100,110,125,150].map(n=><option key={n}>{n}</option>)}</select></label></>}
+        {tab === 'Review' && <><label className="docs-review-field"><Search/><input value={find} onChange={e => setFind(e.target.value)} placeholder="Find text"/></label><label className="docs-review-field"><Replace/><input value={replace} onChange={e => setReplace(e.target.value)} placeholder="Replace with"/></label><button onClick={replaceAll}><Replace/> Replace all</button><span className="docs-word-count">{words} words · {plainText.length} characters</span></>}
+        {tab === 'View' && <><label className="docs-ribbon-label">Zoom <select value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[70,80,90,100,110,125,150].map(n=><option key={n}>{n}</option>)}</select></label><button onClick={() => setAiOpen(v => !v)}><PanelRightClose/> Toggle AI panel</button><button onClick={() => editorRef.current?.focus()}><Eye/> Focus editor</button></>}
       </div>
-      <div className="document-ribbon" role="toolbar" aria-label="Document formatting">
-        <div className="document-ribbon-group">
-          <button type="button" title="Undo" aria-label="Undo" disabled={!undoStack.length} onClick={undoDocument}><Undo2 size={16}/></button>
-          <button type="button" title="Redo" aria-label="Redo" disabled={!redoStack.length} onClick={redoDocument}><Redo2 size={16}/></button>
-        </div>
-        <div className="document-ribbon-group">
-          <button type="button" title="Bold" aria-label="Bold" onClick={() => wrapSelection('**')}><Bold size={16}/></button>
-          <button type="button" title="Italic" aria-label="Italic" onClick={() => wrapSelection('*')}><Italic size={16}/></button>
-          <button type="button" title="Underline" aria-label="Underline" onClick={() => wrapSelection('<u>','</u>')}><Underline size={16}/></button>
-          <select aria-label="Text size" value={fontSize} onChange={event => setFontSize(Number(event.target.value))}>{[10,11,12,13,14,16,18,20,24,28,32].map(size=><option key={size} value={size}>{size} pt</option>)}</select>
-        </div>
-        <div className="document-ribbon-group">
-          <button type="button" title="Heading 1" aria-label="Heading 1" onClick={() => prefixCurrentLine('# ')}><Heading1 size={17}/></button>
-          <button type="button" title="Heading 2" aria-label="Heading 2" onClick={() => prefixCurrentLine('## ')}><Heading2 size={17}/></button>
-          <button type="button" title="Bulleted list" aria-label="Bulleted list" onClick={() => prefixCurrentLine('- ')}><List size={17}/></button>
-          <button type="button" title="Numbered list" aria-label="Numbered list" onClick={() => prefixCurrentLine('1. ')}><ListOrdered size={17}/></button>
-          <button type="button" title="Insert table" aria-label="Insert table" onClick={insertTable}><Table size={16}/></button>
-          <button type="button" title="Insert link" aria-label="Insert link" onClick={() => wrapSelection('[', '](https://)')}><Link2 size={16}/></button>
-        </div>
-        <div className="document-ribbon-group">
-          <button type="button" title="Align left" aria-label="Align left" className={textAlign==='left'?'selected':''} onClick={() => setTextAlign('left')}><AlignLeft size={16}/></button>
-          <button type="button" title="Align center" aria-label="Align center" className={textAlign==='center'?'selected':''} onClick={() => setTextAlign('center')}><AlignCenter size={16}/></button>
-          <button type="button" title="Align right" aria-label="Align right" className={textAlign==='right'?'selected':''} onClick={() => setTextAlign('right')}><AlignRight size={16}/></button>
-          <select aria-label="Page zoom" value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[75,85,100,110,125,150].map(value=><option key={value} value={value}>{value}%</option>)}</select>
-        </div>
+      {showPageSettings && <div className="docs-page-settings"><b>Page setup</b><span>Paper: A4</span><span>Orientation: Portrait</span><span>Margins: Normal</span><small>Print layout uses your browser's page settings.</small><button onClick={() => setShowPageSettings(false)}><X size={14}/></button></div>}
+      <div className={'docs-work-area '+(aiOpen?'with-ai':'')}><main className="docs-canvas"><div className="docs-page-wrap" style={{transform:'scale('+zoom/100+')'}}><div className="docs-page"><div ref={editorRef} className="docs-contenteditable" contentEditable suppressContentEditableWarning spellCheck onInput={syncEditor} data-placeholder="Start writing here… Use the ribbon above to format your document."/><footer><span>AURORA Docs</span><span>{pages}</span></footer></div></div><div className="docs-statusbar"><span>{words} words</span><span>Page {pages} of {pages}</span><span>{zoom}%</span><span>English</span></div></main>
+        {aiOpen && <aside className="docs-ai-panel"><div className="docs-ai-panel-head"><span><Sparkles/> AURORA AI</span><button onClick={() => setAiOpen(false)}><X/></button></div><p>Work with your document. Suggested edits are shown separately before you apply them.</p><div className="docs-ai-prompts">{['Proofread and correct grammar','Improve clarity and flow','Organise with headings','Summarise this document'].map((p,i)=><button key={p} disabled={busy||!plainText} onClick={() => void runAI(p,i===3?'chat':'rewrite')}>{p}</button>)}</div><textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} placeholder="Ask AURORA to help with this document…"/><button className="docs-primary docs-ai-send" disabled={busy||!aiPrompt.trim()||!plainText} onClick={() => {void runAI(aiPrompt);setAiPrompt('');}}>{busy?'Working…':'Ask AURORA'} <Sparkles size={15}/></button>{messages.slice(-4).map((m,i)=><p className="docs-ai-message" key={i}><b>{m.role==='user'?'You':'AURORA'}:</b> {m.text}</p>)}{proposal && <div className="docs-proposal"><b>Suggested revision</b><p>{proposal.slice(0,900)}{proposal.length>900?'…':''}</p><button onClick={applyProposal}>Apply revision</button><button onClick={() => setProposal('')}>Discard</button></div>}</aside>}
       </div>
-      <div className="document-findbar">
-        <label><Search size={15}/><input value={findText} onChange={event => setFindText(event.target.value)} placeholder="Find in document"/></label>
-        <label><Replace size={15}/><input value={replaceText} onChange={event => setReplaceText(event.target.value)} placeholder="Replace with"/></label>
-        <button className="secondary small-button" type="button" onClick={replaceAll} disabled={!findText}><Replace size={14}/> Replace all</button>
-      </div>
-      <div className="document-page-workspace">
-        <div className="document-page-ruler"><span>PAGE {Math.max(1, Math.ceil(text.length / 3200))}</span><span>{text.trim() ? text.trim().split(/\s+/).length : 0} words · {text.length.toLocaleString()} characters</span></div>
-        <div className="document-paper-wrap" style={{ transform: 'scale(' + (zoom / 100) + ')' }}>
-          <div className="document-paper">
-            <input className="document-paper-title" aria-label="Document title" value={name} onChange={event => setName(event.target.value)} placeholder="Document title"/>
-            <textarea ref={editorRef} className="document-editor document-paper-editor" value={text} style={{ fontSize: fontSize + 'pt', textAlign }} onChange={event => updateDocumentText(event.target.value)} onBlur={() => { try { localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() })); setSavedText(text); } catch {} }} placeholder={'Start writing your document here…\n\nUse the toolbar for headings, lists, emphasis, tables and links. Your work is saved automatically.'} spellCheck />
-            <div className="document-paper-footer"><span>AURORA Docs</span><span>{Math.max(1, Math.ceil(text.length / 3200))}</span></div>
-          </div>
-        </div>
-      </div>
-      <details className="document-ai-drawer">
-        <summary><span><Sparkles size={16}/> AURORA Document AI</span><span>Ask questions, summarise, proofread or rewrite <span aria-hidden="true">＋</span></span></summary>
-        <div className="document-ai-drawer-body">
-          <div className="document-ai-heading"><span><Sparkles size={19}/></span><div><small>DOCUMENT INTELLIGENCE</small><h2>AURORA DOCUMENT AI</h2><p>{text.trim() ? 'Your document is attached. Ask questions or request edits; review proposed changes before applying.' : 'Start a conversation, or write a document to give AURORA context.'}</p></div></div>
-          <div className="document-ai-suggestions">{['Summarise this document','Explain the key points','Improve the writing','Find errors and inconsistencies'].map((prompt, index) => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, index === 2 || index === 3 ? 'rewrite' : 'chat')}>{prompt}</button>)}</div>
-          <div className="document-chat-thread document-chat-thread-main" aria-live="polite">
-            {messages.length === 0 && <div className="document-chat-empty"><span className="document-chat-orb"><Sparkles size={27}/></span><strong>What would you like to work on?</strong><span>Ask AURORA to explain, summarise, proofread, rewrite or organise your document. You stay in control of every change.</span></div>}
-            {messages.map(message => <div className={'document-chat-message ' + message.role} key={message.id}><small>{message.role === 'user' ? 'YOU' : 'AURORA'}</small><p>{message.text}</p></div>)}
-            {busy && <div className="document-chat-message assistant"><small>AURORA</small><p>Reviewing your document…</p></div>}
-            <div ref={chatEndRef}/>
-          </div>
-          <form className="document-chat-composer document-chat-composer-main" onSubmit={event => { event.preventDefault(); const prompt = chatInput.trim(); if (!prompt || busy) return; setChatInput(''); void runAssist(prompt, /rewrite|reorgan|arrange|proofread|correct|edit|improve|make this/i.test(prompt) ? 'rewrite' : 'chat'); }}>
-            <textarea value={chatInput} onChange={event => setChatInput(event.target.value)} placeholder={text.trim() ? 'Message AURORA about your document…' : 'Ask AURORA anything about a document…'} rows={2} aria-label="Message AURORA"/>
-            <button className="primary" type="submit" disabled={busy || !chatInput.trim()} aria-label="Send message">{busy ? <span className="document-spinner"/> : <Send size={17}/>}</button>
-          </form>
-          <div className="document-quick-actions">
-            <button type="button" onClick={() => void runAssist('Rewrite this document in clear, polished, natural language. Preserve all facts, names, dates, figures and important details. Return only the revised document.', 'rewrite')} disabled={busy || !text.trim()}><WandSparkles size={15}/> Rewrite</button>
-            <button type="button" onClick={() => void runAssist('Organise this document with a logical title, clear sections, useful headings and well-ordered paragraphs. Preserve all information and do not invent facts. Return only the reorganised document.', 'organise')} disabled={busy || !text.trim()}><FileText size={15}/> Organise</button>
-            <button type="button" onClick={() => void runAssist('Correct grammar, spelling and punctuation while preserving the writer’s meaning, voice and all factual details. Return only the corrected document.', 'rewrite')} disabled={busy || !text.trim()}><Check size={15}/> Proofread</button>
-            <button type="button" onClick={() => void runAssist('Create a concise summary of this document. Keep the key facts and conclusions. Clearly label it as a summary.', 'chat')} disabled={busy || !text.trim()}><Sparkles size={15}/> Summarise</button>
-          </div>
-          <p className="document-privacy-note"><AlertCircle size={13}/> When you ask for help, the document text is sent to the configured AI service. Avoid sensitive information.</p>
-        </div>
-      </details>
-      {previewOpen && proposal && <div className="document-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
-        <section className="document-preview-modal" role="dialog" aria-modal="true" aria-labelledby="document-preview-title">
-          <header className="document-preview-header">
-            <div className="document-preview-brand"><span><Sparkles size={18}/></span><div><small>AURORA AI · DOCUMENT REVIEW</small><h2 id="document-preview-title">Your revised document</h2><p>Review the complete result before applying changes.</p></div></div>
-            <button className="document-preview-close" type="button" aria-label="Close preview" onClick={() => setPreviewOpen(false)}><X size={19}/></button>
-          </header>
-          <div className="document-preview-meta"><span><FileText size={14}/>{name || 'Untitled document'}</span><span>{proposal.length.toLocaleString()} characters</span><span>{proposal.trim() ? proposal.trim().split(/\s+/).length.toLocaleString() : 0} words</span></div>
-          <article className="document-preview-content"><pre>{proposal}</pre></article>
-          <footer className="document-preview-footer"><span>Your original document remains unchanged until you apply it.</span><div><button className="secondary small-button" type="button" onClick={() => { setProposal(''); setPreviewOpen(false); setStatus('AI suggestion discarded.'); }}>Discard</button><button className="primary small-button" type="button" onClick={applyProposal}><Check size={15}/> Apply to document</button></div></footer>
-        </section>
-      </div>}
-      {status && <div className="status-message" role="status">{status}</div>}
-      {error && <div className="error-message" role="alert"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><X size={15}/></button></div>}
-    </section>
-  );
+      <input ref={fileRef} hidden type="file" accept=".docx,.txt,.md" onChange={e => void importFile(e.currentTarget.files?.[0])}/>
+      <div className="docs-footer-note"><span>{status || 'Changes are saved automatically on this device.'}</span>{error && <span className="docs-error">{error} <button onClick={() => setError('')}><X size={13}/></button></span>}</div>
+    </>}
+  </section>;
 }
