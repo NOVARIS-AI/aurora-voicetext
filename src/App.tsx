@@ -1222,7 +1222,12 @@ function AppSelect({ value, onChange, options, ariaLabel }: { value: string; onC
 }
 
 function App() {
-  const [page, setPage] = useState<Page>('home');
+  const [page, setPage] = useState<Page>(() => {
+    try {
+      const saved = localStorage.getItem('aurora-voicetext-last-page-v1');
+      return saved && ['home','transcribe','library','preview','studio','subtitles','subtitlePreview','movieDetails','settings','admin','documents'].includes(saved) ? saved as Page : 'home';
+    } catch { return 'home'; }
+  });
   const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem('aurora-voicetext-active-project-v1') || 'legacy-work'; } catch { return 'legacy-work'; } });
   const [projectTitle, setProjectTitle] = useState('Untitled project');
   const [recentProjects, setRecentProjects] = useState<Array<{id:string;title:string;fileCount:number;savedAt:number;page:Page}>>([]);
@@ -1474,6 +1479,13 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
+
+  // Remember the exact open page immediately, so returning to the app does not
+  // unexpectedly send the user back to Home after Android suspends the WebView.
+  useEffect(() => {
+    if (!sessionHydrated) return;
+    try { localStorage.setItem('aurora-voicetext-last-page-v1', page); } catch {}
+  }, [page, sessionHydrated]);
 
   useEffect(() => {
     try { localStorage.setItem('aurora-voicetext-folders-v1', JSON.stringify(libraryFolders)); } catch { /* Folder metadata is best-effort on low-storage devices. */ }
@@ -2015,6 +2027,7 @@ function App() {
 
   function updateTranscript(text: string) {
     if (!active) return;
+    if (!text.trim() && active.transcript.trim() && !window.confirm('Clear the entire transcript? This cannot be undone.')) return;
     setFiles(current => current.map(item => item.id === active.id ? { ...item, transcript: text } : item));
   }
 
@@ -2128,6 +2141,8 @@ function App() {
   }
 
   function removeFile(id: string) {
+    const fileToRemove = files.find(item => item.id === id);
+    if (!fileToRemove || !window.confirm('Remove “' + fileToRemove.file.name + '” from this project? Its imported media copy will be removed from this workspace.')) return;
     setFiles(current => {
       const removed = current.find(item => item.id === id);
       if (removed) URL.revokeObjectURL(removed.url);
@@ -2379,7 +2394,21 @@ function App() {
       const results = Array.isArray(data?.results) ? data.results : [];
       const normalize = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim();
       const query = normalize(subtitleQuery);
-      const ranked = [...results].sort((a, b) => {
+      const seenReleases = new Set<string>();
+      const distinctResults = results.filter(item => {
+        const identity = [
+          normalize(String(item.title || '')),
+          String(item.year || ''),
+          String(item.season ?? ''),
+          String(item.episode ?? ''),
+          String(item.language || '').toLowerCase(),
+          normalize(String(item.release || item.fileName || '')),
+        ].join('|');
+        if (seenReleases.has(identity)) return false;
+        seenReleases.add(identity);
+        return true;
+      });
+      const ranked = [...distinctResults].sort((a, b) => {
         const score = (item: typeof results[number]) => {
           const title = normalize(String(item.title || ''));
           const release = normalize(String(item.release || item.fileName || ''));
@@ -2390,7 +2419,7 @@ function App() {
         };
         return score(b) - score(a);
       });
-      setSubtitleResults(ranked.slice(0, 24));
+      setSubtitleResults(ranked.slice(0, 36));
       setSelectedSubtitleId(null);
       setSubtitleStatus(ranked.length ? 'Best title and release matches are shown first. Open a film for its details.' : 'No matching subtitles were found. Try another title or language.');
     } catch (reason) { setSubtitleStatus(reason instanceof Error ? 'Subtitle search failed: ' + reason.message : 'Subtitle search is unavailable right now. Please try again later.'); }
@@ -2483,6 +2512,8 @@ function App() {
     setLibrary(current => current.map(item => item.id === id ? { ...item, folder } : item));
   }
   function updateLibraryText(id: string, transcript: string) {
+    const existing = library.find(item => item.id === id);
+    if (!transcript.trim() && existing?.transcript.trim() && !window.confirm('Clear all text in this saved item? This cannot be undone.')) return;
     setLibrary(current => current.map(item => item.id === id ? { ...item, transcript, updatedAt: Date.now() } : item));
   }
 
@@ -2497,7 +2528,7 @@ function App() {
         <div className="topbar-actions"><span className="local-badge"><span /> INFORMATION AI</span><button className="topbar-settings-button" type="button" aria-label="Settings" onClick={() => setPage('settings')}><Settings2 size={17}/></button><button className="new-work-button" type="button" onClick={() => void startNewWork()}><Plus size={16}/> New Project</button></div>
       </header>
 
-      <nav className="main-nav" aria-label="Main navigation">
+      {page !== 'documents' && <nav className="main-nav" aria-label="Main navigation">
         {([
           ['home','Home',Sparkles],
           ['workspace','Workspace',WandSparkles],
@@ -2512,9 +2543,9 @@ function App() {
             else setPage(['transcribe','studio','documents','subtitles'].includes(page) ? page : 'transcribe');
           }}><Icon size={17}/><span>{label}</span></button>;
         })}
-      </nav>
+      </nav>}
 
-      {['transcribe','studio','documents','subtitles','movieDetails'].includes(page) && <section className="workspace-shell-nav" aria-label="Workspace tools">
+      {['transcribe','studio','subtitles','movieDetails'].includes(page) && <section className="workspace-shell-nav" aria-label="Workspace tools">
         <div className="workspace-project-context">
           <span className="workspace-project-dot"/>
           <span className="workspace-project-label">CURRENT PROJECT</span>
@@ -2652,7 +2683,7 @@ function App() {
 
       </section>}
 
-      {page === 'documents' && <DocumentStudio key={projectId} workspaceId={projectId} onSaveToLibrary={({ name, text }) => { const record: Recording = { id: 'document-' + projectId, name, transcript: text, updatedAt: Date.now(), folder: 'Documents', kind: 'document', tags: ['Document Studio', 'document'], projectId }; setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]); setStatus('Document saved to your Library and connected to this project.'); }} onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
+      {page === 'documents' && <DocumentStudio key={projectId} workspaceId={projectId} onBack={() => setPage('home')} onSaveToLibrary={({ name, text }) => { const record: Recording = { id: 'document-' + projectId, name, transcript: text, updatedAt: Date.now(), folder: 'Documents', kind: 'document', tags: ['Document Studio', 'document'], projectId }; setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]); setStatus('Document saved to your Library and connected to this project.'); }} onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
 
       {page === 'library' && <section className="page-content library-page">
         <div className="page-heading"><div className="eyebrow">YOUR MEDIA ARCHIVE</div><h1>Library <span className="library-total">{library.length} saved</span></h1><p>Keep transcripts, recordings, video notes and AI insights organised in one searchable place on this device.</p></div>
@@ -2676,7 +2707,7 @@ function App() {
               <span className="library-cover-overlay"><Play size={16}/><small>OPEN</small></span>
               <span className="library-type-pill">{video?'VIDEO':item.kind==='insight'?'AI INSIGHT':item.kind==='audio'?'AUDIO':'TEXT'}</span>
             </button>
-            <div className="library-card-content"><div className="library-card-head"><span className="library-folder-label">{item.folder||'Unsorted'}</span><button className="icon-button" aria-label="Delete saved item" onClick={()=>{setLibrary(current=>current.filter(entry=>entry.id!==item.id));if(libraryDetailId===item.id)setLibraryDetailId(null);}} type="button"><Trash2 size={15}/></button></div>
+            <div className="library-card-content"><div className="library-card-head"><span className="library-folder-label">{item.folder||'Unsorted'}</span><button className="icon-button" aria-label="Delete saved item" onClick={()=>{if(!window.confirm('Delete “'+item.name+'” from your Library? This cannot be undone.'))return;setLibrary(current=>current.filter(entry=>entry.id!==item.id));if(libraryDetailId===item.id)setLibraryDetailId(null);}} type="button"><Trash2 size={15}/></button></div>
               <h3>{item.name}</h3><small>Saved {new Date(item.updatedAt).toLocaleDateString()}{item.projectId ? ' · Linked project' : ''}</small><p>{item.transcript.slice(0,180)}{item.transcript.length>180?'…':''}</p>
               <div className="library-tags">{(item.tags||[]).slice(0,3).map(tag=><span key={tag}>{tag}</span>)}</div>
               <div className="library-actions"><button className="secondary small-button" onClick={()=>{setStudioText(item.transcript);setPage('studio');}} type="button"><Volume2 size={14}/> Read aloud</button><button className="secondary small-button" onClick={()=>runExportTranscript(item.transcript,item.name.replace(/\.[^.]+$/,'')||'transcript')} type="button"><Download size={14}/> Export</button><button className="text-button" onClick={()=>setLibraryDetailId(item.id)} type="button">Details</button></div>
