@@ -2615,7 +2615,7 @@ useEffect(() => {
               <span className="home-action-icon"><Upload size={19}/></span><span><strong>Import audio or video</strong><small>Transcribe and explore media</small></span><ChevronDown size={16} className="home-action-arrow"/>
             </button>
             <button className="home-action" type="button" onClick={() => setPage('documents')}>
-              <span className="home-action-icon"><FileText size={19}/></span><span><strong>Open a document</strong><small>Read, edit and improve writing</small></span><ChevronDown size={16} className="home-action-arrow"/>
+              <span className="home-action-icon"><FileText size={19}/></span><span><strong>Documents Writer</strong><small>Create, edit and manage documents</small></span><ChevronDown size={16} className="home-action-arrow"/>
             </button>
             <button className="home-action" type="button" onClick={() => { if (active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage('preview'); }}>
               <span className="home-action-icon"><Sparkles size={19}/></span><span><strong>Ask AURORA</strong><small>Explore and transform information</small></span><ChevronDown size={16} className="home-action-arrow"/>
