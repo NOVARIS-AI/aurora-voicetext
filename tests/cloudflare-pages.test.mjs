@@ -122,3 +122,46 @@ test("production README documents Cloudflare Pages and Nigerian language validat
   assert.match(readme, /small US-English model/);
   assert.match(readme, /do not prove that a title is available/);
 });
+
+
+test("TTS recovers from a stale ElevenLabs voice ID by resolving an active account voice", async () => {
+  const providers = await readFile(new URL("../api/_lib/ai-providers.ts", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../backup-worker/src/index.ts", import.meta.url), "utf8");
+  for (const source of [providers, worker]) {
+    assert.match(source, /v1\/voices/);
+    assert.match(source, /response\.status === 404/);
+    assert.match(source, /elevenlabs-account-fallback/);
+    assert.match(source, /OPENAI_API_KEY/);
+  }
+});
+
+test("App remembers the last page and confirms media, transcript, and Library deletion", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(app, /aurora-voicetext-last-page-v1/);
+  assert.match(app, /Clear the entire transcript/);
+  assert.match(app, /Remove .* from this project/);
+  assert.match(app, /Delete .* from your Library/);
+});
+
+test("Subtitle results are deduplicated and grouped into one artwork card per title", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(app, /seenReleases/);
+  assert.match(app, /subtitleResultGroups/);
+  assert.match(app, /distinct subtitle releases/);
+  assert.doesNotMatch(app, /MORE RELEASES/);
+});
+
+test("Documents open as a dedicated full-page WPS-style editor with editing and export tools", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const document = await readFile(new URL("../src/DocumentStudio.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../src/aurora-upgrade.css", import.meta.url), "utf8");
+  assert.match(app, /page !== 'documents' && <nav/);
+  assert.match(app, /document-app-shell/);
+  assert.match(document, /document-paper-editor/);
+  assert.match(document, /replaceAll/);
+  assert.match(document, /insertTable/);
+  assert.match(document, /exportDocx/);
+  assert.match(document, /window\.print/);
+  assert.match(document, /Start a new document\?/);
+  assert.match(styles, /Dedicated WPS-style document workspace/);
+});
