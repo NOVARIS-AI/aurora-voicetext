@@ -154,7 +154,7 @@ export async function searchSubtitles(input: SubtitleSearchRequest) {
       fileName: f.file_name || "Subtitle file",
       language: a.language || "",
       release: a.release || "",
-      title: a.feature_details?.movie_name || a.feature_details?.title || input.query,
+      title: (a.feature_details?.movie_name || a.feature_details?.title || a.release || f.file_name || input.query).replace(/\\.(?:480p|720p|1080p|2160p|4k|hdr|bluray|web[-.]?dl|webrip|hdtv|dvdrip).*$/i, '').replace(/[._]+/g, ' ').replace(/\\s+/g, ' ').trim() || input.query,
       year: a.feature_details?.year || null,
       imdbId: a.feature_details?.imdb_id ? (String(a.feature_details.imdb_id).startsWith('tt') ? String(a.feature_details.imdb_id) : 'tt' + String(a.feature_details.imdb_id).padStart(7, '0')) : null,
       season: a.feature_details?.season_number || null,
