@@ -179,7 +179,7 @@ async function resolveElevenLabsFallbackVoices(env: Env): Promise<string[]> {
   const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string; name?: string }> };
   const voices = Array.isArray(payload.voices) ? payload.voices.filter(item => item.voice_id) : [];
   voices.sort((a,b) => Number(b.category === "premade") - Number(a.category === "premade"));
-  const ids = [...new Set(voices.map(item => item.voice_id!).filter(Boolean))].slice(0, 6);
+  const ids = [...new Set(voices.map(item => item.voice_id!).filter(Boolean))].slice(0, 16);
   if (!ids.length) throw new Error("ElevenLabs has no usable voice on this account.");
   return ids;
 }
@@ -215,7 +215,20 @@ async function synthesize(input: VoiceBody, env: Env): Promise<{ audio: ArrayBuf
           if (response.status !== 404) break;
         }
       }
-      if (!response.ok) throw new Error("ElevenLabs TTS HTTP " + response.status + ". Check account voice and selected TTS model access.");
+      if (response.status === 404) {
+        const fallbackVoiceIds = await resolveElevenLabsFallbackVoices(env);
+        for (const fallbackVoiceId of fallbackVoiceIds) {
+          response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(fallbackVoiceId) + "?output_format=mp3_44100_128", {
+            method: "POST",
+            headers: { "xi-api-key": env.ELEVENLABS_API_KEY!, "Content-Type": "application/json", Accept: "audio/mpeg" },
+            body: JSON.stringify({ text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: safeRate(input.rate) } }),
+            signal: AbortSignal.timeout(110000),
+          });
+          if (response.ok) { provider = "elevenlabs-turbo-account-fallback"; break; }
+          if (response.status !== 404) break;
+        }
+      }
+      if (!response.ok) throw new Error("ElevenLabs TTS HTTP " + response.status + ". The account voice could not be resolved or the account does not have access to the requested TTS model.");
       return { audio: await response.arrayBuffer(), provider };
     } catch (error) { failures.push(error instanceof Error ? error.message : "ElevenLabs TTS failed"); }
   }
