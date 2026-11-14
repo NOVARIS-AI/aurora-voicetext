@@ -1431,18 +1431,22 @@ function App() {
         const metas = Array.isArray(payload?.metas) ? payload.metas as Array<{id?:string;name?:string;year?:string|number;poster?:string;background?:string;description?:string;genres?:string[];imdbRating?:string;cast?:string[];director?:string[];runtime?:string;country?:string[]}> : [];
         const target = normalize(title);
         const exact = metas.filter(meta => normalize(meta.name || '') === target);
+        // A title can be reused by unrelated films and series. When the
+        // subtitle provider supplies a year, require that exact year; when it
+        // does not, only trust a single exact title result.
         const yearMatch = item.year ? exact.find(meta => String(meta.year || '') === String(item.year)) : undefined;
-        // Never attach a poster from a merely similar title: a false match makes
-        // unrelated subtitle results all appear to belong to the same film.
+        const uniqueExact = !item.year && exact.length === 1 ? exact[0] : null;
+        // Near-title matches are allowed only when the search itself returned
+        // one unambiguous candidate, never when several films share a name.
         const nearMatches = metas.filter(meta => {
           const name = normalize(meta.name || '');
           if (!name || !target) return false;
           const shorter = Math.min(name.length, target.length);
           const longer = Math.max(name.length, target.length);
-          return shorter >= 5 && (name.includes(target) || target.includes(name)) && shorter / longer >= 0.82;
+          return shorter >= 5 && (name.includes(target) || target.includes(name)) && shorter / longer >= 0.9;
         });
-        const uniqueNearMatch = nearMatches.length === 1 ? nearMatches[0] : null;
-        return { id: item.id, meta: yearMatch || exact[0] || uniqueNearMatch || null };
+        const uniqueNearMatch = !item.year && exact.length === 0 && nearMatches.length === 1 ? nearMatches[0] : null;
+        return { id: item.id, meta: yearMatch || uniqueExact || uniqueNearMatch || null };
       } catch { return { id: item.id, meta: null as any }; }
     })).then(artworks => {
       if (cancelled) return;
