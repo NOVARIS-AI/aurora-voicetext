@@ -1483,12 +1483,9 @@ function App() {
     next.filter(item => item.nativePath && !(item.nativeDurationMs && item.nativeDurationMs > 0)).forEach(item => {
       void getAudioDurationFromUrl(item.url, isVideoMediaFile(item.file)).then(seconds => {
         const durationMs = Math.round(seconds * 1000);
-        setFiles(current => {
-          const updated = current.map(existing => existing.id === item.id ? { ...existing, nativeDurationMs: durationMs } : existing);
-          const resolved = updated.find(existing => existing.id === item.id);
-          if (resolved) void saveWorkspaceAudio([resolved]).catch(() => undefined);
-          return updated;
-        });
+        const resolved = { ...item, nativeDurationMs: durationMs };
+        setFiles(current => current.map(existing => existing.id === item.id ? resolved : existing));
+        void saveWorkspaceAudio([resolved]).catch(() => undefined);
       }).catch(() => undefined);
     });
     setActiveId(current => current ?? next[0].id);
@@ -2361,7 +2358,7 @@ function App() {
             {/* The audio picker stays mounted across pages so the Home shortcut can open it immediately. */}
              <input ref={videoInputRef} className="hidden-input" type="file" accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
              <button className="text-button" type="button" onClick={() => videoInputRef.current?.click()}><Plus size={16}/> Import video</button>
-            <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round((item.nativeSize ?? item.file.size) / 1024))} KB{item.nativeDurationMs ? ' · ' + Math.floor(item.nativeDurationMs / 60000) + ':' + String(Math.floor((item.nativeDurationMs % 60000) / 1000)).padStart(2, '0') : ''}{item.nativeAudioInfo?.sampleRate ? ' · ' + Math.round(item.nativeAudioInfo.sampleRate / 1000) + ' kHz' : ''} · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
+            <div className="recording-list">{files.map(item => <div key={item.id} className={active?.id === item.id ? 'recording-row selected' : 'recording-row'}><button className="recording-select" onClick={() => {setActiveId(item.id);setError('');}} type="button"><FileAudio size={18}/><span><strong>{item.file.name}</strong><small>{Math.max(1, Math.round((item.nativeSize ?? item.file.size) / 1024))} KB{item.nativeDurationMs && item.nativeDurationMs > 0 ? ' · ' + Math.floor(item.nativeDurationMs / 60000) + ':' + String(Math.floor((item.nativeDurationMs % 60000) / 1000)).padStart(2, '0') : item.nativePath ? ' · Reading duration…' : ''}{item.nativeAudioInfo?.sampleRate ? ' · ' + Math.round(item.nativeAudioInfo.sampleRate / 1000) + ' kHz' : ''} · {item.transcript ? 'Transcript ready' : 'Not transcribed yet'}</small></span></button><button className="icon-button" aria-label={'Remove '+item.file.name} onClick={() => removeFile(item.id)} type="button"><X size={16}/></button></div>)}</div>
             {files.length > 0 && <button className="text-button" type="button" onClick={() => void pickNativeAudioFiles()}><Plus size={16}/> Add more audio</button>}
 
           </section>
