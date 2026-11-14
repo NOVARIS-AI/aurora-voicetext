@@ -142,7 +142,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       signal: AbortSignal.timeout(110000),
     });
 
-    if (canFallback && workerToken && upstream.status >= 500 && fallbackRequest) {
+    if (canFallback && workerToken && (upstream.status >= 500 || upstream.status === 429) && fallbackRequest) {
       try {
         return makeResponse(await callWorkerFallback(fallbackRequest));
       } catch {
