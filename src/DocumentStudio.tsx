@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { FileUp, FileText, Sparkles, Send, Download, RotateCcw, X, WandSparkles, MessageCircle, Check, AlertCircle } from 'lucide-react';
+import { FileUp, FileText, Sparkles, Send, Download, RotateCcw, X, WandSparkles, Check, AlertCircle } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
