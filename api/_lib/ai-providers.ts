@@ -39,17 +39,18 @@ async function requestElevenLabsSpeech(text: string, voiceId: string, input: Voi
   });
 }
 
-async function resolveElevenLabsFallbackVoice(): Promise<string> {
+async function resolveElevenLabsFallbackVoices(): Promise<string[]> {
   const response = await fetch("https://api.elevenlabs.io/v1/voices", {
     headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, Accept: "application/json" },
     signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error("ElevenLabs voice list returned HTTP " + response.status);
-  const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string }> };
-  const voices = Array.isArray(payload.voices) ? payload.voices : [];
-  const voice = voices.find(item => item.category === "premade" && item.voice_id) || voices.find(item => item.voice_id);
-  if (!voice?.voice_id) throw new Error("ElevenLabs has no usable voice on this account.");
-  return voice.voice_id;
+  const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string; name?: string }> };
+  const voices = Array.isArray(payload.voices) ? payload.voices.filter(item => item.voice_id) : [];
+  voices.sort((a,b) => Number(b.category === "premade") - Number(a.category === "premade"));
+  const ids = [...new Set(voices.map(item => item.voice_id!).filter(Boolean))].slice(0, 6);
+  if (!ids.length) throw new Error("ElevenLabs has no usable voice on this account.");
+  return ids;
 }
 
 export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ audio: Uint8Array; provider: string }> {
@@ -81,14 +82,16 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
       const voiceId = configuredVoiceId || (input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) && !builtInVoiceNames.has(input.voice.toLowerCase()) ? input.voice : (process.env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL"));
       let response = await requestElevenLabsSpeech(input.text, voiceId, input);
       let provider = "elevenlabs";
-      // A stale or removed voice ID is an account configuration issue, not a reason
-      // to give up: resolve a currently available account voice and retry once.
       if (response.status === 404) {
-        const replacementVoiceId = await resolveElevenLabsFallbackVoice();
-        response = await requestElevenLabsSpeech(input.text, replacementVoiceId, input);
-        provider = "elevenlabs-account-fallback";
+        const fallbackVoiceIds = await resolveElevenLabsFallbackVoices();
+        for (const fallbackVoiceId of fallbackVoiceIds) {
+          if (fallbackVoiceId === voiceId) continue;
+          response = await requestElevenLabsSpeech(input.text, fallbackVoiceId, input);
+          if (response.ok) { provider = "elevenlabs-account-fallback"; break; }
+          if (response.status !== 404) break;
+        }
       }
-      if (!response.ok) throw new Error("ElevenLabs speech returned HTTP " + response.status);
+      if (!response.ok) throw new Error("ElevenLabs speech returned HTTP " + response.status + ". Check that the account has an active voice and access to the selected TTS model.");
       return { audio: new Uint8Array(await response.arrayBuffer()), provider };
     } catch (error) { failures.push("ElevenLabs: " + (error instanceof Error ? error.message : "failed")); }
   }
