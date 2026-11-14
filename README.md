@@ -1,19 +1,25 @@
 # AURORA VoiceText
 
-AURORA VoiceText is a browser-based voice-note workspace for importing audio, transcribing it online or on-device, editing transcripts, saving notes locally, and exporting text.
+AURORA VoiceText is a mobile-first voice-note and media workspace for importing audio/video, transcribing online or on-device, working with subtitles, chatting with AI, saving transcripts locally, and exporting finished work.
 
-## Source migration
+## Production
 
-Retrieved from AppDeploy app `aurora-voicetext-xg91t1`, snapshot `1793285066502`. The original frontend component is preserved at `migration-source/App.original.tsx`; the original AppDeploy backend is preserved at `backend/index.ts`.
+- **Web app:** https://aurora-voicetext.pages.dev/
+- **Source of truth:** this GitHub repository, branch `main`
+- **Hosting:** Cloudflare Pages
+- **API gateway:** Cloudflare Pages Functions
+- **Backup API:** the private `aurora-voicetext-backup` Cloudflare Worker
+- **Legacy primary API:** Vercel remains the primary upstream for selected endpoints; Cloudflare Pages can fall back to the Worker for transcription, speech, translation, and voice chat when the primary returns a server error or cannot be reached.
 
-The active frontend uses same-origin `fetch('/api/transcribe')` instead of the AppDeploy client package. The Vercel API implementation is in `api/transcribe.ts`.
+Push changes to `main` to run the GitHub Actions checks and deploy the production Pages site. Do not deploy this project directly from the Vercel dashboard.
 
 ## Stack
 
 - React 19, TypeScript, Vite
-- Transformers.js with Whisper Tiny for on-device transcription
-- Vercel serverless functions for online transcription
-- Groq Whisper API for online transcription
+- Capacitor 7 for Android
+- Transformers.js Whisper Tiny and Vosk Browser for on-device transcription
+- Cloudflare Pages Functions gateway and a private Cloudflare Worker backup
+- Configured online transcription, translation, voice, and subtitle providers
 
 ## Local development
 
@@ -22,23 +28,36 @@ npm install
 npm run dev
 ```
 
-## Vercel deployment
+Validation commands:
 
-Import this private GitHub repository into Vercel. Use the Vite preset, build command `npm run build`, and output directory `dist`.
+```bash
+npm test
+npm run typecheck
+npm run build
+```
 
-For online transcription, create a server-side environment variable named `GROQ_API_KEY` in Vercel Project Settings → Environment Variables, then redeploy. Do not prefix it with `VITE_` and never commit the real secret. Until configured, on-device Whisper and manual transcript editing remain available; online mode will show a configuration error.
+The production build runs tests, the strict TypeScript check, and the Vite build in sequence.
+
+## Cloudflare configuration
+
+The Pages project requires server-side `BACKUP_API_TOKEN` and `BACKUP_API_BASE_URL` secrets. The Worker requires the matching `BACKUP_API_TOKEN` plus provider secrets for the features enabled on the account. Keep all credentials in Cloudflare/GitHub Actions secrets; never add provider keys to `VITE_*` variables or commit them.
+
+The Pages gateway keeps the Worker token server-side. Vercel remains primary for the routes that still use it. When supported user-facing endpoints fail at the primary with a 5xx/network error, the gateway retries the request through the authenticated Worker. Administrative and diagnostic routes remain on their configured primary service because the Worker does not implement those endpoints.
+
+## Transcription languages and offline models
+
+Online transcription uses the configured provider chain and receives the language/context hint from the app. AURORA is being tuned for Nigerian English and Nigerian Pidgin, but recognition quality depends on the selected provider and should be verified with real recordings from the target device and speakers.
+
+The optional Vosk offline model is configured with `VITE_VOSK_MODEL_URL`. The existing default is a small US-English model, not a Nigerian English/Pidgin model. It remains a generic offline fallback and must not be described as Nigerian-language support. A compatible model archive must allow browser CORS and worker access. The model is downloaded on demand and is not bundled in this repository.
+
+## Subtitle Finder
+
+Movie results open a film-details view with available metadata and streaming-service search destinations. Those destinations search the selected title; they do not prove that a title is available in a particular catalogue or region. Spotify is labelled for soundtrack/audio discovery rather than film streaming. Subtitle-file preview is a separate action from film details.
 
 ## Privacy and storage
 
-The transcript library is stored in the current browser's local storage. Online mode sends audio chunks to the configured transcription provider. On-device mode downloads Whisper Tiny and processes audio in the browser.
+The transcript library is stored in the current browser's local storage. Online transcription and AI features send the relevant text/audio to the configured service provider. Offline transcription processes audio on-device after the required model is available. Review provider terms and the app's permissions before using sensitive recordings.
 
-## Migration status
+## Testing notes
 
-The AppDeploy snapshot source files discovered during migration were copied into this repository. The original AppDeploy project was not deleted or modified. This repository is not yet a verified production deployment: install dependencies, run a build, configure the provider key, and test transcription on mobile before relying on it.
-
-
-## AMET — AURORA Multi-Engine Transcription
-
-Auto mode tries Whisper Tiny in-browser, then Vosk Browser offline, then Groq Whisper online. Offline mode never sends audio to the server. Online mode uses the existing Vercel transcription endpoint.
-
-Vosk requires a compatible gzipped Vosk model archive hosted with browser CORS and worker access. Configure `VITE_VOSK_MODEL_URL` in the deployment environment before rebuilding. The model is not bundled in this repository. Vosk model compatibility and Nigerian English/Pidgin accuracy still require real-device testing.
+Automated checks cover core utilities, API gateway contracts, health reporting, and build-time TypeScript validation. Full end-to-end Android and browser journeys still require device/browser testing, especially offline model download, Nigerian English/Pidgin accuracy, exports, subtitle playback, and provider outages.
