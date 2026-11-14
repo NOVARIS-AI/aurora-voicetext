@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { FileUp, FileText, Sparkles, Send, Download, RotateCcw, X, WandSparkles, Check, AlertCircle, Save } from 'lucide-react';
+import { ArrowLeft, FileUp, FileText, Sparkles, Send, Download, RotateCcw, Redo2, X, WandSparkles, Check, AlertCircle, Save, Bold, Italic, Underline, List, ListOrdered, Heading1, Heading2, AlignLeft, AlignCenter, AlignRight, Search, Replace, Printer, Trash2, Table, Link2, Undo2 } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
-type Props = { onAssist: (input: AssistInput) => Promise<string>; onSaveToLibrary: (record: { name: string; text: string }) => void; workspaceId: string };
+type Props = { onAssist: (input: AssistInput) => Promise<string>; onSaveToLibrary: (record: { name: string; text: string }) => void; workspaceId: string; onBack: () => void };
 
 const STORAGE_KEY = 'aurora-voicetext-document-studio-v1';
 const workspaceStorageKey = (id: string) => STORAGE_KEY + ':' + id;
@@ -86,7 +86,7 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId }: Props) {
+export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId, onBack }: Props) {
   const [name, setName] = useState('Untitled document');
   const [text, setText] = useState('');
   const [savedText, setSavedText] = useState('');
@@ -100,6 +100,13 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingTask, setPendingTask] = useState('chat');
   const [undoText, setUndoText] = useState<string | null>(null);
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [fontSize, setFontSize] = useState(12);
+  const [zoom, setZoom] = useState(100);
+  const [textAlign, setTextAlign] = useState<'left'|'center'|'right'|'justify'>('left');
   const fileRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -126,105 +133,76 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId 
         setSavedText(text);
       } catch { setStatus('This document is too large for local browser storage. Please export a copy.'); }
     }, 180);
-    return () => window.clearTimeout(timer);
-  }, [name, text, messages, proposal, workspaceId]);
+    return (
+    <section className="document-studio document-fullpage">
+      <header className="document-appbar">
+        <button className="document-back-button" type="button" onClick={onBack}><ArrowLeft size={17}/> Back to workspace</button>
+        <div className="document-appbar-title"><FileText size={18}/><span>AURORA Docs</span><small>DOCUMENT EDITOR</small></div>
+        <span className="document-save-state">{text === savedText ? <><Check size={13}/> Saved locally</> : 'Saving…'}</span>
+      </header>
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, busy]);
-
-  const importFile = async (file?: File) => {
-    if (!file) return;
-    setImportBusy(true); setError(''); setStatus('');
-    try {
-      const lower = file.name.toLowerCase();
-      let imported = '';
-      if (lower.endsWith('.docx')) imported = await extractDocx(file);
-      else if (lower.endsWith('.txt') || lower.endsWith('.md')) imported = await file.text();
-      else throw new Error('Choose a Word document (.docx), text file (.txt) or Markdown file (.md).');
-      if (!imported.trim()) throw new Error('No readable text was found in this file.');
-      setName(file.name.replace(/\.(docx|txt|md)$/i, '') || 'Imported document');
-      setText(imported);
-      setProposal('');
-      setPreviewOpen(false);
-      setUndoText(null);
-      setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
-      setStatus('Document imported. Your original file has not been changed.');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not import this document.'); }
-    finally { setImportBusy(false); if (fileRef.current) fileRef.current.value = ''; }
-  };
-
-  const runAssist = async (prompt: string, task = 'chat') => {
-    const current = text.trim();
-    if (!current) { setError('Import or write a document first.'); return; }
-    if (current.length > 22000) { setError('For now, AI editing supports documents up to 22,000 characters. Split a longer document into sections.'); return; }
-    setError(''); setBusy(true); setProposal(''); setPendingTask(task);
-    setMessages(items => [...items, { id: String(Date.now()), role: 'user', text: prompt }]);
-    try {
-      const result = await onAssist({ text: current, instruction: prompt, task });
-      if (!result?.trim()) throw new Error('The AI returned an empty response.');
-      setProposal(task === 'chat' ? '' : result.trim());
-      setPreviewOpen(task !== 'chat');
-      setMessages(items => [...items, { id: String(Date.now() + 1), role: 'assistant', text: task === 'chat' ? result.trim() : 'Your revised document is ready. I opened the full preview so you can review every paragraph before applying it.' }]);
-    } catch (reason) {
-      setMessages(items => [...items, { id: String(Date.now() + 2), role: 'assistant', text: reason instanceof Error ? reason.message : 'The AI assistant is unavailable right now.' }]);
-    } finally { setBusy(false); }
-  };
-
-  const applyProposal = () => {
-    if (!proposal) return;
-    if (pendingTask === 'chat') {
-      setStatus('This looks like an answer or summary, so it has not replaced your original document.');
-      setProposal('');
-      return;
-    }
-    setUndoText(text);
-    setText(proposal);
-    setProposal('');
-    setPreviewOpen(false);
-    setStatus('AI changes applied. Your previous saved copy is still available through undo in the editor.');
-  };
-
-  const exportDocx = async () => {
-    if (!text.trim()) { setError('There is no document to export yet.'); return; }
-    try {
-      const paragraphs = text.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean).map(block => {
-        if (block.startsWith('### ')) return new Paragraph({ text: block.slice(4), heading: HeadingLevel.HEADING_2, spacing: { after: 140 } });
-        if (block.startsWith('## ')) return new Paragraph({ text: block.slice(3), heading: HeadingLevel.HEADING_1, spacing: { after: 180 } });
-        if (block.startsWith('# ')) return new Paragraph({ text: block.slice(2), heading: HeadingLevel.TITLE, spacing: { after: 260 } });
-        return new Paragraph({ children: [new TextRun(block)], spacing: { after: 160 } });
-      });
-      const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] });
-      const blob = await Packer.toBlob(doc);
-      downloadBlob(blob, (name.replace(/\.(docx|txt|md)$/i, '') || 'aurora-document') + '.docx');
-      setStatus('DOCX export created.');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export DOCX.'); }
-  };
-
-  const saveAsText = () => {
-    downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), (name || 'aurora-document') + '.txt');
-    setStatus('Text copy exported.');
-  };
-
-  return (
-    <section className="page-content document-studio">
-      <div className="page-heading">
-        <div className="eyebrow"><FileText size={14}/> DOCUMENT INTELLIGENCE</div>
-        <h1>Document AI</h1>
-        <p>Chat with AURORA about your documents. Import a file, ask questions and review AI edits before applying them.</p>
-      </div>
       <div className="document-toolbar card">
-        <div className="document-name-wrap"><FileText size={18}/><input aria-label="Document name" value={name} onChange={event => setName(event.target.value)} maxLength={100}/><span className="document-save-state">{text === savedText ? <><Check size={13}/> Saved locally</> : 'Saving…'}</span></div>
+        <div className="document-name-wrap"><FileText size={18}/><input aria-label="Document name" value={name} onChange={event => setName(event.target.value)} maxLength={100}/></div>
         <div className="document-toolbar-actions">
-          <button className="secondary small-button" type="button" onClick={() => fileRef.current?.click()} disabled={importBusy}>{importBusy ? 'Opening…' : <><FileUp size={15}/> Import DOCX</>}</button>
-          <button className="secondary small-button" type="button" onClick={() => { if (!text.trim()) return; onSaveToLibrary({ name: name.trim() || 'Untitled document', text: text.trim() }); setStatus('Document saved to your Library. AURORA can now search it in this project.'); }} disabled={!text.trim()}><Save size={15}/> Save to Library</button>
+          <button className="secondary small-button" type="button" onClick={createNewDocument}><FileText size={15}/> New</button>
+          <button className="secondary small-button" type="button" onClick={() => fileRef.current?.click()} disabled={importBusy}>{importBusy ? 'Opening…' : <><FileUp size={15}/> Open</>}</button>
+          <button className="secondary small-button" type="button" onClick={() => { if (!text.trim()) return; onSaveToLibrary({ name: name.trim() || 'Untitled document', text: text.trim() }); setStatus('Document saved to your Library.'); }} disabled={!text.trim()}><Save size={15}/> Save</button>
           <button className="secondary small-button" type="button" onClick={saveAsText} disabled={!text.trim()}><Download size={15}/> TXT</button>
-          <button className="primary small-button" type="button" onClick={() => void exportDocx()} disabled={!text.trim()}><Download size={15}/> Export DOCX</button>
+          <button className="primary small-button" type="button" onClick={() => void exportDocx()} disabled={!text.trim()}><Download size={15}/> DOCX</button>
+          <button className="secondary small-button" type="button" onClick={() => window.print()} disabled={!text.trim()}><Printer size={15}/> Print / PDF</button>
+          <button className="secondary small-button document-delete-button" type="button" onClick={createNewDocument} title="Start a blank document"><Trash2 size={15}/></button>
         </div>
         <input ref={fileRef} className="hidden-input" type="file" accept=".docx,.txt,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => void importFile(event.currentTarget.files?.[0])}/>
       </div>
-      <div className="document-chat-workspace">
-        <section className="card document-ai-card document-ai-chat-first">
-          <div className="document-ai-heading"><span><Sparkles size={19}/></span><div><small>DOCUMENT INTELLIGENCE</small><h2>AURORA DOCUMENT AI</h2><p>{text.trim() ? 'Your document is attached. Ask questions, request changes or explore the content.' : 'Start a conversation, or import a document to give AURORA context.'}</p></div></div>
-          {text.trim() && <div className="document-attached-file"><FileText size={16}/><span><strong>{name || 'Untitled document'}</strong><small>{text.length.toLocaleString()} characters · saved on this device</small></span><button type="button" onClick={() => fileRef.current?.click()} aria-label="Replace attached document"><FileUp size={15}/></button></div>}
+
+      <div className="document-ribbon" role="toolbar" aria-label="Document formatting">
+        <div className="document-ribbon-group">
+          <button type="button" title="Undo" aria-label="Undo" disabled={!undoStack.length} onClick={undoDocument}><Undo2 size={16}/></button>
+          <button type="button" title="Redo" aria-label="Redo" disabled={!redoStack.length} onClick={redoDocument}><Redo2 size={16}/></button>
+        </div>
+        <div className="document-ribbon-group">
+          <button type="button" title="Bold" aria-label="Bold" onClick={() => wrapSelection('**')}><Bold size={16}/></button>
+          <button type="button" title="Italic" aria-label="Italic" onClick={() => wrapSelection('*')}><Italic size={16}/></button>
+          <button type="button" title="Underline" aria-label="Underline" onClick={() => wrapSelection('<u>','</u>')}><Underline size={16}/></button>
+          <select aria-label="Text size" value={fontSize} onChange={event => setFontSize(Number(event.target.value))}>{[10,11,12,13,14,16,18,20,24,28,32].map(size=><option key={size} value={size}>{size} pt</option>)}</select>
+        </div>
+        <div className="document-ribbon-group">
+          <button type="button" title="Heading 1" aria-label="Heading 1" onClick={() => prefixCurrentLine('# ')}><Heading1 size={17}/></button>
+          <button type="button" title="Heading 2" aria-label="Heading 2" onClick={() => prefixCurrentLine('## ')}><Heading2 size={17}/></button>
+          <button type="button" title="Bulleted list" aria-label="Bulleted list" onClick={() => prefixCurrentLine('- ')}><List size={17}/></button>
+          <button type="button" title="Numbered list" aria-label="Numbered list" onClick={() => prefixCurrentLine('1. ')}><ListOrdered size={17}/></button>
+          <button type="button" title="Insert table" aria-label="Insert table" onClick={insertTable}><Table size={16}/></button>
+          <button type="button" title="Insert link" aria-label="Insert link" onClick={() => wrapSelection('[', '](https://)')}><Link2 size={16}/></button>
+        </div>
+        <div className="document-ribbon-group">
+          <button type="button" title="Align left" aria-label="Align left" className={textAlign==='left'?'selected':''} onClick={() => setTextAlign('left')}><AlignLeft size={16}/></button>
+          <button type="button" title="Align center" aria-label="Align center" className={textAlign==='center'?'selected':''} onClick={() => setTextAlign('center')}><AlignCenter size={16}/></button>
+          <button type="button" title="Align right" aria-label="Align right" className={textAlign==='right'?'selected':''} onClick={() => setTextAlign('right')}><AlignRight size={16}/></button>
+          <select aria-label="Page zoom" value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[75,85,100,110,125,150].map(value=><option key={value} value={value}>{value}%</option>)}</select>
+        </div>
+      </div>
+
+      <div className="document-findbar">
+        <label><Search size={15}/><input value={findText} onChange={event => setFindText(event.target.value)} placeholder="Find in document"/></label>
+        <label><Replace size={15}/><input value={replaceText} onChange={event => setReplaceText(event.target.value)} placeholder="Replace with"/></label>
+        <button className="secondary small-button" type="button" onClick={replaceAll} disabled={!findText}><Replace size={14}/> Replace all</button>
+      </div>
+
+      <div className="document-page-workspace">
+        <div className="document-page-ruler"><span>PAGE {Math.max(1, Math.ceil(text.length / 3200))}</span><span>{text.trim() ? text.trim().split(/\s+/).length : 0} words · {text.length.toLocaleString()} characters</span></div>
+        <div className="document-paper-wrap" style={{ transform: 'scale(' + (zoom / 100) + ')' }}>
+          <div className="document-paper">
+            <input className="document-paper-title" aria-label="Document title" value={name} onChange={event => setName(event.target.value)} placeholder="Document title"/>
+            <textarea ref={editorRef} className="document-editor document-paper-editor" value={text} style={{ fontSize: fontSize + 'pt', textAlign }} onChange={event => updateDocumentText(event.target.value)} onBlur={() => { try { localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() })); setSavedText(text); } catch {} }} placeholder={'Start writing your document here…\n\nUse the toolbar for headings, lists, emphasis, tables and links. Your work is saved automatically.'} spellCheck />
+            <div className="document-paper-footer"><span>AURORA Docs</span><span>{Math.max(1, Math.ceil(text.length / 3200))}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <details className="document-ai-drawer">
+        <summary><span><Sparkles size={16}/> AURORA Document AI</span><span>Ask questions, summarise, proofread or rewrite <span aria-hidden="true">＋</span></span></summary>
+        <div className="document-ai-drawer-body">
+          <div className="document-ai-heading"><span><Sparkles size={19}/></span><div><small>DOCUMENT INTELLIGENCE</small><h2>AURORA DOCUMENT AI</h2><p>{text.trim() ? 'Your document is attached. Ask questions or request edits; review proposed changes before applying.' : 'Start a conversation, or write a document to give AURORA context.'}</p></div></div>
           <div className="document-ai-suggestions">
             {['Summarise this document','Explain the key points','Improve the writing','Find errors and inconsistencies'].map((prompt, index) => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, index === 2 || index === 3 ? 'rewrite' : 'chat')}>{prompt}</button>)}
           </div>
@@ -238,32 +216,25 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId 
             <textarea value={chatInput} onChange={event => setChatInput(event.target.value)} placeholder={text.trim() ? 'Message AURORA about your document…' : 'Ask AURORA anything about a document…'} rows={2} aria-label="Message AURORA"/>
             <button className="primary" type="submit" disabled={busy || !chatInput.trim()} aria-label="Send message">{busy ? <span className="document-spinner"/> : <Send size={17}/>}</button>
           </form>
-          <p className="document-privacy-note"><AlertCircle size={13}/> When a document is attached, its text is sent to the configured AI service when you ask for help. Avoid sensitive information.</p>
-        </section>
-        <details className="card document-context-panel">
-          <summary><span><FileText size={16}/> Document workspace</span><span>{text.trim() ? 'Open to view or edit the full text' : 'Open to write or paste text'} <span aria-hidden="true">＋</span></span></summary>
-          <div className="document-context-body">
-            <div className="document-panel-heading"><div><small>EDITABLE DOCUMENT</small><h2>{name || 'Untitled document'}</h2></div><span>{text.length.toLocaleString()} characters</span></div>
-            <textarea ref={editorRef} className="document-editor" value={text} onChange={event => { setText(event.target.value); setProposal(''); }} onBlur={() => { try { localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() })); setSavedText(text); } catch {} }} placeholder={'Import a .docx file or start writing here…\n\nUse blank lines to separate paragraphs. Start a heading with # or ##.'} spellCheck />
-            <div className="document-editor-footer"><span>Autosaved on this device</span><button className="text-button" type="button" disabled={!undoText} onClick={() => { if (undoText !== null) setText(undoText); setUndoText(null); setStatus('Undid the last AI document edit.'); }}><RotateCcw size={13}/> Undo AI edit</button></div>
-            <div className="document-quick-actions">
-              <button type="button" onClick={() => void runAssist('Rewrite this document in clear, polished, natural language. Preserve all facts, names, dates, figures and important details. Return only the revised document.', 'rewrite')} disabled={busy || !text.trim()}><WandSparkles size={15}/> Rewrite</button>
-              <button type="button" onClick={() => void runAssist('Organise this document with a logical title, clear sections, useful headings and well-ordered paragraphs. Preserve all information and do not invent facts. Return only the reorganised document.', 'organise')} disabled={busy || !text.trim()}><FileText size={15}/> Organise</button>
-              <button type="button" onClick={() => void runAssist('Correct grammar, spelling and punctuation while preserving the writer’s meaning, voice and all factual details. Return only the corrected document.', 'rewrite')} disabled={busy || !text.trim()}><Check size={15}/> Proofread</button>
-              <button type="button" onClick={() => void runAssist('Create a concise summary of this document. Keep the key facts and conclusions. Clearly label it as a summary.', 'chat')} disabled={busy || !text.trim()}><Sparkles size={15}/> Summarise</button>
-            </div>
+          <div className="document-quick-actions">
+            <button type="button" onClick={() => void runAssist('Rewrite this document in clear, polished, natural language. Preserve all facts, names, dates, figures and important details. Return only the revised document.', 'rewrite')} disabled={busy || !text.trim()}><WandSparkles size={15}/> Rewrite</button>
+            <button type="button" onClick={() => void runAssist('Organise this document with a logical title, clear sections, useful headings and well-ordered paragraphs. Preserve all information and do not invent facts. Return only the reorganised document.', 'organise')} disabled={busy || !text.trim()}><FileText size={15}/> Organise</button>
+            <button type="button" onClick={() => void runAssist('Correct grammar, spelling and punctuation while preserving the writer’s meaning, voice and all factual details. Return only the corrected document.', 'rewrite')} disabled={busy || !text.trim()}><Check size={15}/> Proofread</button>
+            <button type="button" onClick={() => void runAssist('Create a concise summary of this document. Keep the key facts and conclusions. Clearly label it as a summary.', 'chat')} disabled={busy || !text.trim()}><Sparkles size={15}/> Summarise</button>
           </div>
-        </details>
-      </div>
+          <p className="document-privacy-note"><AlertCircle size={13}/> When you ask for help, the document text is sent to the configured AI service. Avoid sensitive information.</p>
+        </div>
+      </details>
+
       {previewOpen && proposal && <div className="document-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
         <section className="document-preview-modal" role="dialog" aria-modal="true" aria-labelledby="document-preview-title">
           <header className="document-preview-header">
             <div className="document-preview-brand"><span><Sparkles size={18}/></span><div><small>AURORA AI · DOCUMENT REVIEW</small><h2 id="document-preview-title">Your revised document</h2><p>Review the complete result before applying changes.</p></div></div>
             <button className="document-preview-close" type="button" aria-label="Close preview" onClick={() => setPreviewOpen(false)}><X size={19}/></button>
           </header>
-          <div className="document-preview-meta"><span><FileText size={14}/>{name || 'Untitled document'}</span><span>{proposal.length.toLocaleString()} characters</span><span>{proposal.trim() ? proposal.trim().split(/\\s+/).length.toLocaleString() : 0} words</span></div>
+          <div className="document-preview-meta"><span><FileText size={14}/>{name || 'Untitled document'}</span><span>{proposal.length.toLocaleString()} characters</span><span>{proposal.trim() ? proposal.trim().split(/\s+/).length.toLocaleString() : 0} words</span></div>
           <article className="document-preview-content"><pre>{proposal}</pre></article>
-          <footer className="document-preview-footer"><span>Your original document remains unchanged until you apply this version.</span><div><button className="secondary small-button" type="button" onClick={() => { setProposal(''); setPreviewOpen(false); setStatus('AI suggestion discarded.'); }}>Discard</button><button className="primary small-button" type="button" onClick={applyProposal}><Check size={15}/> Apply to document</button></div></footer>
+          <footer className="document-preview-footer"><span>Your original document remains unchanged until you apply it.</span><div><button className="secondary small-button" type="button" onClick={() => { setProposal(''); setPreviewOpen(false); setStatus('AI suggestion discarded.'); }}>Discard</button><button className="primary small-button" type="button" onClick={applyProposal}><Check size={15}/> Apply to document</button></div></footer>
         </section>
       </div>}
       {status && <div className="status-message" role="status">{status}</div>}
