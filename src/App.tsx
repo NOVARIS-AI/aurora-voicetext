@@ -2876,25 +2876,26 @@ function App() {
               {selectedSubtitle && (selectedSubtitle.poster || selectedSubtitle.imdbId) && <img src={selectedSubtitle.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId || '')+'/img'} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(selectedSubtitle.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img';}else image.style.display='none';}}/>}
             </div>
             <div className="subtitle-cinema-heading">
-              <small>SUBTITLE PREVIEW · TIMING CHECK</small>
+              <small>SUBTITLE PREVIEW · SELECTED RELEASE</small>
               <h1>{selectedSubtitle?.title || subtitleFilename}</h1>
               <div className="subtitle-cinema-facts">
                 {selectedSubtitle?.year && <span>{selectedSubtitle.year}</span>}
                 <span>{selectedSubtitle?.season != null ? 'TV SERIES' : 'MOVIE'}</span>
                 {selectedSubtitle?.rating && <span><Star size={13}/> {selectedSubtitle.rating}/10</span>}
+                {selectedSubtitle?.season != null && <span>SEASON {selectedSubtitle.season}{selectedSubtitle.episode != null ? ' · EPISODE '+selectedSubtitle.episode : ''}</span>}
                 <span>{subtitleFilename}</span>
               </div>
               {selectedSubtitle?.genres?.length ? <div className="subtitle-detail-genres">{selectedSubtitle.genres.map(genre=><span key={genre}>{genre}</span>)}</div> : null}
-              <p>{selectedSubtitle?.overview || 'Review the selected subtitle release, check its timing and edit captions before exporting.'}</p>
             </div>
           </div>
+          {selectedSubtitle?.overview && <section className="subtitle-cinema-synopsis"><small>ABOUT THIS TITLE</small><h2>Synopsis</h2><p>{selectedSubtitle.overview}</p></section>}
           <div className="subtitle-cinema-content">
             <div className="subtitle-cinema-section-head">
-              <div><small>CAPTION PLAYBACK</small><h2>Subtitle preview</h2><p>Check the timing and wording before you export.</p></div>
-              <span className="count">EDITABLE</span>
+              <div><small>CAPTION PLAYBACK</small><h2>Subtitle preview</h2><p>Review the captions and timestamps in this release.</p></div>
+              <span className="count">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).length} CUES</span>
             </div>
-            {subtitleText && <div className="subtitle-cinema-cues">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).slice(0,12).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <article className="subtitle-cinema-cue" key={index}><span>{String(index+1).padStart(2,'0')}</span><div><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div></article>;})}</div>}
-            <details className="subtitle-cinema-editor"><summary>Edit full subtitle file</summary><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={12} aria-label="Edit subtitle text"/></details>
+            {subtitleText && <div className="subtitle-cinema-cues">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <article className="subtitle-cinema-cue" key={index}><span>{String(index+1).padStart(2,'0')}</span><div><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div></article>;})}</div>}
+            {!subtitleText && <p className="subtitle-cinema-empty">No subtitle cues are available to preview.</p>}
             <div className="subtitle-cinema-export"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="primary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div>
           </div>
         </section>
