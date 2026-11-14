@@ -32,7 +32,7 @@ const nativeSpeech = registerPlugin<NativeSpeechBridge>('NativeSpeech');
 type BackgroundTranscriptionBridge = { start: () => Promise<void>; update: (options: { message: string }) => Promise<void>; stop: () => Promise<void> };
 const backgroundTranscription = registerPlugin<BackgroundTranscriptionBridge>('BackgroundTranscription');
 type AudioFile = { id: string; file: File; url: string; transcript: string; translatedTranscript?: string; detectedLanguage?: string; timedSegments?: TimedSegment[]; nativePath?: string; nativeSize?: number; nativeDurationMs?: number; nativeFingerprint?: string; nativeAudioInfo?: NativeAudioDetails };
-type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'movieDetails' | 'settings' | 'admin' | 'documents';
+type Page = 'home' | 'transcribe' | 'library' | 'preview' | 'studio' | 'subtitles' | 'subtitlePreview' | 'movieDetails' | 'settings' | 'admin' | 'documents';
 type Engine = (audio: Float32Array, options: { sampling_rate: number; chunk_length_s?: number; stride_length_s?: number; return_timestamps?: boolean }) => Promise<{ text?: string; chunks?: Array<{ text?: string; timestamp?: [number | null, number | null] }> }>;
 type TranscriptionMode = 'auto' | 'offline' | 'online';
 type TranscriptionCheckpoint = { fileId: string; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number; parts: string[]; nextChunk: number; totalChunks: number; segments?: TimedSegment[] };
@@ -1410,12 +1410,18 @@ function App() {
         const metas = Array.isArray(payload?.metas) ? payload.metas as Array<{id?:string;name?:string;year?:string|number;poster?:string;background?:string;description?:string;genres?:string[];imdbRating?:string;cast?:string[];director?:string[];runtime?:string;country?:string[]}> : [];
         const target = normalize(title);
         const exact = metas.filter(meta => normalize(meta.name || '') === target);
-        const candidates = exact.length ? exact : metas.filter(meta => {
+        const yearMatch = item.year ? exact.find(meta => String(meta.year || '') === String(item.year)) : undefined;
+        // Never attach a poster from a merely similar title: a false match makes
+        // unrelated subtitle results all appear to belong to the same film.
+        const nearMatches = metas.filter(meta => {
           const name = normalize(meta.name || '');
-          return name.length > 2 && (name.includes(target) || target.includes(name));
+          if (!name || !target) return false;
+          const shorter = Math.min(name.length, target.length);
+          const longer = Math.max(name.length, target.length);
+          return shorter >= 5 && (name.includes(target) || target.includes(name)) && shorter / longer >= 0.82;
         });
-        const yearMatch = item.year ? candidates.find(meta => String(meta.year || '') === String(item.year)) : undefined;
-        return { id: item.id, meta: yearMatch || candidates[0] || null };
+        const uniqueNearMatch = nearMatches.length === 1 ? nearMatches[0] : null;
+        return { id: item.id, meta: yearMatch || exact[0] || uniqueNearMatch || null };
       } catch { return { id: item.id, meta: null as any }; }
     })).then(artworks => {
       if (cancelled) return;
@@ -2413,7 +2419,8 @@ function App() {
       setSubtitleText(exportText);
       setSubtitleFilename(safeName + (translate ? '-' + subtitleTranslateLanguage.toLowerCase().replace(/\s+/g, '-') : ''));
       if (previewOnly) {
-        setSubtitleStatus('Preview ready. Check the text and timestamps below, then export SRT or VTT when satisfied.');
+        setPage('subtitlePreview');
+        setSubtitleStatus('Preview ready. Review and edit the captions, then export SRT or VTT.');
       } else {
         await downloadFile(safeName + (translate ? '-' + subtitleTranslateLanguage.toLowerCase().replace(/\s+/g, '-') : '') + (vtt ? '.vtt' : '.srt'), exportText, vtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip;charset=utf-8');
         setSubtitleStatus(translate ? 'Translated subtitle exported. Review the timing and wording before use.' : 'Subtitle downloaded.');
@@ -2431,7 +2438,7 @@ function App() {
       ? hasFullTiming ? createTimedSubtitles(segments, 'srt') : createEstimatedSubtitles(active.transcript, 'srt')
       : hasFullTiming ? createTimedSubtitles(segments, 'vtt') : createEstimatedSubtitles(active.transcript, 'vtt');
     const name = safeFileBaseName(active.file.name.replace(/\.[^.]+$/, ''), 'aurora-subtitles');
-    setSubtitleText(output); setSubtitleFilename(name);
+    setSubtitleText(output); setSubtitleFilename(name); setPage('subtitlePreview');
     await downloadFile(name + '.' + format, output, format === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8');
     setSubtitleStatus(hasFullTiming ? 'Your speech-aligned subtitles are ready.' : 'Your subtitles are ready with estimated timing. Review them before use.');
   }
@@ -2852,13 +2859,21 @@ function App() {
               <button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button>
             </div>
           </article>)}</div>}
-          {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW · TIMING CHECK</small><h2>{subtitleFilename}</h2><p>Review captions and timestamps before exporting.</p></div><span className="count">Editable</span></div>
-            <div className="subtitle-cue-list">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).slice(0,8).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <div className="subtitle-cue" key={index}><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div>;})}</div>
-            <details className="subtitle-edit-details"><summary>Edit full subtitle file</summary><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/></details>
-            <div className="studio-actions"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+
         </section>
       </section>}
 
+
+      {page === 'subtitlePreview' && <section className="page-content subtitle-preview-page">
+        <div className="movie-detail-toolbar">
+          <button className="secondary small-button" type="button" onClick={()=>setPage('subtitles')}><ArrowLeft size={15}/> Back to Subtitle Finder</button>
+          <span>SUBTITLE EDITOR</span>
+        </div>
+        {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW · TIMING CHECK</small><h2>{subtitleFilename}</h2><p>Review captions and timestamps before exporting.</p></div><span className="count">Editable</span></div>
+            <div className="subtitle-cue-list">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).slice(0,8).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <div className="subtitle-cue" key={index}><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div>;})}</div>
+            <details className="subtitle-edit-details"><summary>Edit full subtitle file</summary><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/></details>
+            <div className="studio-actions"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+      </section>}
 
       {page === 'movieDetails' && <section className="page-content movie-detail-page">
         <div className="movie-detail-toolbar"><button className="secondary small-button" type="button" onClick={()=>setPage('subtitles')}><ArrowLeft size={15}/> Back to Subtitle Finder</button><span> MOVIE & SERIES GUIDE</span></div>
