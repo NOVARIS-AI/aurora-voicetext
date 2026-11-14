@@ -19,7 +19,7 @@ type Recording = { id: string; name: string; transcript: string; updatedAt: numb
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
-type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; contentHash?: string; audioInfo?: NativeAudioDetails }> }>; decodeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ wavBase64: string; sampleRate: number; channels: number; durationSeconds: number }> };
+type NativeAudioFilesBridge = { pick: () => Promise<{ files: Array<{ path: string; name: string; size: number; mimeType?: string; durationMs?: number; contentHash?: string; audioInfo?: NativeAudioDetails }> }>; getDuration: (options: { path: string }) => Promise<{ durationMs: number }>; decodeSegment: (options: { path: string; startSeconds: number; durationSeconds: number }) => Promise<{ wavBase64: string; sampleRate: number; channels: number; durationSeconds: number }> };
 const nativeAudioFiles = registerPlugin<NativeAudioFilesBridge>('NativeAudioFiles');
 type NativeSpeechWord = { word: string; start: number; end: number; conf?: number };
 type NativeSpeechBridge = {
@@ -1481,8 +1481,8 @@ function App() {
     // reader reports 0 ms. Read the copied file through the WebView media pipeline
     // as a second source, then persist the resolved duration with the workspace.
     next.filter(item => item.nativePath && !(item.nativeDurationMs && item.nativeDurationMs > 0)).forEach(item => {
-      void getAudioDurationFromUrl(item.url, isVideoMediaFile(item.file)).then(seconds => {
-        const durationMs = Math.round(seconds * 1000);
+      void nativeAudioFiles.getDuration({ path: item.nativePath! }).then(result => {
+        const durationMs = Number(result.durationMs);
         const resolved = { ...item, nativeDurationMs: durationMs };
         setFiles(current => current.map(existing => existing.id === item.id ? resolved : existing));
         void saveWorkspaceAudio([resolved]).catch(() => undefined);
@@ -1565,7 +1565,7 @@ function App() {
 
   async function transcribe() {
     if (!active || busy) return;
-    const selected = active;
+    let selected = active;
     const controller = new AbortController();
     transcriptionAbortRef.current = controller;
     setBusy(true);
@@ -1600,6 +1600,15 @@ function App() {
     );
     try {
       if (Capacitor.isNativePlatform()) await backgroundTranscription.start().catch(() => undefined);
+      if (Capacitor.isNativePlatform() && selected.nativePath && !(selected.nativeDurationMs && selected.nativeDurationMs > 0)) {
+        setStatus('Reading recording duration with Android…');
+        const metadata = await nativeAudioFiles.getDuration({ path: selected.nativePath });
+        const durationMs = Number(metadata.durationMs);
+        if (!Number.isFinite(durationMs) || durationMs <= 0) throw new Error('Android could not determine this recording’s duration. Try exporting it as MP3 or WAV, then import it again.');
+        selected = { ...selected, nativeDurationMs: durationMs };
+        setFiles(current => current.map(item => item.id === selected.id ? selected : item));
+        void saveWorkspaceAudio([selected]).catch(() => undefined);
+      }
       let parts: string[];
       if (mode === 'offline' && !isVideoMediaFile(selected.file)) {
         setStatus('Offline mode · audio stays on this device.');
