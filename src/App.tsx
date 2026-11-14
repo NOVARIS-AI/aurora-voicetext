@@ -2840,11 +2840,11 @@ function App() {
           <button className="primary full-button" disabled={subtitleBusy} onClick={searchSubtitles} type="button">{subtitleBusy?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {subtitleBusy?'Searching…':'Search subtitles'}</button>
           {subtitleStatus && <div className="status-message" role="status">{subtitleStatus}</div>}
           {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResults.map((item,index)=><article className="subtitle-result" key={item.id+'-'+index}>
-            <button className="subtitle-poster-wrap subtitle-detail-trigger" type="button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}} aria-label={'View details for '+item.title}>
+            {subtitleResults.slice(0,index).some(previous=>previous.title===item.title) ? <div className="subtitle-poster-wrap subtitle-release-marker"><Languages size={20}/><span>MORE RELEASES</span></div> : <button className="subtitle-poster-wrap subtitle-detail-trigger" type="button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}} aria-label={'View details for '+item.title}>
               <span className="subtitle-poster-fallback"><Film size={25}/><span>{item.season != null ? 'SERIES' : 'MOVIE'}</span></span>
               {(item.poster || item.imdbId) && <img className="subtitle-poster" src={item.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId || '')+'/img'} alt={item.title + ' poster'} loading="lazy" onError={event=>{const image=event.currentTarget;if(item.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId)+'/img';}else{image.style.display='none';}}}/>}
               <span className="subtitle-poster-open"><Clapperboard size={14}/> DETAILS</span>
-            </button>
+            </button>}
             <div className="subtitle-result-main">
               <div className="subtitle-result-kicker">{item.season != null ? 'TV SERIES' : 'FEATURE FILM'} <span>{item.year || 'TITLE MATCH'}</span></div>
               <button className="subtitle-title-button" type="button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}}>{item.title} {item.year?'('+item.year+')':''}</button>
