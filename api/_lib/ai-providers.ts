@@ -48,7 +48,7 @@ async function resolveElevenLabsFallbackVoices(): Promise<string[]> {
   const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string; name?: string }> };
   const voices = Array.isArray(payload.voices) ? payload.voices.filter(item => item.voice_id) : [];
   voices.sort((a,b) => Number(b.category === "premade") - Number(a.category === "premade"));
-  const ids = [...new Set(voices.map(item => item.voice_id!).filter(Boolean))].slice(0, 6);
+  const ids = [...new Set(voices.map(item => item.voice_id!).filter(Boolean))].slice(0, 16);
   if (!ids.length) throw new Error("ElevenLabs has no usable voice on this account.");
   return ids;
 }
@@ -91,7 +91,24 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
           if (response.status !== 404) break;
         }
       }
-      if (!response.ok) throw new Error("ElevenLabs speech returned HTTP " + response.status + ". Check that the account has an active voice and access to the selected TTS model.");
+      if (response.status === 404) {
+        // Some accounts expose a voice but do not have access to the configured
+        // multilingual model. Retry the account's default voice with the broadly
+        // available Turbo model before reporting a missing voice.
+        const fallbackVoiceIds = await resolveElevenLabsFallbackVoices();
+        const turboInput = { ...input, style: (input.style || "") + " " + (input.emotion || "") };
+        for (const fallbackVoiceId of fallbackVoiceIds) {
+          response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(fallbackVoiceId) + "?output_format=mp3_44100_128", {
+            method: "POST",
+            headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, "Content-Type": "application/json", Accept: "audio/mpeg" },
+            body: JSON.stringify({ text: input.text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: safeRate(turboInput.rate) } }),
+            signal: AbortSignal.timeout(110000),
+          });
+          if (response.ok) { provider = "elevenlabs-turbo-account-fallback"; break; }
+          if (response.status !== 404) break;
+        }
+      }
+      if (!response.ok) throw new Error("ElevenLabs speech returned HTTP " + response.status + ". The account voice could not be resolved or the account does not have access to the requested TTS model. Check the ElevenLabs API key, active voices and model access.");
       return { audio: new Uint8Array(await response.arrayBuffer()), provider };
     } catch (error) { failures.push("ElevenLabs: " + (error instanceof Error ? error.message : "failed")); }
   }
