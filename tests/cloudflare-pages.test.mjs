@@ -138,7 +138,7 @@ test("TTS recovers from a stale ElevenLabs voice ID by resolving an active accou
 test("App opens at Home, restores project data, and confirms destructive media and text actions", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(app, /useState<Page>\('home'\)/);
-  assert.match(app, /setFiles\(saved\.files\); setActiveId\(saved\.activeId\); setPage\('home'\)/);
+  assert.match(app, /setFiles\(saved\.files\); setActiveId\(saved\.activeId\); setPage\(saved\.page \|\| 'home'\)/);
   assert.doesNotMatch(app, /aurora-voicetext-last-page-v1/);
   assert.match(app, /Clear the entire transcript/);
   assert.match(app, /Remove .* from this project/);
