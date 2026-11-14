@@ -137,6 +137,30 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, busy]);
 
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 's') {
+        event.preventDefault();
+        try {
+          localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() }));
+          setSavedText(text); setStatus('Document saved locally.');
+        } catch { setError('Could not save this document on the device. Export a DOCX copy.'); }
+      } else if (key === 'b' && document.activeElement === editorRef.current) {
+        event.preventDefault(); wrapSelection('**');
+      } else if (key === 'i' && document.activeElement === editorRef.current) {
+        event.preventDefault(); wrapSelection('*');
+      } else if (key === 'z' && !event.shiftKey) {
+        event.preventDefault(); undoDocument();
+      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+        event.preventDefault(); redoDocument();
+      }
+    };
+    window.addEventListener('keydown', onShortcut);
+    return () => window.removeEventListener('keydown', onShortcut);
+  }, [name, text, messages, proposal, workspaceId, undoStack, redoStack]);
+
   const importFile = async (file?: File) => {
     if (!file) return;
     if (text.trim() && !window.confirm('Replace the current document with “' + file.name + '”? Save or export a copy first if you want to keep the current text.')) { if (fileRef.current) fileRef.current.value = ''; return; }
