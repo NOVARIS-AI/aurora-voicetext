@@ -10,7 +10,7 @@ import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, n
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
-  AudioLines, Upload, ArrowLeft, FileAudio, X, Copy, Download, Plus, Sparkles, ChevronDown, Check, Film, Star, CalendarDays, Clapperboard, Play,
+  AudioLines, Upload, ArrowLeft, ArrowRight, FileAudio, FolderOpen, X, Copy, Download, Plus, Sparkles, ChevronDown, Check, Film, Star, CalendarDays, Clapperboard, Play,
   ShieldCheck, WandSparkles, LoaderCircle, FileText,
   Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
@@ -311,7 +311,7 @@ async function saveWorkspaceState(items: AudioFile[], activeId: string | null, p
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('workspace', 'readwrite');
       const savedAt = Date.now();
-      const title = items[0]?.file.name || 'Untitled work';
+      const title = (typeof drafts.projectTitle === 'string' && drafts.projectTitle.trim() ? drafts.projectTitle.trim().slice(0, 72) : items[0]?.file.name || 'Untitled project');
       tx.objectStore('workspace').put({ key: 'project:' + projectId, projectId, files, activeId, page, drafts, savedAt, title });
       tx.objectStore('workspace').put({ key: 'current', projectId, savedAt });
       const projectsTx = db.transaction('projects', 'readwrite');
@@ -1224,6 +1224,7 @@ function AppSelect({ value, onChange, options, ariaLabel }: { value: string; onC
 function App() {
   const [page, setPage] = useState<Page>('home');
   const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem('aurora-voicetext-active-project-v1') || 'legacy-work'; } catch { return 'legacy-work'; } });
+  const [projectTitle, setProjectTitle] = useState('Untitled project');
   const [recentProjects, setRecentProjects] = useState<Array<{id:string;title:string;fileCount:number;savedAt:number;page:Page}>>([]);
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1480,6 +1481,8 @@ function App() {
       if (saved) {
         setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(saved.projectId);
         const drafts = saved.drafts;
+        if (typeof drafts.projectTitle === 'string' && drafts.projectTitle.trim()) setProjectTitle(drafts.projectTitle.trim());
+        else if (saved.files[0]?.file.name) setProjectTitle(safeFileBaseName(saved.files[0].file.name.replace(/\.[^.]+$/, ''), 'Untitled project'));
         if (typeof drafts.studioText === 'string') setStudioText(drafts.studioText);
         if (Array.isArray(drafts.voiceChatMessages)) setVoiceChatMessages(drafts.voiceChatMessages);
         if (typeof drafts.voiceFilename === 'string') setVoiceFilename(drafts.voiceFilename);
@@ -1506,8 +1509,8 @@ function App() {
 
   useEffect(() => {
     if (!sessionHydrated) return;
-    void saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
-  }, [files, activeId, page, projectId, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch]);
+    void saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
+  }, [files, activeId, page, projectId, projectTitle, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch]);
 
   useEffect(() => {
     void pruneSavedCheckpoints().catch(() => {
@@ -1549,7 +1552,7 @@ function App() {
     try {
       const saved = await restoreWorkspaceState(id);
       if (!saved) throw new Error('This saved work could not be opened.');
-      setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(id);
+      setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(id); setProjectTitle(typeof saved.drafts.projectTitle === 'string' && saved.drafts.projectTitle.trim() ? saved.drafts.projectTitle.trim() : safeFileBaseName(saved.files[0]?.file.name?.replace(/\.[^.]+$/, '') || 'Untitled project', 'Untitled project'));
       try { localStorage.setItem('aurora-voicetext-active-project-v1', id); } catch {}
       setError(''); setStatus('Saved work reopened. Changes will autosave here.');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open saved work.'); }
@@ -1557,9 +1560,9 @@ function App() {
 
   async function startNewWork() {
     if (busy || exportBusy || voiceBusy || previewBusy) { setError('Finish or cancel the current operation before starting new work.'); return; }
-    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
+    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
     const nextId = (crypto.randomUUID?.() || ('work-' + Date.now()));
-    setProjectId(nextId); setFiles([]); setActiveId(null); setPage('home');
+    setProjectId(nextId); setProjectTitle('Untitled project'); setFiles([]); setActiveId(null); setPage('home');
     setPreviewMessages([]); setPreviewInput(''); setSummary(''); setStudioText(''); setVoiceChatMessages([]); setVoiceChatInput('');
     setSubtitleText(''); setSubtitleQuery(''); setSubtitleResults([]); setSelectedSubtitleId(null); setSubtitleStatus(''); setSubtitleFilename('subtitle'); setSubtitleType(undefined); setSubtitleLanguage('en'); setSubtitleTranslateLanguage('English'); setMediaChapters([]);
     try { localStorage.removeItem('aurora-voicetext-subtitles-v1'); localStorage.removeItem('aurora-voicetext-selected-subtitle-v1'); } catch {}
@@ -1612,6 +1615,7 @@ function App() {
       const nativePath = nativeDetails?.[index]?.path;
       return { id: crypto.randomUUID?.() ?? String(Date.now() + Math.random()), file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), transcript: '', nativePath, nativeSize: nativeDetails?.[index]?.size, nativeDurationMs: nativeDetails?.[index]?.durationMs, nativeFingerprint: nativeDetails?.[index]?.contentHash, nativeAudioInfo: nativeDetails?.[index]?.audioInfo };
     });
+    setProjectTitle(current => current === 'Untitled project' ? safeFileBaseName(accepted[0].file.name.replace(/\.[^.]+$/, ''), 'Untitled project') : current);
     setFiles(current => [...current, ...next]);
     void saveWorkspaceAudio(next).catch(() => setStatus('Audio is loaded, but this device could not save a reload-safe copy. Save your transcript to the library as a backup.'));
     // Android's native picker can return a valid file even when its media metadata
@@ -2454,46 +2458,79 @@ function App() {
           <span className="brand-mark"><img src="/aurora-mark.svg" alt="" /></span>
           <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE + DOCUMENT INTELLIGENCE</small></span>
         </button>
-        <div className="topbar-actions"><span className="local-badge"><span /> VOICE + DOCUMENT AI</span><button className="new-work-button" type="button" onClick={() => void startNewWork()}><Plus size={16}/> New Work</button></div>
+        <div className="topbar-actions"><span className="local-badge"><span /> INFORMATION AI</span><button className="topbar-settings-button" type="button" aria-label="Settings" onClick={() => setPage('settings')}><Settings2 size={17}/></button><button className="new-work-button" type="button" onClick={() => void startNewWork()}><Plus size={16}/> New Project</button></div>
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
-        {([['home','Home',Sparkles],['transcribe','Transcribe',WandSparkles],['documents','Documents',FileText],['preview','AI Preview',AudioWaveform],['library','Library',BookOpen],['studio','Voice Workspace',Mic2],['subtitles','Subtitle Finder',Languages],['settings','Settings',Settings2]] as const).map(([key,label,Icon]) =>
-          <button key={key} type="button" className={page === key ? 'nav-link active' : 'nav-link'} onClick={() => { if (key === 'preview' && active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage(key); }}><Icon size={16}/><span>{label}</span></button>
-        )}
+        {([
+          ['home','Home',Sparkles],
+          ['workspace','Workspace',WandSparkles],
+          ['library','Library',BookOpen],
+          ['assistant','AI Assistant',AudioWaveform],
+        ] as const).map(([key,label,Icon]) => {
+          const selected = key === 'home' ? page === 'home' : key === 'library' ? page === 'library' : key === 'assistant' ? page === 'preview' : ['transcribe','studio','documents','subtitles','movieDetails'].includes(page);
+          return <button key={key} type="button" className={selected ? 'nav-link active' : 'nav-link'} aria-current={selected ? 'page' : undefined} onClick={() => {
+            if (key === 'home') setPage('home');
+            else if (key === 'library') setPage('library');
+            else if (key === 'assistant') { if (active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage('preview'); }
+            else setPage(['transcribe','studio','documents','subtitles'].includes(page) ? page : 'transcribe');
+          }}><Icon size={17}/><span>{label}</span></button>;
+        })}
       </nav>
 
-
-
-      {page === 'home' && <section className="welcome">
-        <div className="eyebrow"><Sparkles size={14}/> YOUR PERSONAL VOICE NOTE WORKSPACE</div>
-        <h1>Turn voice notes<br/><span>into clear text.</span></h1>
-        <p>Transcribe recordings, tidy up the words, save useful notes and export them when you need them.</p>
-        <div className="quick-stats"><div><strong>{files.length}</strong><span>In this session</span></div><div><strong>{library.length}</strong><span>Saved notes</span></div><div><strong>₦0</strong><span>To get started</span></div></div>
-        <div className="home-actions">
-          <button className="primary" onClick={() => { setPage('transcribe'); inputRef.current?.click(); }} type="button"><Upload size={17}/> Choose voice notes</button>
-          <button className="secondary" onClick={() => setPage('library')} type="button"><BookOpen size={17}/> Open my library</button>
+      {['transcribe','studio','documents','subtitles','movieDetails'].includes(page) && <section className="workspace-shell-nav" aria-label="Workspace tools">
+        <div className="workspace-project-context">
+          <span className="workspace-project-dot"/>
+          <span className="workspace-project-label">CURRENT PROJECT</span>
+          <input aria-label="Project name" maxLength={72} value={projectTitle} onChange={event => setProjectTitle(event.target.value)} />
+          <span className="workspace-save-indicator">Autosaved on this device</span>
         </div>
-        <div className="info-strip"><ShieldCheck size={18}/><div><strong>Private by default</strong><p>Choose automatic, online or offline transcription. Your original recording stays unchanged.</p></div></div>
-        {recentProjects.length > 0 && <section className="recent-work-panel"><div className="recent-work-heading"><div><small>YOUR SAVED PROJECTS</small><h2>Recent Work</h2><p>Pick up where you left off. Each project keeps its own recordings and progress.</p></div><button type="button" className="secondary small-button" onClick={() => void refreshRecentProjects()}>Refresh</button></div><div className="recent-work-grid">{recentProjects.filter(item => item.id !== projectId).map(item => <article className="recent-work-card" key={item.id}><span><FileAudio size={17}/></span><div><strong>{item.title || 'Untitled work'}</strong><small>{item.fileCount || 0} recording(s) · {new Date(item.savedAt).toLocaleString()}</small></div><button type="button" className="secondary small-button" onClick={() => void openSavedProject(item.id)}>Open</button></article>)}</div></section>}
-        <div className="feature-grid">
-          <button onClick={() => setPage('transcribe')} type="button"><FileAudio/><strong>Transcribe</strong><span>Import, listen and correct audio text.</span></button>
-          <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
-          <button onClick={() => setPage('studio')} type="button"><Volume2/><strong>Voice Studio</strong><span>Generate and download AI voiceovers with adjustable delivery.</span></button>
-          <button onClick={() => setPage('documents')} type="button"><FileText/><strong>Document Studio</strong><span>Import Word documents, improve writing and organise your work with AI.</span></button>
+        <div className="workspace-mode-tabs" role="group" aria-label="Workspace modes">
+          <button type="button" className={page === 'transcribe' ? 'active' : ''} onClick={() => setPage('transcribe')}><AudioWaveform size={15}/> Media & transcript</button>
+          <button type="button" className={page === 'documents' ? 'active' : ''} onClick={() => setPage('documents')}><FileText size={15}/> Documents</button>
+          <button type="button" className={page === 'subtitles' || page === 'movieDetails' ? 'active' : ''} onClick={() => setPage('subtitles')}><Languages size={15}/> Subtitles</button>
+          <button type="button" className={page === 'studio' ? 'active' : ''} onClick={() => setPage('studio')}><Volume2 size={15}/> Voice output</button>
         </div>
-        <section className="transcribe-feature-hub" aria-label="AURORA tools available from Transcribe">
-          <div className="transcribe-hub-heading"><div><small>YOUR WORKSPACE</small><h2>Everything you can do with AURORA</h2><p>Import a recording above to unlock transcript editing. These tools are ready to open at any time.</p></div><span className="transcribe-hub-count">7 TOOLS</span></div>
-          <div className="transcribe-hub-grid">
-            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><Sparkles/></span><strong>AI Preview</strong><small>Summaries, chapters, action items, meeting notes and translation.</small><b>Open AI Preview →</b></button>
-            <button type="button" onClick={() => setPage('studio')}><span className="hub-icon"><AudioWaveform/></span><strong>Audio editor & cleanup</strong><small>Trim audio, preview edits, clean noise and export a restored audio copy.</small><b>Open Voice Workspace →</b></button>
-            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Languages/></span><strong>Subtitle Finder</strong><small>Find subtitle releases, preview them, translate and export SRT or VTT.</small><b>Find subtitles →</b></button>
-            <button type="button" onClick={() => setPage('library')}><span className="hub-icon"><BookOpen/></span><strong>Media Library</strong><small>Search saved transcripts, recordings, folders and AI insights.</small><b>Open Library →</b></button>
-            <button type="button" onClick={() => setPage('preview')}><span className="hub-icon"><AudioLines/></span><strong>Intelligent transcript player</strong><small>Search timed lines, change playback speed, jump to speech and assign speaker labels.</small><b>Open transcript player →</b></button>
-            <button type="button" onClick={() => setPage('subtitles')}><span className="hub-icon"><Film/></span><strong>Film & series details</strong><small>Open a matched title for artwork, cast information and legal streaming searches.</small><b>Explore titles →</b></button>
-            <button type="button" onClick={() => setPage('documents')}><span className="hub-icon"><FileText/></span><strong>Document Studio</strong><small>Import DOCX, rewrite paragraphs, proofread, organise sections and export polished documents.</small><b>Open Document Studio →</b></button>
+      </section>}
+
+      {page === 'home' && <section className="home-v2">
+        <div className="home-hero">
+          <div className="eyebrow"><Sparkles size={14}/> AURORA INFORMATION WORKSPACE</div>
+          <h1>Bring your information<br/><span>together.</span></h1>
+          <p>Capture ideas, understand recordings, work with documents and turn information into something useful.</p>
+          <div className="home-primary-actions">
+            <button className="home-action home-action-primary" type="button" onClick={() => { setPage('transcribe'); window.setTimeout(() => inputRef.current?.click(), 80); }}>
+              <span className="home-action-icon"><Upload size={19}/></span><span><strong>Import audio or video</strong><small>Transcribe and explore media</small></span><ChevronDown size={16} className="home-action-arrow"/>
+            </button>
+            <button className="home-action" type="button" onClick={() => setPage('documents')}>
+              <span className="home-action-icon"><FileText size={19}/></span><span><strong>Open a document</strong><small>Read, edit and improve writing</small></span><ChevronDown size={16} className="home-action-arrow"/>
+            </button>
+            <button className="home-action" type="button" onClick={() => { if (active) setPreviewInput(current => current || '@' + active.file.name + ' '); setPage('preview'); }}>
+              <span className="home-action-icon"><Sparkles size={19}/></span><span><strong>Ask AURORA</strong><small>Explore and transform information</small></span><ChevronDown size={16} className="home-action-arrow"/>
+            </button>
           </div>
+        </div>
+
+        <section className="home-projects">
+          <div className="home-section-heading">
+            <div><small>YOUR INFORMATION</small><h2>Recent projects</h2><p>Continue where you left off. Each project keeps its source files and outputs together.</p></div>
+            <button type="button" className="home-refresh-button" onClick={() => void refreshRecentProjects()}>Refresh <ChevronDown size={14}/></button>
+          </div>
+          {recentProjects.length > 0 ? <div className="home-project-list">
+            {recentProjects.slice(0,6).map(item => <div className="home-project-row" key={item.id}>
+              <span className="home-project-type"><FolderOpen size={18}/></span>
+              <button type="button" className="home-project-open" onClick={() => void openSavedProject(item.id)}>
+                <strong>{item.title || 'Untitled project'}</strong>
+                <small>{item.fileCount ? item.fileCount + ' source file' + (item.fileCount === 1 ? '' : 's') : 'Project workspace'} · {new Date(item.savedAt).toLocaleDateString()}</small>
+              </button>
+              <button type="button" className="home-project-arrow" aria-label={'Open '+(item.title || 'project')} onClick={() => void openSavedProject(item.id)}><ArrowRight size={17}/></button>
+            </div>)}
+          </div> : <div className="home-empty-projects">
+            <span><FolderOpen size={22}/></span><div><strong>Your projects will appear here</strong><p>Import a recording or open a document to start your first information project.</p></div>
+          </div>}
         </section>
+
+        <div className="home-footer-note"><ShieldCheck size={16}/><span>Your original files stay unchanged. Work is saved locally on this device.</span><button type="button" onClick={() => setPage('settings')}>Settings</button></div>
       </section>}
 
       {page === 'transcribe' && <section className="page-content">
