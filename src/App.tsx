@@ -298,7 +298,7 @@ async function removeWorkspaceAudio(id: string): Promise<void> {
     });
   } finally { db.close(); }
 }
-async function saveWorkspaceState(items: AudioFile[], activeId: string | null, page: Page, projectId: string): Promise<void> {
+async function saveWorkspaceState(items: AudioFile[], activeId: string | null, page: Page, projectId: string, drafts: Record<string, unknown> = {}): Promise<void> {
   const db = await openSessionDb();
   try {
     const files: StoredAudioMeta[] = items.map(item => ({
@@ -312,7 +312,7 @@ async function saveWorkspaceState(items: AudioFile[], activeId: string | null, p
       const tx = db.transaction('workspace', 'readwrite');
       const savedAt = Date.now();
       const title = items[0]?.file.name || 'Untitled work';
-      tx.objectStore('workspace').put({ key: 'project:' + projectId, projectId, files, activeId, page, savedAt, title });
+      tx.objectStore('workspace').put({ key: 'project:' + projectId, projectId, files, activeId, page, drafts, savedAt, title });
       tx.objectStore('workspace').put({ key: 'current', projectId, savedAt });
       const projectsTx = db.transaction('projects', 'readwrite');
       projectsTx.objectStore('projects').put({ id: projectId, title, fileCount: items.length, savedAt, page });
@@ -321,7 +321,7 @@ async function saveWorkspaceState(items: AudioFile[], activeId: string | null, p
     });
   } finally { db.close(); }
 }
-async function restoreWorkspaceState(projectId?: string): Promise<{ files: AudioFile[]; activeId: string | null; page: Page; projectId: string } | null> {
+async function restoreWorkspaceState(projectId?: string): Promise<{ files: AudioFile[]; activeId: string | null; page: Page; projectId: string; drafts: Record<string, any> } | null> {
   const db = await openSessionDb();
   try {
     const snapshot = await new Promise<any>((resolve, reject) => {
@@ -351,7 +351,7 @@ async function restoreWorkspaceState(projectId?: string): Promise<{ files: Audio
       return { ...meta, file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), nativePath } as AudioFile;
     }));
     const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','movieDetails','settings','admin','documents'];
-    return { files, activeId: typeof data.activeId === 'string' ? data.activeId : files[0]?.id ?? null, page: pages.includes(data.page) ? data.page : 'home', projectId: project };
+    return { files, activeId: typeof data.activeId === 'string' ? data.activeId : files[0]?.id ?? null, page: pages.includes(data.page) ? data.page : 'home', projectId: project, drafts: data.drafts && typeof data.drafts === 'object' ? data.drafts : {} };
   } finally { db.close(); }
 }
 
@@ -1407,7 +1407,21 @@ function App() {
     let cancelled = false;
     void restoreWorkspaceState().then(saved => {
       if (cancelled) return;
-      if (saved) { setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(saved.projectId); try { localStorage.setItem('aurora-voicetext-active-project-v1', saved.projectId); } catch {} }
+      if (saved) {
+        setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(saved.projectId);
+        const drafts = saved.drafts;
+        if (typeof drafts.studioText === 'string') setStudioText(drafts.studioText);
+        if (Array.isArray(drafts.voiceChatMessages)) setVoiceChatMessages(drafts.voiceChatMessages);
+        if (typeof drafts.voiceFilename === 'string') setVoiceFilename(drafts.voiceFilename);
+        if (Array.isArray(drafts.previewMessages)) setPreviewMessages(drafts.previewMessages);
+        if (typeof drafts.previewInput === 'string') setPreviewInput(drafts.previewInput);
+        if (typeof drafts.summary === 'string') setSummary(drafts.summary);
+        if (typeof drafts.subtitleText === 'string') setSubtitleText(drafts.subtitleText);
+        if (typeof drafts.subtitleQuery === 'string') setSubtitleQuery(drafts.subtitleQuery);
+        if (typeof drafts.voiceRate === 'number') setVoiceRate(drafts.voiceRate);
+        if (typeof drafts.voicePitch === 'number') setVoicePitch(drafts.voicePitch);
+        try { localStorage.setItem('aurora-voicetext-active-project-v1', saved.projectId); } catch {}
+      }
     }).catch(() => {
       // Recovery is best-effort; saved library transcripts remain available.
     }).finally(async () => {
@@ -1421,8 +1435,8 @@ function App() {
 
   useEffect(() => {
     if (!sessionHydrated) return;
-    void saveWorkspaceState(files, activeId, page, projectId).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
-  }, [files, activeId, page, projectId, sessionHydrated]);
+    void saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
+  }, [files, activeId, page, projectId, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch]);
 
   useEffect(() => {
     void pruneSavedCheckpoints().catch(() => {
@@ -1472,7 +1486,7 @@ function App() {
 
   async function startNewWork() {
     if (busy || exportBusy || voiceBusy || previewBusy) { setError('Finish or cancel the current operation before starting new work.'); return; }
-    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
+    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
     const nextId = (crypto.randomUUID?.() || ('work-' + Date.now()));
     setProjectId(nextId); setFiles([]); setActiveId(null); setPage('home');
     setPreviewMessages([]); setPreviewInput(''); setSummary(''); setStudioText(''); setVoiceChatMessages([]); setVoiceChatInput('');
