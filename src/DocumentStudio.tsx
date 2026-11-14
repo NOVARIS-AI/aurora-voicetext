@@ -133,14 +133,187 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
         setSavedText(text);
       } catch { setStatus('This document is too large for local browser storage. Please export a copy.'); }
     }, 180);
-    return (
+    return () => window.clearTimeout(timer);
+  }, [name, text, messages, proposal, workspaceId]);
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, busy]);
+
+  const importFile = async (file?: File) => {
+    if (!file) return;
+    if (text.trim() && !window.confirm('Replace the current document with “' + file.name + '”? Your current draft is autosaved, but this editor will switch to the imported file.')) { if (fileRef.current) fileRef.current.value = ''; return; }
+    setImportBusy(true); setError(''); setStatus('');
+    try {
+      const lower = file.name.toLowerCase();
+      let imported = '';
+      if (lower.endsWith('.docx')) imported = await extractDocx(file);
+      else if (lower.endsWith('.txt') || lower.endsWith('.md')) imported = await file.text();
+      else throw new Error('Choose a Word document (.docx), text file (.txt) or Markdown file (.md).');
+      if (!imported.trim()) throw new Error('No readable text was found in this file.');
+      setName(file.name.replace(/\.(docx|txt|md)$/i, '') || 'Imported document');
+      setText(imported);
+      setProposal('');
+      setPreviewOpen(false);
+      setUndoText(null);
+      setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
+      setStatus('Document imported. Your original file has not been changed.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not import this document.'); }
+    finally { setImportBusy(false); if (fileRef.current) fileRef.current.value = ''; }
+  };
+
+  const runAssist = async (prompt: string, task = 'chat') => {
+    const current = text.trim();
+    if (!current) { setError('Import or write a document first.'); return; }
+    if (current.length > 22000) { setError('For now, AI editing supports documents up to 22,000 characters. Split a longer document into sections.'); return; }
+    setError(''); setBusy(true); setProposal(''); setPendingTask(task);
+    setMessages(items => [...items, { id: String(Date.now()), role: 'user', text: prompt }]);
+    try {
+      const result = await onAssist({ text: current, instruction: prompt, task });
+      if (!result?.trim()) throw new Error('The AI returned an empty response.');
+      setProposal(task === 'chat' ? '' : result.trim());
+      setPreviewOpen(task !== 'chat');
+      setMessages(items => [...items, { id: String(Date.now() + 1), role: 'assistant', text: task === 'chat' ? result.trim() : 'Your revised document is ready. I opened the full preview so you can review every paragraph before applying it.' }]);
+    } catch (reason) {
+      setMessages(items => [...items, { id: String(Date.now() + 2), role: 'assistant', text: reason instanceof Error ? reason.message : 'The AI assistant is unavailable right now.' }]);
+    } finally { setBusy(false); }
+  };
+
+  const applyProposal = () => {
+    if (!proposal) return;
+    if (pendingTask === 'chat') {
+      setStatus('This looks like an answer or summary, so it has not replaced your original document.');
+      setProposal('');
+      return;
+    }
+    setUndoText(text);
+    setText(proposal);
+    setProposal('');
+    setPreviewOpen(false);
+    setStatus('AI changes applied. Your previous saved copy is still available through undo in the editor.');
+  };
+
+  const exportDocx = async () => {
+    if (!text.trim()) { setError('There is no document to export yet.'); return; }
+    try {
+      const paragraphs = text.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean).map(block => {
+        if (block.startsWith('### ')) return new Paragraph({ text: block.slice(4), heading: HeadingLevel.HEADING_2, spacing: { after: 140 } });
+        if (block.startsWith('## ')) return new Paragraph({ text: block.slice(3), heading: HeadingLevel.HEADING_1, spacing: { after: 180 } });
+        if (block.startsWith('# ')) return new Paragraph({ text: block.slice(2), heading: HeadingLevel.TITLE, spacing: { after: 260 } });
+        return new Paragraph({ children: [new TextRun(block)], spacing: { after: 160 } });
+      });
+      const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] });
+      const blob = await Packer.toBlob(doc);
+      downloadBlob(blob, (name.replace(/\.(docx|txt|md)$/i, '') || 'aurora-document') + '.docx');
+      setStatus('DOCX export created.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not export DOCX.'); }
+  };
+
+
+  const updateDocumentText = (next: string) => {
+    if (!next.trim() && text.trim() && !window.confirm('Clear the entire document? This cannot be undone.')) return;
+    if (next !== text) {
+      setUndoStack(stack => [...stack.slice(-39), text]);
+      setRedoStack([]);
+    }
+    setText(next);
+    setProposal('');
+  };
+
+  const wrapSelection = (before: string, after = before) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const selected = text.slice(start, end);
+    const value = selected || 'text';
+    const next = text.slice(0, start) + before + value + after + text.slice(end);
+    setUndoStack(stack => [...stack.slice(-39), text]);
+    setRedoStack([]);
+    setText(next);
+    window.setTimeout(() => {
+      editor.focus();
+      const selectionStart = start + before.length;
+      editor.setSelectionRange(selectionStart, selectionStart + value.length);
+    }, 0);
+  };
+
+  const prefixCurrentLine = (prefix: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const start = editor.selectionStart;
+    const lineStart = text.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+    const next = text.slice(0, lineStart) + prefix + text.slice(lineStart);
+    setUndoStack(stack => [...stack.slice(-39), text]);
+    setRedoStack([]);
+    setText(next);
+    window.setTimeout(() => { editor.focus(); editor.setSelectionRange(start + prefix.length, start + prefix.length); }, 0);
+  };
+
+  const undoDocument = () => {
+    if (!undoStack.length) return;
+    const previous = undoStack[undoStack.length - 1];
+    setRedoStack(stack => [...stack, text]);
+    setUndoStack(stack => stack.slice(0, -1));
+    setText(previous);
+    setStatus('Last document edit undone.');
+  };
+
+  const redoDocument = () => {
+    if (!redoStack.length) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack(stack => [...stack, text]);
+    setRedoStack(stack => stack.slice(0, -1));
+    setText(next);
+    setStatus('Document edit restored.');
+  };
+
+  const replaceAll = () => {
+    if (!findText) { setError('Enter the text you want to find first.'); return; }
+    if (!text.includes(findText)) { setStatus('No matching text was found.'); return; }
+    if (!replaceText && !window.confirm('Remove every occurrence of “' + findText + '” from this document?')) return;
+    const next = text.split(findText).join(replaceText);
+    setUndoStack(stack => [...stack.slice(-39), text]);
+    setRedoStack([]);
+    setText(next);
+    setStatus('Replaced ' + (text.split(findText).length - 1) + ' occurrence(s).');
+  };
+
+  const createNewDocument = () => {
+    if ((text.trim() || messages.length) && !window.confirm('Start a new document? Your current document is autosaved, but this editor will switch to a blank document.')) return;
+    setName('Untitled document');
+    setText('');
+    setSavedText('');
+    setMessages([]);
+    setProposal('');
+    setUndoText(null);
+    setUndoStack([]);
+    setRedoStack([]);
+    setStatus('New blank document ready.');
+  };
+
+  const insertTable = () => {
+    const table = '| Heading 1 | Heading 2 | Heading 3 |\n| --- | --- | --- |\n| Text | Text | Text |\n\n';
+    const editor = editorRef.current;
+    const start = editor?.selectionStart ?? text.length;
+    const end = editor?.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + table + text.slice(end);
+    setUndoStack(stack => [...stack.slice(-39), text]);
+    setRedoStack([]);
+    setText(next);
+    window.setTimeout(() => { editor?.focus(); editor?.setSelectionRange(start + table.length, start + table.length); }, 0);
+  };
+
+  const saveAsText = () => {
+    downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), (name || 'aurora-document') + '.txt');
+    setStatus('Text copy exported.');
+  };
+
+  return (
     <section className="document-studio document-fullpage">
       <header className="document-appbar">
         <button className="document-back-button" type="button" onClick={onBack}><ArrowLeft size={17}/> Back to workspace</button>
         <div className="document-appbar-title"><FileText size={18}/><span>AURORA Docs</span><small>DOCUMENT EDITOR</small></div>
         <span className="document-save-state">{text === savedText ? <><Check size={13}/> Saved locally</> : 'Saving…'}</span>
       </header>
-
       <div className="document-toolbar card">
         <div className="document-name-wrap"><FileText size={18}/><input aria-label="Document name" value={name} onChange={event => setName(event.target.value)} maxLength={100}/></div>
         <div className="document-toolbar-actions">
@@ -154,7 +327,6 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
         </div>
         <input ref={fileRef} className="hidden-input" type="file" accept=".docx,.txt,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => void importFile(event.currentTarget.files?.[0])}/>
       </div>
-
       <div className="document-ribbon" role="toolbar" aria-label="Document formatting">
         <div className="document-ribbon-group">
           <button type="button" title="Undo" aria-label="Undo" disabled={!undoStack.length} onClick={undoDocument}><Undo2 size={16}/></button>
@@ -181,13 +353,11 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
           <select aria-label="Page zoom" value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[75,85,100,110,125,150].map(value=><option key={value} value={value}>{value}%</option>)}</select>
         </div>
       </div>
-
       <div className="document-findbar">
         <label><Search size={15}/><input value={findText} onChange={event => setFindText(event.target.value)} placeholder="Find in document"/></label>
         <label><Replace size={15}/><input value={replaceText} onChange={event => setReplaceText(event.target.value)} placeholder="Replace with"/></label>
         <button className="secondary small-button" type="button" onClick={replaceAll} disabled={!findText}><Replace size={14}/> Replace all</button>
       </div>
-
       <div className="document-page-workspace">
         <div className="document-page-ruler"><span>PAGE {Math.max(1, Math.ceil(text.length / 3200))}</span><span>{text.trim() ? text.trim().split(/\s+/).length : 0} words · {text.length.toLocaleString()} characters</span></div>
         <div className="document-paper-wrap" style={{ transform: 'scale(' + (zoom / 100) + ')' }}>
@@ -198,14 +368,11 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
           </div>
         </div>
       </div>
-
       <details className="document-ai-drawer">
         <summary><span><Sparkles size={16}/> AURORA Document AI</span><span>Ask questions, summarise, proofread or rewrite <span aria-hidden="true">＋</span></span></summary>
         <div className="document-ai-drawer-body">
           <div className="document-ai-heading"><span><Sparkles size={19}/></span><div><small>DOCUMENT INTELLIGENCE</small><h2>AURORA DOCUMENT AI</h2><p>{text.trim() ? 'Your document is attached. Ask questions or request edits; review proposed changes before applying.' : 'Start a conversation, or write a document to give AURORA context.'}</p></div></div>
-          <div className="document-ai-suggestions">
-            {['Summarise this document','Explain the key points','Improve the writing','Find errors and inconsistencies'].map((prompt, index) => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, index === 2 || index === 3 ? 'rewrite' : 'chat')}>{prompt}</button>)}
-          </div>
+          <div className="document-ai-suggestions">{['Summarise this document','Explain the key points','Improve the writing','Find errors and inconsistencies'].map((prompt, index) => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, index === 2 || index === 3 ? 'rewrite' : 'chat')}>{prompt}</button>)}</div>
           <div className="document-chat-thread document-chat-thread-main" aria-live="polite">
             {messages.length === 0 && <div className="document-chat-empty"><span className="document-chat-orb"><Sparkles size={27}/></span><strong>What would you like to work on?</strong><span>Ask AURORA to explain, summarise, proofread, rewrite or organise your document. You stay in control of every change.</span></div>}
             {messages.map(message => <div className={'document-chat-message ' + message.role} key={message.id}><small>{message.role === 'user' ? 'YOU' : 'AURORA'}</small><p>{message.text}</p></div>)}
@@ -225,7 +392,6 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
           <p className="document-privacy-note"><AlertCircle size={13}/> When you ask for help, the document text is sent to the configured AI service. Avoid sensitive information.</p>
         </div>
       </details>
-
       {previewOpen && proposal && <div className="document-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
         <section className="document-preview-modal" role="dialog" aria-modal="true" aria-labelledby="document-preview-title">
           <header className="document-preview-header">
