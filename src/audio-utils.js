@@ -193,7 +193,7 @@ export function isVideoMediaFile(file) {
 export function isAmrMediaFile(file) {
   const name = String(file?.name || '');
   const type = String(file?.type || '').toLowerCase();
-  return /\\.amr$/i.test(name) || type === 'audio/amr' || type === 'audio/3gpp';
+  return /\.amr$/i.test(name) || type === 'audio/amr' || type === 'audio/3gpp';
 }
 
 /** Read AMR frame headers to estimate duration without browser codec support. */
