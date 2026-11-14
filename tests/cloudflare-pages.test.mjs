@@ -162,6 +162,6 @@ test("Documents open as a dedicated full-page WPS-style editor with editing and 
   assert.match(document, /insertTable/);
   assert.match(document, /exportDocx/);
   assert.match(document, /window\.print/);
-  assert.match(document, /Start a new document\?/);
+  assert.match(document, /Replace the current document with a blank one/);
   assert.match(styles, /Dedicated WPS-style document workspace/);
 });
