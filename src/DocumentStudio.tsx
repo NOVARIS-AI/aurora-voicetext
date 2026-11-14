@@ -203,8 +203,8 @@ export default function DocumentStudio({ onAssist }: Props) {
     <section className="page-content document-studio">
       <div className="page-heading">
         <div className="eyebrow"><FileText size={14}/> DOCUMENT INTELLIGENCE</div>
-        <h1>Document Studio</h1>
-        <p>Import a Word document, refine the writing, organise its structure and export a fresh copy. Your original file stays untouched.</p>
+        <h1>Document AI</h1>
+        <p>Chat with AURORA about your documents. Import a file, ask questions and review AI edits before applying them.</p>
       </div>
       <div className="document-toolbar card">
         <div className="document-name-wrap"><FileText size={18}/><input aria-label="Document name" value={name} onChange={event => setName(event.target.value)} maxLength={100}/><span className="document-save-state">{text === savedText ? <><Check size={13}/> Saved locally</> : 'Saving…'}</span></div>
