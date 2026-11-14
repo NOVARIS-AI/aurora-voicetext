@@ -481,6 +481,21 @@ function isVideoMediaFile(file: File): boolean {
 }
 
 async function getAudioDurationSeconds(file: File): Promise<number> {
+  // Web Audio can decode supported audio files even when the media element's
+  // metadata event reports 0/NaN on some mobile browsers.
+  if (!isVideoMediaFile(file) && typeof AudioContext !== 'undefined') {
+    let context: AudioContext | null = null;
+    try {
+      context = new AudioContext();
+      const decoded = await context.decodeAudioData(await file.arrayBuffer());
+      if (Number.isFinite(decoded.duration) && decoded.duration > 0) return decoded.duration;
+    } catch {
+      // Continue to the media-element path for formats the Web Audio decoder
+      // cannot inspect. The caller can still use FFmpeg as a final fallback.
+    } finally {
+      if (context && context.state !== 'closed') await context.close().catch(() => undefined);
+    }
+  }
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const media = document.createElement(isVideoMediaFile(file) ? 'video' : 'audio');
@@ -489,6 +504,7 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
     const timer = window.setTimeout(() => finish(new Error('Reading media duration took too long. Try a supported MP4, MOV or WebM video, or an MP3, M4A, WAV or OGG recording.')), 20000);
     const cleanup = () => {
       media.onloadedmetadata = null;
+      media.ondurationchange = null;
       media.onerror = null;
       media.onabort = null;
       media.removeAttribute('src');
@@ -498,16 +514,25 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
     };
     const finish = (error?: Error, duration?: number) => {
       if (settled) return;
-      settled = true;
-      cleanup();
-      if (error) reject(error);
-      else if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) resolve(duration);
-      else reject(new Error('Could not read the media duration. Check that the selected file contains a playable audio track.'));
+      if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
+        settled = true;
+        cleanup();
+        resolve(duration);
+        return;
+      }
+      if (error) {
+        settled = true;
+        cleanup();
+        reject(error);
+      }
     };
-    media.onloadedmetadata = () => finish(undefined, media.duration);
+    const readDuration = () => finish(undefined, media.duration);
+    media.onloadedmetadata = readDuration;
+    media.ondurationchange = readDuration;
     media.onerror = () => finish(new Error('This device could not read the selected media metadata. Try MP4, MOV or WebM for video, or MP3, M4A, WAV or OGG for audio.'));
     media.onabort = () => finish(new Error('Reading media metadata was interrupted. Please select the file again.'));
     media.src = url;
+    media.load();
   });
 }
 
@@ -1310,6 +1335,36 @@ function App() {
     media.playbackRate = Number(timelineRate) || 1;
     void media.play().catch(() => undefined);
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    setEditorDuration(0);
+    setEditorStart(0);
+    setEditorEnd(0);
+    if (!active) return;
+    const resolveDuration = async () => {
+      try {
+        const duration = active.nativeDurationMs && active.nativeDurationMs > 0
+          ? active.nativeDurationMs / 1000
+          : active.nativePath
+            ? Number((await nativeAudioFiles.getDuration({ path: active.nativePath })).durationMs) / 1000
+            : await getAudioDurationSeconds(active.file);
+        if (!cancelled && Number.isFinite(duration) && duration > 0) {
+          setEditorDuration(duration);
+          setEditorEnd(duration);
+          if (active.nativePath && !(active.nativeDurationMs && active.nativeDurationMs > 0)) {
+            const resolved = { ...active, nativeDurationMs: duration * 1000 };
+            setFiles(current => current.map(item => item.id === active.id ? resolved : item));
+            void saveWorkspaceAudio([resolved]).catch(() => undefined);
+          }
+        }
+      } catch {
+        // Keep the editor usable; transcription performs its own decoder fallback.
+      }
+    };
+    void resolveDuration();
+    return () => { cancelled = true; };
+  }, [active?.id, active?.file, active?.nativePath, active?.nativeDurationMs]);
 
   useEffect(() => { setMediaChapters([]); setSpeakerFilter('all'); setTimelineSearch(''); }, [active?.id]);
 
