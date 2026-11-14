@@ -139,7 +139,7 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
 
   const importFile = async (file?: File) => {
     if (!file) return;
-    if (text.trim() && !window.confirm('Replace the current document with “' + file.name + '”? Your current draft is autosaved, but this editor will switch to the imported file.')) { if (fileRef.current) fileRef.current.value = ''; return; }
+    if (text.trim() && !window.confirm('Replace the current document with “' + file.name + '”? Save or export a copy first if you want to keep the current text.')) { if (fileRef.current) fileRef.current.value = ''; return; }
     setImportBusy(true); setError(''); setStatus('');
     try {
       const lower = file.name.toLowerCase();
@@ -150,6 +150,8 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
       if (!imported.trim()) throw new Error('No readable text was found in this file.');
       setName(file.name.replace(/\.(docx|txt|md)$/i, '') || 'Imported document');
       setText(imported);
+      setUndoStack([]);
+      setRedoStack([]);
       setProposal('');
       setPreviewOpen(false);
         setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
@@ -277,7 +279,7 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
   };
 
   const createNewDocument = () => {
-    if ((text.trim() || messages.length) && !window.confirm('Start a new document? Your current document is autosaved, but this editor will switch to a blank document.')) return;
+    if ((text.trim() || messages.length) && !window.confirm('Replace the current document with a blank one? Save or export a copy first if you want to keep it. This cannot be undone.')) return;
     setName('Untitled document');
     setText('');
     setSavedText('');
