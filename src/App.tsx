@@ -1505,7 +1505,7 @@ useEffect(() => {
     void restoreWorkspaceState().then(saved => {
       if (cancelled) return;
       if (saved) {
-        setFiles(saved.files); setActiveId(saved.activeId); setPage('home'); setProjectId(saved.projectId);
+        setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page || 'home'); setProjectId(saved.projectId);
         const drafts = saved.drafts;
         if (typeof drafts.projectTitle === 'string' && drafts.projectTitle.trim()) setProjectTitle(drafts.projectTitle.trim());
         else if (saved.files[0]?.file.name) setProjectTitle(safeFileBaseName(saved.files[0].file.name.replace(/\.[^.]+$/, ''), 'Untitled project'));
