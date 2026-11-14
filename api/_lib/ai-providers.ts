@@ -96,12 +96,11 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
         // multilingual model. Retry the account's default voice with the broadly
         // available Turbo model before reporting a missing voice.
         const fallbackVoiceIds = await resolveElevenLabsFallbackVoices();
-        const turboInput = { ...input, style: (input.style || "") + " " + (input.emotion || "") };
         for (const fallbackVoiceId of fallbackVoiceIds) {
           response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(fallbackVoiceId) + "?output_format=mp3_44100_128", {
             method: "POST",
             headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, "Content-Type": "application/json", Accept: "audio/mpeg" },
-            body: JSON.stringify({ text: input.text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: safeRate(turboInput.rate) } }),
+            body: JSON.stringify({ text: input.text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: safeRate(input.rate) } }),
             signal: AbortSignal.timeout(110000),
           });
           if (response.ok) { provider = "elevenlabs-turbo-account-fallback"; break; }
