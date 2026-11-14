@@ -187,3 +187,52 @@ export function isVideoMediaFile(file) {
   const name = String(file?.name || '');
   return type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(name);
 }
+
+
+/** Identify AMR-NB/WB recordings by extension or common Android MIME types. */
+export function isAmrMediaFile(file) {
+  const name = String(file?.name || '');
+  const type = String(file?.type || '').toLowerCase();
+  return /\\.amr$/i.test(name) || type === 'audio/amr' || type === 'audio/3gpp';
+}
+
+/** Read AMR frame headers to estimate duration without browser codec support. */
+export function getAmrDurationSeconds(bytes) {
+  if (!(bytes instanceof Uint8Array)) return null;
+  const startsWith = signature => {
+    if (bytes.length < signature.length) return false;
+    for (let i = 0; i < signature.length; i++) {
+      if (bytes[i] !== signature.charCodeAt(i)) return false;
+    }
+    return true;
+  };
+  const wideband = startsWith('#!AMR-WB\\n');
+  const narrowband = !wideband && startsWith('#!AMR\\n');
+  if (!wideband && !narrowband) return null;
+  const headerLength = wideband ? 9 : 6;
+  const frameSizes = wideband
+    ? [18, 24, 33, 37, 41, 47, 51, 59, 61, 6]
+    : [13, 14, 16, 18, 20, 21, 27, 32, 6];
+  let offset = headerLength;
+  let frames = 0;
+  while (offset < bytes.length) {
+    const frameType = (bytes[offset] >> 3) & 0x0f;
+    let frameSize = frameSizes[frameType];
+    if (frameType === 15 || (wideband && frameType === 14)) frameSize = 1;
+    if (!frameSize || offset + frameSize > bytes.length) return null;
+    offset += frameSize;
+    frames++;
+  }
+  return frames > 0 ? frames * 0.02 : null;
+}
+
+/** Safely estimate the duration of a selected AMR recording. */
+export async function getAmrFileDurationSeconds(file) {
+  if (!isAmrMediaFile(file)) return null;
+  try {
+    return getAmrDurationSeconds(new Uint8Array(await file.arrayBuffer()));
+  } catch {
+    return null;
+  }
+}
+
