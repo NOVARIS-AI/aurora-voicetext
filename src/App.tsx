@@ -512,6 +512,35 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
 }
 
 
+async function getMediaDurationSeconds(ffmpeg: FFmpeg, inputPath: string, file: File): Promise<number> {
+  try {
+    return await getAudioDurationSeconds(file);
+  } catch (browserError) {
+    // Some mobile browsers reject metadata reads for otherwise decodable media.
+    // Ask the already-loaded FFmpeg decoder to inspect the container instead.
+    let output = '';
+    const onLog = ({ message }: { message: string }) => { output += message + '\\n'; };
+    ffmpeg.on('log', onLog);
+    try {
+      // FFmpeg prints container and stream duration while opening the input.
+      // No output target is needed; a non-zero exit here is expected.
+      await ffmpeg.exec(['-hide_banner', '-i', inputPath]);
+    } catch {
+      // FFmpeg commonly returns a non-zero code because no output was requested.
+    } finally {
+      ffmpeg.off('log', onLog);
+    }
+    const match = output.match(/Duration:\\s*(\\d{2,}):(\\d{2}):(\\d{2}(?:\\.\\d+)?)/i);
+    if (match) {
+      const duration = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+      if (Number.isFinite(duration) && duration > 0) return duration;
+    }
+    const original = browserError instanceof Error ? browserError.message : String(browserError);
+    throw new Error('The browser could not read this file duration, and the audio decoder could not find a usable duration either. Try exporting the recording as MP3 or WAV. Details: ' + original);
+  }
+}
+
+
 function safeFileBaseName(value: string, fallback = 'aurora-transcript'): string {
   const cleaned = value.trim().replace(/\\.[a-z0-9]{1,8}$/i, '').replace(/[\\/:*?"<>|\\u0000-\\u001f]/g, '-').replace(/\s+/g, ' ').replace(/[. ]+$/g, '').slice(0, 100);
   return cleaned || fallback;
@@ -821,7 +850,7 @@ async function transcribeOpusOfflineInSegments(
     }
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
-      : await getAudioDurationSeconds(file);
+      : await getMediaDurationSeconds(ffmpeg, inputPath, file);
     const fileKey = await makeAudioFileKey(file, nativeAudioPath, nativeAudioSize, nativeFingerprint);
     let saved: TranscriptionCheckpoint | null = null;
     try { saved = await readSavedCheckpoint(fileKey + '|offline'); } catch { /* Continue without persistent resume. */ }
@@ -988,7 +1017,7 @@ async function transcribeOpusInSegments(
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
-      : await getAudioDurationSeconds(file);
+      : await getMediaDurationSeconds(ffmpeg, inputPath, file);
     const defaultSegmentSeconds = Math.min(90, getAudioSegmentSeconds('online')); // Keep Android Go working sets modest.
     const overlapSeconds = 2;
     const fileKey = await makeAudioFileKey(file);
