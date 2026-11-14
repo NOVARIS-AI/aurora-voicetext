@@ -17,6 +17,41 @@ function safeRate(value: unknown, fallback = 1) {
   return Number.isFinite(n) ? Math.min(2, Math.max(0.5, n)) : fallback;
 }
 
+async function requestElevenLabsSpeech(text: string, voiceId: string, input: VoiceRequest): Promise<Response> {
+  const deliveryHint = [input.style || "", input.emotion || ""].join(" ").toLowerCase();
+  const expressive = /storytelling|expressive|energetic|excited|enthusiastic|inspiring/.test(deliveryHint);
+  const measured = /calm|neutral|documentary|steady|measured|professional/.test(deliveryHint);
+  return fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(voiceId), {
+    method: "POST",
+    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, "Content-Type": "application/json", Accept: "audio/mpeg" },
+    body: JSON.stringify({
+      text,
+      model_id: process.env.ELEVENLABS_TTS_MODEL || "eleven_multilingual_v2",
+      voice_settings: {
+        stability: measured ? 0.68 : expressive ? 0.38 : 0.5,
+        similarity_boost: 0.75,
+        style: expressive ? 0.55 : measured ? 0.12 : 0.28,
+        use_speaker_boost: true,
+        speed: safeRate(input.rate),
+      },
+    }),
+    signal: AbortSignal.timeout(110000),
+  });
+}
+
+async function resolveElevenLabsFallbackVoice(): Promise<string> {
+  const response = await fetch("https://api.elevenlabs.io/v1/voices", {
+    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, Accept: "application/json" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error("ElevenLabs voice list returned HTTP " + response.status);
+  const payload = await response.json() as { voices?: Array<{ voice_id?: string; category?: string }> };
+  const voices = Array.isArray(payload.voices) ? payload.voices : [];
+  const voice = voices.find(item => item.category === "premade" && item.voice_id) || voices.find(item => item.voice_id);
+  if (!voice?.voice_id) throw new Error("ElevenLabs has no usable voice on this account.");
+  return voice.voice_id;
+}
+
 export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ audio: Uint8Array; provider: string }> {
   const failures: string[] = [];
   if (process.env.OPENAI_API_KEY) {
@@ -44,30 +79,17 @@ export async function synthesizeWithFallback(input: VoiceRequest): Promise<{ aud
       const voiceKey = "ELEVENLABS_VOICE_" + (input.voice || "").toUpperCase() + "_ID";
       const configuredVoiceId = process.env[voiceKey];
       const voiceId = configuredVoiceId || (input.voice && /^[A-Za-z0-9_-]{5,80}$/.test(input.voice) && !builtInVoiceNames.has(input.voice.toLowerCase()) ? input.voice : (process.env.ELEVENLABS_DEFAULT_VOICE_ID || "EXAVITQu4vr4xnSDxMaL"));
-      const deliveryHint = [input.style || "", input.emotion || ""].join(" ").toLowerCase();
-      // ElevenLabs exposes expressiveness and stability controls, but no general
-      // pitch slider or arbitrary accent selector. Map delivery preferences only
-      // to controls the provider actually supports instead of silently ignoring them.
-      const expressive = /storytelling|expressive|energetic|excited|enthusiastic|inspiring/.test(deliveryHint);
-      const measured = /calm|neutral|documentary|steady|measured|professional/.test(deliveryHint);
-      const response = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(voiceId), {
-        method: "POST",
-        headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
-        body: JSON.stringify({
-          text: input.text,
-          model_id: process.env.ELEVENLABS_TTS_MODEL || "eleven_multilingual_v2",
-          voice_settings: {
-            stability: measured ? 0.68 : expressive ? 0.38 : 0.5,
-            similarity_boost: 0.75,
-            style: expressive ? 0.55 : measured ? 0.12 : 0.28,
-            use_speaker_boost: true,
-            speed: safeRate(input.rate),
-          },
-        }),
-        signal: AbortSignal.timeout(110000),
-      });
+      let response = await requestElevenLabsSpeech(input.text, voiceId, input);
+      let provider = "elevenlabs";
+      // A stale or removed voice ID is an account configuration issue, not a reason
+      // to give up: resolve a currently available account voice and retry once.
+      if (response.status === 404) {
+        const replacementVoiceId = await resolveElevenLabsFallbackVoice();
+        response = await requestElevenLabsSpeech(input.text, replacementVoiceId, input);
+        provider = "elevenlabs-account-fallback";
+      }
       if (!response.ok) throw new Error("ElevenLabs speech returned HTTP " + response.status);
-      return { audio: new Uint8Array(await response.arrayBuffer()), provider: "elevenlabs" };
+      return { audio: new Uint8Array(await response.arrayBuffer()), provider };
     } catch (error) { failures.push("ElevenLabs: " + (error instanceof Error ? error.message : "failed")); }
   }
   throw Object.assign(new Error(failures.join(" | ") || "No AI speech provider is configured. Add OPENAI_API_KEY or ELEVENLABS_API_KEY to the backend secrets."), { status: 503 });
