@@ -2399,7 +2399,7 @@ function App() {
     setSubtitleBusy(true); setSubtitleStatus('Searching for matching subtitles…'); setSubtitleResults([]);
     try {
       const { data } = await requestFeature('/api/subtitles', { query: subtitleQuery.trim(), languages: subtitleLanguage, type: subtitleType });
-      const results = Array.isArray(data?.results) ? data.results : [];
+      const results: typeof subtitleResults = Array.isArray(data?.results) ? data.results as typeof subtitleResults : [];
       const normalize = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim();
       const query = normalize(subtitleQuery);
       const seenReleases = new Set<string>();
