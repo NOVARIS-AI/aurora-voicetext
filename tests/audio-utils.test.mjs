@@ -182,7 +182,7 @@ test('recognizes AMR recordings from extensions and Android MIME types', () => {
 
 test('estimates AMR-NB duration from complete 20ms frames', () => {
   const bytes = new Uint8Array(6 + 13 * 2);
-  bytes.set(new TextEncoder().encode('#!AMR\\n'));
+  bytes.set(new TextEncoder().encode('#!AMR\n'));
   bytes[6] = 0; // Frame type 0, one 13-byte AMR-NB frame.
   bytes[19] = 0;
   assert.equal(getAmrDurationSeconds(bytes), 0.04);
@@ -190,7 +190,7 @@ test('estimates AMR-NB duration from complete 20ms frames', () => {
 
 test('estimates AMR-WB duration and rejects truncated or unknown data', () => {
   const bytes = new Uint8Array(9 + 18);
-  bytes.set(new TextEncoder().encode('#!AMR-WB\\n'));
+  bytes.set(new TextEncoder().encode('#!AMR-WB\n'));
   bytes[9] = 0;
   assert.equal(getAmrDurationSeconds(bytes), 0.02);
   assert.equal(getAmrDurationSeconds(bytes.slice(0, 12)), null);
@@ -199,7 +199,7 @@ test('estimates AMR-WB duration and rejects truncated or unknown data', () => {
 
 test('reads AMR duration safely from a File-like object', async () => {
   const bytes = new Uint8Array(6 + 13);
-  bytes.set(new TextEncoder().encode('#!AMR\\n'));
+  bytes.set(new TextEncoder().encode('#!AMR\n'));
   bytes[6] = 0;
   const file = { name: 'recording.amr', type: 'audio/amr', arrayBuffer: async () => bytes.buffer };
   assert.equal(await getAmrFileDurationSeconds(file), 0.02);
