@@ -403,11 +403,52 @@ public class NativeAudioFilesPlugin extends Plugin {
                     longestDurationUs = Math.max(longestDurationUs, format.getLong(MediaFormat.KEY_DURATION));
                 }
             }
-            return longestDurationUs > 0 ? longestDurationUs / 1000L : 0L;
+            if (longestDurationUs > 0) return longestDurationUs / 1000L;
+            // Some audio containers omit duration metadata. Walk only the selected
+            // audio track's sample timestamps so Android can still determine its length.
+            long lastSampleUs = 0L;
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.containsKey(MediaFormat.KEY_MIME) ? format.getString(MediaFormat.KEY_MIME) : null;
+                if (mime == null || !mime.startsWith("audio/")) continue;
+                extractor.selectTrack(i);
+                extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC);
+                long trackLastUs = 0L;
+                while (extractor.getSampleTrackIndex() >= 0) {
+                    trackLastUs = Math.max(trackLastUs, extractor.getSampleTime());
+                    if (!extractor.advance()) break;
+                }
+                lastSampleUs = Math.max(lastSampleUs, trackLastUs);
+                extractor.unselectTrack(i);
+            }
+            // The final compressed audio packet commonly spans about 20–100 ms.
+            return lastSampleUs > 0L ? (lastSampleUs / 1000L) + 1000L : 0L;
         } catch (Exception ignored) {
             return 0L;
         } finally {
             extractor.release();
+        }
+    }
+
+    @PluginMethod
+    public void getDuration(PluginCall call) {
+        String path = call.getString("path", "");
+        try {
+            File root = new File(getContext().getFilesDir(), "aurora-audio-imports").getCanonicalFile();
+            Uri suppliedUri = Uri.parse(path);
+            String sourcePath = "file".equalsIgnoreCase(suppliedUri.getScheme()) ? suppliedUri.getPath() : path;
+            File source = new File(sourcePath).getCanonicalFile();
+            if (!source.getPath().startsWith(root.getPath() + File.separator) || !source.isFile()) {
+                call.reject("The selected recording is no longer available in AURORA storage.");
+                return;
+            }
+            long durationMs = readDurationMs(source);
+            if (durationMs <= 0L) throw new IllegalArgumentException("Android could not determine the recording duration or find a readable audio track.");
+            JSObject result = new JSObject();
+            result.put("durationMs", durationMs);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("Could not read recording duration: " + error.getMessage(), error);
         }
     }
 
