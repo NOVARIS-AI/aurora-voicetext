@@ -1600,7 +1600,7 @@ useEffect(() => {
 
   async function startNewWork() {
     if (busy || exportBusy || voiceBusy || previewBusy) { setError('Finish or cancel the current operation before starting new work.'); return; }
-    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
+    try { await saveWorkspaceAudio(files); await saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleFilename, selectedSubtitleId, subtitleQuery, subtitleResults, voiceRate, voicePitch }); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
     const nextId = (crypto.randomUUID?.() || ('work-' + Date.now()));
     setProjectId(nextId); setProjectTitle('Untitled project'); setFiles([]); setActiveId(null); setPage('home');
     setPreviewMessages([]); setPreviewInput(''); setSummary(''); setStudioText(''); setVoiceChatMessages([]); setVoiceChatInput('');
