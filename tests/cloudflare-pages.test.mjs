@@ -143,6 +143,7 @@ test("App opens at Home, restores project data, and confirms destructive media a
   assert.doesNotMatch(app, /aurora-voicetext-last-page-v1/);
   assert.match(app, /Clear the entire transcript/);
   assert.match(app, /Remove .* from this project/);
+  assert.match(app, /setSubtitleText\(''\); setSubtitleStatus\(''\)/);
   assert.match(app, /Delete .* from your Library/);
   assert.match(app, /createPosterPlaceholder\(item\.title \+ .*item\.release/);
 });
