@@ -1251,6 +1251,7 @@ function App() {
   const [offlinePrepStatus, setOfflinePrepStatus] = useState('');
   const [status, setStatus] = useState(''); // Transcribe workspace only
   const [voiceStatus, setVoiceStatus] = useState('');
+  const [voiceFallbackText, setVoiceFallbackText] = useState('');
   const [editorStatus, setEditorStatus] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [savedCheckpoint, setSavedCheckpoint] = useState<{ mode: 'online' | 'offline'; completed: number; total: number } | null>(null);
@@ -2385,7 +2386,7 @@ useEffect(() => {
     const scriptText = sourceText.trim();
     if (!scriptText) { setVoiceStatus('Write a message or choose a saved transcript first.'); return; }
     if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
-    setVoiceAudioUrl(''); setVoiceBusy(true); setVoiceStatus('Preparing your voice…');
+    setVoiceAudioUrl(''); setVoiceFallbackText(''); setVoiceBusy(true); setVoiceStatus('Preparing your voice…');
     try {
       const chunks = splitLongText(scriptText, 3500);
       const audioParts: Blob[] = [];
@@ -2401,13 +2402,33 @@ useEffect(() => {
         audioParts.push(audioPart);
       }
       const finalAudio = combineMp3Chunks(audioParts);
+      setVoiceFallbackText('');
       setVoiceAudioUrl(URL.createObjectURL(finalAudio));
       setVoiceStatus('Your voice audio is ready. Preview it or download the MP3.');
       setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:'Your voice is ready. You can preview it or download the MP3 below.'}]);
     } catch (reason) {
-      setVoiceStatus(reason instanceof Error ? 'Voice generation failed: ' + reason.message : 'Voice generation failed. Check your connection and provider settings.');
-      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:reason instanceof Error ? 'I could not generate that voice: ' + reason.message : 'Voice generation failed. Please try again.'}]);
+      const message = reason instanceof Error ? reason.message : 'Voice generation failed. Check your connection and provider settings.';
+      setVoiceFallbackText(scriptText);
+      setVoiceStatus('Studio voice unavailable: ' + message + '. You can still listen using your device voice below; this fallback cannot create an MP3.');
+      setVoiceChatMessages(items => [...items, {id:crypto.randomUUID(),role:'assistant',text:'Studio voice generation is unavailable right now. You can use the device voice fallback below, or retry later.'}]);
     } finally { setVoiceBusy(false); }
+  }
+
+  function playDeviceVoiceFallback() {
+    if (!voiceFallbackText || !('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(voiceFallbackText);
+    const language = voiceLanguage !== 'Auto-detect' ? voiceLanguage : (/british/i.test(voiceAccent) ? 'en-GB' : /nigerian/i.test(voiceAccent) ? 'en-NG' : 'en-US');
+    utterance.lang = language;
+    utterance.rate = Math.max(0.7, Math.min(1.3, voiceRate));
+    utterance.pitch = Math.max(0.7, Math.min(1.3, voicePitch));
+    const available = window.speechSynthesis.getVoices();
+    const match = available.find(voice => voice.lang.toLowerCase() === language.toLowerCase()) || available.find(voice => voice.lang.toLowerCase().startsWith(language.split('-')[0].toLowerCase()));
+    if (match) utterance.voice = match;
+    utterance.onstart = () => setVoiceStatus('Playing with your device voice. This is live playback only, not an MP3 export.');
+    utterance.onend = () => setVoiceStatus('Device voice playback finished.');
+    utterance.onerror = () => setVoiceStatus('Your device could not play the fallback voice. Try another device voice in Android settings.');
+    window.speechSynthesis.speak(utterance);
   }
 
   async function searchSubtitles() {
@@ -2842,6 +2863,7 @@ useEffect(() => {
             <button className="primary voice-ai-generate" type="button" disabled={voiceBusy||voiceChatBusy||!voiceChatInput.trim()} onClick={submitVoicePrompt}>{voiceChatBusy?<LoaderCircle className="spin" size={17}/>:<AudioLines size={17}/>} {voiceChatBusy?'AURORA is thinking…':'Send message'}</button>
           </div>
           {voiceStatus && <div className="status-message" role="status">{voiceStatus}</div>}
+          {voiceFallbackText && 'speechSynthesis' in window && <div className="generated-audio"><strong>Temporary device voice</strong><p>Your phone can read this text aloud while studio voice providers are unavailable. Device voices vary and this option does not create a downloadable MP3.</p><button className="secondary small-button" type="button" onClick={playDeviceVoiceFallback}><AudioLines size={15}/> Play with device voice</button><button className="secondary small-button" type="button" onClick={()=>window.speechSynthesis.cancel()}>Stop</button></div>}
           {voiceAudioUrl && <div className="generated-audio"><strong>Your generated voice audio</strong><audio controls preload="metadata" src={voiceAudioUrl}/><a className="primary download-link" href={voiceAudioUrl} download={safeFileBaseName(voiceFilename,'aurora-voice')+'.mp3'}><Download size={16}/> Download MP3 audio</a></div>}
           <details className="voice-audio-tools" open><summary><AudioWaveform size={16}/> Audio editor & restoration</summary>
             {editorStatus && <div className="status-message" role="status">{editorStatus}</div>}
