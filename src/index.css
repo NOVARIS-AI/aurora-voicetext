@@ -914,3 +914,6 @@ button:disabled{opacity:.52;cursor:not-allowed}
 .subtitle-preview-page .subtitle-edit-details{padding:14px;border:1px solid rgba(145,171,216,.15);border-radius:12px;background:rgba(255,255,255,.025)}
 .subtitle-preview-page .studio-actions{display:flex;flex-wrap:wrap;gap:10px}
 @media(max-width:520px){.subtitle-preview-page .movie-detail-toolbar{align-items:flex-start}.subtitle-preview-page .subtitle-preview{padding:14px}.subtitle-preview-page .studio-actions button{flex:1 1 calc(50% - 6px)}}
+
+.subtitle-release-marker{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;border:1px solid rgba(145,171,216,.16);color:#8fa4bf;background:linear-gradient(145deg,rgba(94,118,153,.16),rgba(14,23,38,.85));}
+.subtitle-release-marker span{max-width:62px;text-align:center;font-size:8px;font-weight:800;letter-spacing:1px;line-height:1.4}
