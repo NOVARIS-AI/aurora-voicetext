@@ -1333,6 +1333,7 @@ function App() {
     }
     return Array.from(groups.entries()).map(([key, releases]) => ({ key, item: releases[0], releases }));
   })();
+  const selectedSubtitleReleases = selectedSubtitle ? subtitleResults.filter(item => item.title === selectedSubtitle.title && item.year === selectedSubtitle.year && item.season === selectedSubtitle.season && item.episode === selectedSubtitle.episode) : [];
   const matchingTimedSegments = (active?.timedSegments ?? []).map((segment, index) => ({ ...segment, index })).filter(segment => (!timelineSearch.trim() || (segment.text + ' ' + (segment.speaker || '')).toLowerCase().includes(timelineSearch.trim().toLowerCase())) && (speakerFilter === 'all' || segment.speaker === speakerFilter));
   const visibleTimedSegments = matchingTimedSegments.slice(0, timelineShowAll ? 500 : 80);
   const detectedSpeakers = [...new Set((active?.timedSegments ?? []).map(segment => segment.speaker).filter((speaker): speaker is string => Boolean(speaker?.trim())))];
@@ -2956,7 +2957,7 @@ function App() {
                 {selectedSubtitle.rating && <span><Star size={14}/> {selectedSubtitle.rating}/10</span>}
                 {selectedSubtitle.runtime && <span>{selectedSubtitle.runtime}</span>}
                 {selectedSubtitle.country?.length ? <span>{selectedSubtitle.country.slice(0,2).join(', ')}</span> : null}
-                <span>{subtitleResults.filter(item=>item.title===selectedSubtitle.title).length} subtitle release(s)</span>
+                <span>{selectedSubtitleReleases.length} subtitle release(s)</span>
               </div>
               {selectedSubtitle.genres?.length ? <div className="subtitle-detail-genres">{selectedSubtitle.genres.map(genre=><span key={genre}>{genre}</span>)}</div> : null}
               <p>{selectedSubtitle.overview || 'A synopsis is not available for this title yet.'}</p>
@@ -2979,7 +2980,7 @@ function App() {
             </section>
             {(selectedSubtitle.cast?.length || selectedSubtitle.director?.length) ? <section className="movie-detail-section movie-cast-section"><small>PEOPLE</small><h2>Cast & crew</h2>{selectedSubtitle.director?.length ? <p><strong>Director:</strong> {selectedSubtitle.director.join(', ')}</p> : null}{selectedSubtitle.cast?.length ? <p><strong>Cast:</strong> {selectedSubtitle.cast.slice(0,12).join(', ')}</p> : null}</section> : null}
             <section className="movie-detail-section movie-release-section"><div><small>SUBTITLE FINDER</small><h2>Available subtitle releases</h2><p>Choose a release to preview or download captions.</p></div>
-              {subtitleResults.filter(item=>item.title===selectedSubtitle.title).map((item,index)=><div className="movie-release-row" key={item.id+'-'+index}><div><strong>{item.language.toUpperCase()} · {item.release || item.fileName}</strong><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired?' · SDH':''}</small></div><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName,true)} type="button"><Play size={14}/> Preview captions</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button></div>)}
+              {selectedSubtitleReleases.map((item,index)=><div className="movie-release-row" key={item.id+'-'+index}><div><strong>{item.language.toUpperCase()} · {item.release || item.fileName}</strong><small>{item.downloads.toLocaleString()} downloads{item.hearingImpaired?' · SDH':''}</small></div><button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName,true)} type="button"><Play size={14}/> Preview captions</button><button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button></div>)}
             </section>
           </div>
         </section> : <div className="empty-state">Choose a movie from Subtitle Finder to see its details.</div>}
