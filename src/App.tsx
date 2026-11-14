@@ -1528,6 +1528,8 @@ useEffect(() => {
         if (typeof drafts.previewInput === 'string') setPreviewInput(drafts.previewInput);
         if (typeof drafts.summary === 'string') setSummary(drafts.summary);
         if (typeof drafts.subtitleText === 'string') setSubtitleText(drafts.subtitleText);
+        if (typeof drafts.subtitleFilename === 'string') setSubtitleFilename(drafts.subtitleFilename);
+        if (typeof drafts.selectedSubtitleId === 'string') setSelectedSubtitleId(drafts.selectedSubtitleId);
         if (typeof drafts.subtitleQuery === 'string') setSubtitleQuery(drafts.subtitleQuery);
         if (Array.isArray(drafts.subtitleResults)) setSubtitleResults(drafts.subtitleResults);
         if (typeof drafts.voiceRate === 'number') setVoiceRate(drafts.voiceRate);
@@ -1547,8 +1549,8 @@ useEffect(() => {
 
   useEffect(() => {
     if (!sessionHydrated) return;
-    void saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} setRecentProjects(current => [{ id: projectId, title: projectTitle.trim() || 'Untitled project', fileCount: files.length, savedAt: Date.now(), page }, ...current.filter(item => item.id !== projectId)].sort((a,b) => b.savedAt - a.savedAt).slice(0,12)); }).catch(() => undefined);
-  }, [files, activeId, page, projectId, projectTitle, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleQuery, subtitleResults, voiceRate, voicePitch]);
+    void saveWorkspaceState(files, activeId, page, projectId, { projectTitle, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleFilename, selectedSubtitleId, subtitleQuery, subtitleResults, voiceRate, voicePitch }).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} setRecentProjects(current => [{ id: projectId, title: projectTitle.trim() || 'Untitled project', fileCount: files.length, savedAt: Date.now(), page }, ...current.filter(item => item.id !== projectId)].sort((a,b) => b.savedAt - a.savedAt).slice(0,12)); }).catch(() => undefined);
+  }, [files, activeId, page, projectId, projectTitle, sessionHydrated, studioText, voiceChatMessages, voiceFilename, previewMessages, previewInput, summary, subtitleText, subtitleFilename, selectedSubtitleId, subtitleQuery, subtitleResults, voiceRate, voicePitch]);
 
   useEffect(() => {
     void pruneSavedCheckpoints().catch(() => {
