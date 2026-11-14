@@ -15,7 +15,7 @@ import {
   Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
 
-type Recording = { id: string; name: string; transcript: string; updatedAt: number; folder?: string; kind?: 'audio' | 'video' | 'text' | 'insight'; tags?: string[]; favorite?: boolean; insight?: string; projectId?: string };
+type Recording = { id: string; name: string; transcript: string; updatedAt: number; folder?: string; kind?: 'audio' | 'video' | 'text' | 'insight' | 'document'; tags?: string[]; favorite?: boolean; insight?: string; projectId?: string };
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
@@ -2645,7 +2645,7 @@ function App() {
 
       </section>}
 
-      {page === 'documents' && <DocumentStudio key={projectId} workspaceId={projectId} onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
+      {page === 'documents' && <DocumentStudio key={projectId} workspaceId={projectId} onSaveToLibrary={({ name, text }) => { const record: Recording = { id: 'document-' + projectId, name, transcript: text, updatedAt: Date.now(), folder: 'Documents', kind: 'document', tags: ['Document Studio', 'document'], projectId }; setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]); setStatus('Document saved to your Library and connected to this project.'); }} onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
 
       {page === 'library' && <section className="page-content library-page">
         <div className="page-heading"><div className="eyebrow">YOUR MEDIA ARCHIVE</div><h1>Library <span className="library-total">{library.length} saved</span></h1><p>Keep transcripts, recordings, video notes and AI insights organised in one searchable place on this device.</p></div>
@@ -2655,7 +2655,7 @@ function App() {
         <div className="library-toolbar library-toolbar-v2">
           <label className="search-box"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search titles, transcript and tags"/></label>
           <select aria-label="Filter by collection" value={libraryFolder} onChange={event=>setLibraryFolder(event.target.value)}><option>All items</option>{libraryFolderNames.map(folder=><option key={folder}>{folder}</option>)}</select>
-          <select aria-label="Filter by media type" value={libraryKind} onChange={event=>setLibraryKind(event.target.value)}><option value="all">All types</option><option value="audio">Audio</option><option value="video">Video</option><option value="insight">AI insights</option><option value="text">Text</option></select>
+          <select aria-label="Filter by media type" value={libraryKind} onChange={event=>setLibraryKind(event.target.value)}><option value="all">All types</option><option value="audio">Audio</option><option value="video">Video</option><option value="insight">AI insights</option><option value="document">Documents</option><option value="text">Text</option></select>
           <span className="count">{filteredLibrary.length} shown</span>
         </div>
         <div className="library-folder-create"><div><strong>Collections</strong><small>Create folders for classes, meetings, projects or personal notes.</small></div><div className="library-folder-input"><input value={newFolderName} onChange={event=>setNewFolderName(event.target.value)} placeholder="New collection name" maxLength={48}/><button className="secondary small-button" type="button" onClick={addLibraryFolder} disabled={!newFolderName.trim()}><Plus size={14}/> Create</button></div></div>
