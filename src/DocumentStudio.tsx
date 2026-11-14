@@ -125,7 +125,7 @@ export default function DocumentStudio({ onAssist, workspaceId }: Props) {
         localStorage.setItem(workspaceStorageKey(workspaceId), JSON.stringify({ name, text, messages, proposal, savedAt: Date.now() }));
         setSavedText(text);
       } catch { setStatus('This document is too large for local browser storage. Please export a copy.'); }
-    }, 450);
+    }, 180);
     return () => window.clearTimeout(timer);
   }, [name, text, messages, proposal, workspaceId]);
 
