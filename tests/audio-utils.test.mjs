@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, isVideoMediaFile } from '../src/audio-utils.js';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, isVideoMediaFile, isAmrMediaFile, getAmrDurationSeconds, getAmrFileDurationSeconds } from '../src/audio-utils.js';
 
 test('merges duplicate words at section boundaries', () => {
   assert.equal(
@@ -170,4 +170,38 @@ test('provides Nigerian English and Pidgin transcription guidance without transl
   assert.match(mixed, /Do not convert Pidgin into Standard English/);
   assert.equal(getTranscriptionLanguageHint('auto'), '');
   assert.match(getTranscriptionLanguageHint('yoruba'), /Yoruba as spoken in Nigeria/);
+});
+
+
+test('recognizes AMR recordings from extensions and Android MIME types', () => {
+  assert.equal(isAmrMediaFile({ name: 'voice.AMR', type: '' }), true);
+  assert.equal(isAmrMediaFile({ name: 'voice.bin', type: 'audio/amr' }), true);
+  assert.equal(isAmrMediaFile({ name: 'voice.3gp', type: 'audio/3gpp' }), true);
+  assert.equal(isAmrMediaFile({ name: 'voice.mp3', type: 'audio/mpeg' }), false);
+});
+
+test('estimates AMR-NB duration from complete 20ms frames', () => {
+  const bytes = new Uint8Array(6 + 13 * 2);
+  bytes.set(new TextEncoder().encode('#!AMR\\n'));
+  bytes[6] = 0; // Frame type 0, one 13-byte AMR-NB frame.
+  bytes[19] = 0;
+  assert.equal(getAmrDurationSeconds(bytes), 0.04);
+});
+
+test('estimates AMR-WB duration and rejects truncated or unknown data', () => {
+  const bytes = new Uint8Array(9 + 18);
+  bytes.set(new TextEncoder().encode('#!AMR-WB\\n'));
+  bytes[9] = 0;
+  assert.equal(getAmrDurationSeconds(bytes), 0.02);
+  assert.equal(getAmrDurationSeconds(bytes.slice(0, 12)), null);
+  assert.equal(getAmrDurationSeconds(new Uint8Array([1, 2, 3])), null);
+});
+
+test('reads AMR duration safely from a File-like object', async () => {
+  const bytes = new Uint8Array(6 + 13);
+  bytes.set(new TextEncoder().encode('#!AMR\\n'));
+  bytes[6] = 0;
+  const file = { name: 'recording.amr', type: 'audio/amr', arrayBuffer: async () => bytes.buffer };
+  assert.equal(await getAmrFileDurationSeconds(file), 0.02);
+  assert.equal(await getAmrFileDurationSeconds({ name: 'recording.mp3', type: 'audio/mpeg' }), null);
 });
