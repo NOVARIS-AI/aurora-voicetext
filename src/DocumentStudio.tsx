@@ -215,36 +215,39 @@ export default function DocumentStudio({ onAssist }: Props) {
         </div>
         <input ref={fileRef} className="hidden-input" type="file" accept=".docx,.txt,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => void importFile(event.currentTarget.files?.[0])}/>
       </div>
-      <div className="document-workspace">
-        <section className="card document-editor-card">
-          <div className="document-panel-heading"><div><small>DOCUMENT CANVAS</small><h2>{name || 'Untitled document'}</h2></div><span>{text.length.toLocaleString()} characters</span></div>
-          <textarea ref={editorRef} className="document-editor" value={text} onChange={event => { setText(event.target.value); setProposal(''); }} placeholder={'Import a .docx file or start writing here…\n\nUse blank lines to separate paragraphs. Start a heading with # or ##.'} spellCheck />
-          <div className="document-editor-footer"><span>Autosaved on this device</span><button className="text-button" type="button" disabled={!undoText} onClick={() => { if (undoText !== null) setText(undoText); setUndoText(null); setStatus('Undid the last AI document edit.'); }}><RotateCcw size={13}/> Undo AI edit</button></div>
-          <div className="document-quick-actions">
-            <button type="button" onClick={() => void runAssist('Rewrite this document in clear, polished, natural language. Preserve all facts, names, dates, figures and important details. Return only the revised document.', 'rewrite')} disabled={busy || !text.trim()}><WandSparkles size={15}/> Rewrite</button>
-            <button type="button" onClick={() => void runAssist('Organise this document with a logical title, clear sections, useful headings and well-ordered paragraphs. Preserve all information and do not invent facts. Return only the reorganised document.', 'organise')} disabled={busy || !text.trim()}><FileText size={15}/> Organise</button>
-            <button type="button" onClick={() => void runAssist('Correct grammar, spelling and punctuation while preserving the writer’s meaning, voice and all factual details. Return only the corrected document.', 'rewrite')} disabled={busy || !text.trim()}><Check size={15}/> Proofread</button>
-            <button type="button" onClick={() => void runAssist('Create a concise summary of this document. Keep the key facts and conclusions. Clearly label it as a summary.', 'chat')} disabled={busy || !text.trim()}><Sparkles size={15}/> Summarise</button>
-          </div>
-        </section>
-        <aside className="card document-ai-card">
-          <div className="document-ai-heading"><span><Sparkles size={17}/></span><div><small>YOUR WRITING PARTNER</small><h2>AURORA AI</h2><p>Ask questions or request edits to the open document.</p></div></div>
+      <div className="document-chat-workspace">
+        <section className="card document-ai-card document-ai-chat-first">
+          <div className="document-ai-heading"><span><Sparkles size={19}/></span><div><small>DOCUMENT INTELLIGENCE</small><h2>AURORA DOCUMENT AI</h2><p>{text.trim() ? 'Your document is attached. Ask questions, request changes or explore the content.' : 'Start a conversation, or import a document to give AURORA context.'}</p></div></div>
+          {text.trim() && <div className="document-attached-file"><FileText size={16}/><span><strong>{name || 'Untitled document'}</strong><small>{text.length.toLocaleString()} characters · saved on this device</small></span><button type="button" onClick={() => fileRef.current?.click()} aria-label="Replace attached document"><FileUp size={15}/></button></div>}
           <div className="document-ai-suggestions">
-            {['Make this more professional','Arrange into clear sections','Explain this in simpler words'].map(prompt => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, prompt.startsWith('Arrange') || prompt.startsWith('Make') ? 'rewrite' : 'chat')}>{prompt}</button>)}
+            {['Summarise this document','Explain the key points','Improve the writing','Find errors and inconsistencies'].map((prompt, index) => <button key={prompt} type="button" disabled={busy || !text.trim()} onClick={() => void runAssist(prompt, index === 2 || index === 3 ? 'rewrite' : 'chat')}>{prompt}</button>)}
           </div>
-          <div className="document-chat-thread" aria-live="polite">
-            {messages.length === 0 && <div className="document-chat-empty"><MessageCircle size={25}/><strong>Let’s work on your document</strong><span>Import a DOCX, then ask me to explain, improve or reorganise it.</span></div>}
+          <div className="document-chat-thread document-chat-thread-main" aria-live="polite">
+            {messages.length === 0 && <div className="document-chat-empty"><span className="document-chat-orb"><Sparkles size={27}/></span><strong>What would you like to work on?</strong><span>Ask AURORA to explain, summarise, proofread, rewrite or organise your document. You stay in control of every change.</span></div>}
             {messages.map(message => <div className={'document-chat-message ' + message.role} key={message.id}><small>{message.role === 'user' ? 'YOU' : 'AURORA'}</small><p>{message.text}</p></div>)}
-            {busy && <div className="document-chat-message assistant"><small>AURORA</small><p>Working on your document…</p></div>}
+            {busy && <div className="document-chat-message assistant"><small>AURORA</small><p>Reviewing your document…</p></div>}
             <div ref={chatEndRef}/>
           </div>
-
-          <form className="document-chat-composer" onSubmit={event => { event.preventDefault(); const prompt = chatInput.trim(); if (!prompt || busy) return; setChatInput(''); void runAssist(prompt, /rewrite|reorgan|arrange|proofread|correct|edit|improve|make this/i.test(prompt) ? 'rewrite' : 'chat'); }}>
-            <textarea value={chatInput} onChange={event => setChatInput(event.target.value)} placeholder="Ask AURORA about this document…" rows={2} aria-label="Message AURORA"/>
-            <button className="primary" type="submit" disabled={busy || !chatInput.trim()} aria-label="Send message">{busy ? <span className="document-spinner"/> : <Send size={16}/>}</button>
+          <form className="document-chat-composer document-chat-composer-main" onSubmit={event => { event.preventDefault(); const prompt = chatInput.trim(); if (!prompt || busy) return; setChatInput(''); void runAssist(prompt, /rewrite|reorgan|arrange|proofread|correct|edit|improve|make this/i.test(prompt) ? 'rewrite' : 'chat'); }}>
+            <textarea value={chatInput} onChange={event => setChatInput(event.target.value)} placeholder={text.trim() ? 'Message AURORA about your document…' : 'Ask AURORA anything about a document…'} rows={2} aria-label="Message AURORA"/>
+            <button className="primary" type="submit" disabled={busy || !chatInput.trim()} aria-label="Send message">{busy ? <span className="document-spinner"/> : <Send size={17}/>}</button>
           </form>
-          <p className="document-privacy-note"><AlertCircle size={13}/> When you ask AI for help, the current document text is sent to the configured AI service. Don't submit sensitive information.</p>
-        </aside>
+          <p className="document-privacy-note"><AlertCircle size={13}/> When a document is attached, its text is sent to the configured AI service when you ask for help. Avoid sensitive information.</p>
+        </section>
+        <details className="card document-context-panel">
+          <summary><span><FileText size={16}/> Document workspace</span><span>{text.trim() ? 'Open to view or edit the full text' : 'Open to write or paste text'} <span aria-hidden="true">＋</span></span></summary>
+          <div className="document-context-body">
+            <div className="document-panel-heading"><div><small>EDITABLE DOCUMENT</small><h2>{name || 'Untitled document'}</h2></div><span>{text.length.toLocaleString()} characters</span></div>
+            <textarea ref={editorRef} className="document-editor" value={text} onChange={event => { setText(event.target.value); setProposal(''); }} placeholder={'Import a .docx file or start writing here…\n\nUse blank lines to separate paragraphs. Start a heading with # or ##.'} spellCheck />
+            <div className="document-editor-footer"><span>Autosaved on this device</span><button className="text-button" type="button" disabled={!undoText} onClick={() => { if (undoText !== null) setText(undoText); setUndoText(null); setStatus('Undid the last AI document edit.'); }}><RotateCcw size={13}/> Undo AI edit</button></div>
+            <div className="document-quick-actions">
+              <button type="button" onClick={() => void runAssist('Rewrite this document in clear, polished, natural language. Preserve all facts, names, dates, figures and important details. Return only the revised document.', 'rewrite')} disabled={busy || !text.trim()}><WandSparkles size={15}/> Rewrite</button>
+              <button type="button" onClick={() => void runAssist('Organise this document with a logical title, clear sections, useful headings and well-ordered paragraphs. Preserve all information and do not invent facts. Return only the reorganised document.', 'organise')} disabled={busy || !text.trim()}><FileText size={15}/> Organise</button>
+              <button type="button" onClick={() => void runAssist('Correct grammar, spelling and punctuation while preserving the writer’s meaning, voice and all factual details. Return only the corrected document.', 'rewrite')} disabled={busy || !text.trim()}><Check size={15}/> Proofread</button>
+              <button type="button" onClick={() => void runAssist('Create a concise summary of this document. Keep the key facts and conclusions. Clearly label it as a summary.', 'chat')} disabled={busy || !text.trim()}><Sparkles size={15}/> Summarise</button>
+            </div>
+          </div>
+        </details>
       </div>
       {previewOpen && proposal && <div className="document-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
         <section className="document-preview-modal" role="dialog" aria-modal="true" aria-labelledby="document-preview-title">
