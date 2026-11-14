@@ -2163,6 +2163,8 @@ useEffect(() => {
       setSummary(''); setMediaChapters([]); setSpeakerFilter('all');
       setTimelineSearch(''); setTimelineShowAll(false); setAudioPlayhead(0);
       setEditorStart(0); setEditorEnd(0); setEditorDuration(0);
+      setSubtitleText(''); setSubtitleStatus(''); setSubtitleFilename('subtitle');
+      setPreviewMessages([]); setPreviewInput(''); setVoiceChatMessages([]); setVoiceChatInput('');
       setCleanedAudioUrl(current => { if (current) URL.revokeObjectURL(current); return ''; });
       setVoiceAudioUrl(current => { if (current) URL.revokeObjectURL(current); return ''; });
     }
