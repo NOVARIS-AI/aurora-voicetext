@@ -1813,7 +1813,7 @@ function App() {
     if (!prompt || previewBusy) return;
     const lower = prompt.toLowerCase();
     const wantsKnowledgeSearch = /\b(search|find|look up|what did i|what have i|previous|saved|library|project|earlier|last time|across|remember)\b/.test(lower);
-    const localSources = [
+    const localSources: Array<{ id: string; name: string; transcript: string; updatedAt: number; kind?: string; projectId?: string; current: boolean; tags?: string[] }> = [
       ...(active?.transcript.trim() ? [{ id: active.id, name: active.file.name, transcript: active.transcript, updatedAt: Date.now(), kind: isVideoMediaFile(active.file) ? 'video' : 'audio', projectId, current: true }] : []),
       ...library.map(item => ({ ...item, current: false })),
     ];
