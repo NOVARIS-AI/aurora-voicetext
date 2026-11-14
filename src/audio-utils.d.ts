@@ -9,3 +9,5 @@ export function throwIfTranscriptionAborted(signal?: { aborted: boolean }): void
 export function createNativeAudioResumeKey(input: { name: string; size: number; mimeType?: string; contentHash?: string }): string;
 export function isValidTranscriptionCheckpoint(value: unknown, expected: { fileId: string; totalChunks: number; mode: 'online' | 'offline'; segmentSeconds: number; overlapSeconds: number }): boolean;
 export function isVideoMediaFile(file: { name?: string; type?: string } | null | undefined): boolean;
+export function isAmrMediaFile(file: { name?: string; type?: string } | null | undefined): boolean;
+export function getAmrFileDurationSeconds(file: { name?: string; type?: string; arrayBuffer: () => Promise<ArrayBuffer> } | null | undefined): Promise<number | null>;
