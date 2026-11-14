@@ -1221,13 +1221,20 @@ function AppSelect({ value, onChange, options, ariaLabel }: { value: string; onC
   </div>;
 }
 
+function createPosterPlaceholder(title: string): string {
+  const value = title.trim() || 'AURORA';
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+  const palettes = [['#123b50','#392b59'],['#57344d','#172f4b'],['#344d42','#172d48'],['#51402d','#24234f'],['#3a315f','#173d4b'],['#4b3040','#263d59']];
+  const palette = palettes[Math.abs(hash) % palettes.length];
+  const initials = value.split(/\s+/).filter(Boolean).slice(0,2).map(part => part[0]?.toUpperCase() || '').join('');
+  const safeTitle = value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').slice(0,42);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="'+palette[0]+'"/><stop offset="1" stop-color="'+palette[1]+'"/></linearGradient><radialGradient id="r"><stop stop-color="#ffffff" stop-opacity=".22"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient></defs><rect width="400" height="600" fill="url(#g)"/><circle cx="320" cy="100" r="220" fill="url(#r)"/><path d="M0 460 Q140 350 400 475 V600 H0Z" fill="#020916" fill-opacity=".38"/><text x="200" y="315" text-anchor="middle" font-family="Arial,sans-serif" font-size="112" font-weight="700" fill="#ffffff" fill-opacity=".9">'+initials+'</text><text x="200" y="535" text-anchor="middle" font-family="Arial,sans-serif" font-size="20" letter-spacing="2" fill="#ffffff" fill-opacity=".88">'+safeTitle+'</text></svg>';
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+}
+
 function App() {
-  const [page, setPage] = useState<Page>(() => {
-    try {
-      const saved = localStorage.getItem('aurora-voicetext-last-page-v1');
-      return saved && ['home','transcribe','library','preview','studio','subtitles','subtitlePreview','movieDetails','settings','admin','documents'].includes(saved) ? saved as Page : 'home';
-    } catch { return 'home'; }
-  });
+  const [page, setPage] = useState<Page>('home');
   const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem('aurora-voicetext-active-project-v1') || 'legacy-work'; } catch { return 'legacy-work'; } });
   const [projectTitle, setProjectTitle] = useState('Untitled project');
   const [recentProjects, setRecentProjects] = useState<Array<{id:string;title:string;fileCount:number;savedAt:number;page:Page}>>([]);
@@ -1488,15 +1495,7 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
-
-  // Remember the exact open page immediately, so returning to the app does not
-  // unexpectedly send the user back to Home after Android suspends the WebView.
-  useEffect(() => {
-    if (!sessionHydrated) return;
-    try { localStorage.setItem('aurora-voicetext-last-page-v1', page); } catch {}
-  }, [page, sessionHydrated]);
-
-  useEffect(() => {
+useEffect(() => {
     try { localStorage.setItem('aurora-voicetext-folders-v1', JSON.stringify(libraryFolders)); } catch { /* Folder metadata is best-effort on low-storage devices. */ }
   }, [libraryFolders]);
 
@@ -1506,7 +1505,7 @@ function App() {
     void restoreWorkspaceState().then(saved => {
       if (cancelled) return;
       if (saved) {
-        setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(saved.projectId);
+        setFiles(saved.files); setActiveId(saved.activeId); setPage('home'); setProjectId(saved.projectId);
         const drafts = saved.drafts;
         if (typeof drafts.projectTitle === 'string' && drafts.projectTitle.trim()) setProjectTitle(drafts.projectTitle.trim());
         else if (saved.files[0]?.file.name) setProjectTitle(safeFileBaseName(saved.files[0].file.name.replace(/\.[^.]+$/, ''), 'Untitled project'));
@@ -2151,15 +2150,20 @@ function App() {
 
   function removeFile(id: string) {
     const fileToRemove = files.find(item => item.id === id);
-    if (!fileToRemove || !window.confirm('Remove “' + fileToRemove.file.name + '” from this project? Its imported media copy will be removed from this workspace.')) return;
-    setFiles(current => {
-      const removed = current.find(item => item.id === id);
-      if (removed) URL.revokeObjectURL(removed.url);
-      const next = current.filter(item => item.id !== id);
-      void removeWorkspaceAudio(id).catch(() => undefined);
-      if (activeId === id) setActiveId(next[0]?.id ?? null);
-      return next;
-    });
+    if (!fileToRemove || !window.confirm('Remove “' + fileToRemove.file.name + '” from this project? Its imported media copy and media-editor state will be removed from this workspace.')) return;
+    const next = files.filter(item => item.id !== id);
+    URL.revokeObjectURL(fileToRemove.url);
+    void removeWorkspaceAudio(id).catch(() => undefined);
+    setFiles(next);
+    if (activeId === id) setActiveId(next[0]?.id ?? null);
+    if (!next.length) {
+      setActiveId(null); setSummary(''); setMediaChapters([]); setSpeakerFilter('all');
+      setTimelineSearch(''); setTimelineShowAll(false); setAudioPlayhead(0);
+      setEditorStart(0); setEditorEnd(0); setEditorDuration(0);
+      setCleanedAudioUrl(current => { if (current) URL.revokeObjectURL(current); return ''; });
+      setVoiceAudioUrl(current => { if (current) URL.revokeObjectURL(current); return ''; });
+      setSubtitleText(''); setSubtitleStatus('');
+    }
   }
 
   async function runExportTranscript(text: string, baseName = 'aurora-voicetext-transcript', timedSegments?: TimedSegment[]) {
@@ -2529,13 +2533,13 @@ function App() {
   return (
     <main className={page === 'documents' ? 'app-shell document-app-shell' : 'app-shell'}>
       <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-      <header className="topbar">
+      {page !== 'documents' && <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} type="button" aria-label="AURORA VoiceText home">
           <span className="brand-mark"><img src="/aurora-mark.svg" alt="" /></span>
           <span><strong>AURORA <i>VoiceText</i></strong><small>AI INFORMATION WORKSPACE</small></span>
         </button>
         <div className="topbar-actions"><span className="local-badge"><span /> INFORMATION AI</span><button className="topbar-settings-button" type="button" aria-label="Settings" onClick={() => setPage('settings')}><Settings2 size={17}/></button><button className="new-work-button" type="button" onClick={() => void startNewWork()}><Plus size={16}/> New Project</button></div>
-      </header>
+      </header>}
 
       {page !== 'documents' && <nav className="main-nav" aria-label="Main navigation">
         {([
@@ -2882,7 +2886,7 @@ function App() {
           {subtitleResults.length>0 && <div className="subtitle-results">{subtitleResultGroups.map(({item,releases,key},index)=><article className="subtitle-result" key={key+'-'+index}>
             <button className="subtitle-poster-wrap subtitle-detail-trigger" type="button" onClick={()=>{setSelectedSubtitleId(item.id);setPage('movieDetails');}} aria-label={'View details for '+item.title}>
               <span className="subtitle-poster-fallback"><Film size={25}/><span>{item.season != null ? 'SERIES' : 'MOVIE'}</span></span>
-              {(item.poster || item.imdbId) && <img className="subtitle-poster" src={item.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId || '')+'/img'} alt={item.title + ' poster'} loading="lazy" onError={event=>{const image=event.currentTarget;if(item.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId)+'/img';}else{image.style.display='none';}}}/>}
+              <img className="subtitle-poster" src={item.poster || (item.imdbId ? 'https://images.metahub.space/poster/medium/'+encodeURIComponent(item.imdbId)+'/img' : createPosterPlaceholder(item.title))} alt={item.title + ' poster'} loading="lazy" onError={event=>{const image=event.currentTarget;if(image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src=createPosterPlaceholder(item.title);}else{image.style.display='none';}}}/>
               <span className="subtitle-poster-open"><Clapperboard size={14}/> DETAILS</span>
             </button>
             <div className="subtitle-result-main">
@@ -2914,7 +2918,7 @@ function App() {
           <div className="subtitle-cinema-hero" style={selectedSubtitle?.backdrop ? {backgroundImage:'linear-gradient(90deg,rgba(5,9,17,.96),rgba(5,9,17,.78),rgba(5,9,17,.52)),url('+selectedSubtitle.backdrop+')'} : undefined}>
             <div className="subtitle-cinema-poster">
               <span className="subtitle-poster-fallback"><Film size={28}/><span>POSTER</span></span>
-              {selectedSubtitle && (selectedSubtitle.poster || selectedSubtitle.imdbId) && <img src={selectedSubtitle.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId || '')+'/img'} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(selectedSubtitle.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img';}else image.style.display='none';}}/>}
+              {selectedSubtitle && <img src={selectedSubtitle.poster || (selectedSubtitle.imdbId ? 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img' : createPosterPlaceholder(selectedSubtitle.title))} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src=createPosterPlaceholder(selectedSubtitle.title);}else image.style.display='none';}}/>}
             </div>
             <div className="subtitle-cinema-heading">
               <small>SUBTITLE PREVIEW · SELECTED RELEASE</small>
