@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { ArrowLeft, FileUp, FileText, Sparkles, Send, Download, RotateCcw, Redo2, X, WandSparkles, Check, AlertCircle, Save, Bold, Italic, Underline, List, ListOrdered, Heading1, Heading2, AlignLeft, AlignCenter, AlignRight, Search, Replace, Printer, Trash2, Table, Link2, Undo2 } from 'lucide-react';
+import { ArrowLeft, FileUp, FileText, Sparkles, Send, Download, Redo2, X, WandSparkles, Check, AlertCircle, Save, Bold, Italic, Underline, List, ListOrdered, Heading1, Heading2, AlignLeft, AlignCenter, AlignRight, Search, Replace, Printer, Trash2, Table, Link2, Undo2 } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
@@ -99,7 +99,6 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
   const [proposal, setProposal] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingTask, setPendingTask] = useState('chat');
-  const [undoText, setUndoText] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
   const [findText, setFindText] = useState('');
@@ -153,8 +152,7 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
       setText(imported);
       setProposal('');
       setPreviewOpen(false);
-      setUndoText(null);
-      setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
+        setMessages([{ id: String(Date.now()), role: 'assistant', text: 'Your document is open. You can edit it directly, or tell me what you want improved.' }]);
       setStatus('Document imported. Your original file has not been changed.');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not import this document.'); }
     finally { setImportBusy(false); if (fileRef.current) fileRef.current.value = ''; }
@@ -184,7 +182,8 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
       setProposal('');
       return;
     }
-    setUndoText(text);
+    setUndoStack(stack => [...stack.slice(-39), text]);
+    setRedoStack([]);
     setText(proposal);
     setProposal('');
     setPreviewOpen(false);
