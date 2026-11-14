@@ -2151,18 +2151,21 @@ useEffect(() => {
   function removeFile(id: string) {
     const fileToRemove = files.find(item => item.id === id);
     if (!fileToRemove || !window.confirm('Remove “' + fileToRemove.file.name + '” from this project? Its imported media copy and media-editor state will be removed from this workspace.')) return;
-    const next = files.filter(item => item.id !== id);
+    const removingActive = activeId === id || (!activeId && files[0]?.id === id);
+    const remaining = files.filter(item => item.id !== id);
     URL.revokeObjectURL(fileToRemove.url);
     void removeWorkspaceAudio(id).catch(() => undefined);
-    setFiles(next);
-    if (activeId === id) setActiveId(next[0]?.id ?? null);
-    if (!next.length) {
-      setActiveId(null); setSummary(''); setMediaChapters([]); setSpeakerFilter('all');
+    setFiles(remaining);
+    if (removingActive) {
+      setActiveId(remaining[0]?.id ?? null);
+      setSummary(''); setMediaChapters([]); setSpeakerFilter('all');
       setTimelineSearch(''); setTimelineShowAll(false); setAudioPlayhead(0);
       setEditorStart(0); setEditorEnd(0); setEditorDuration(0);
       setCleanedAudioUrl(current => { if (current) URL.revokeObjectURL(current); return ''; });
       setVoiceAudioUrl(current => { if (current) URL.revokeObjectURL(current); return ''; });
-      setSubtitleText(''); setSubtitleStatus('');
+    }
+    if (!remaining.length) {
+      setActiveId(null); setSubtitleText(''); setSubtitleStatus('');
     }
   }
 
@@ -2952,7 +2955,7 @@ useEffect(() => {
           <div className="movie-detail-hero" style={selectedSubtitle.backdrop ? {backgroundImage:'linear-gradient(90deg,rgba(5,9,17,.97),rgba(5,9,17,.76),rgba(5,9,17,.38)),url('+selectedSubtitle.backdrop+')'} : undefined}>
             <div className="movie-detail-poster">
               <span className="subtitle-poster-fallback"><Film size={28}/><span>POSTER</span></span>
-              {(selectedSubtitle.poster || selectedSubtitle.imdbId) && <img src={selectedSubtitle.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId || '')+'/img'} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(selectedSubtitle.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img';}else image.style.display='none';}}/>}
+              <img src={selectedSubtitle.poster || (selectedSubtitle.imdbId ? 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img' : createPosterPlaceholder(selectedSubtitle.title))} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src=createPosterPlaceholder(selectedSubtitle.title);}else image.style.display='none';}}/>
             </div>
             <div className="movie-detail-copy">
               <small>{selectedSubtitle.season != null ? 'TV SERIES' : 'MOVIE'} · {selectedSubtitle.year || 'YEAR NOT LISTED'}</small>
