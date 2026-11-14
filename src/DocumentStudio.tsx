@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import { ArrowLeft, FileText, FilePlus2, FolderOpen, Search, Clock3, MoreHorizontal, Download, Printer, Save, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Heading1, Heading2, ImagePlus, Link2, Table2, Undo2, Redo2, Sparkles, X, Check, FileUp, Layout, Eye, Type, Replace, Trash2, ChevronDown, Plus, PanelRightClose } from 'lucide-react';
 
@@ -67,7 +68,7 @@ export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId,
   const applyProposal = () => { setHtml(proposal.split(/\n{2,}/).map(p => '<p>' + esc(p).replace(/\n/g,'<br>') + '</p>').join('')); setProposal(''); setStatus('AI revision applied.'); };
   const replaceAll = () => { if (!find) return; const next = plainText.split(find).join(replace); setHtml(next.split(/\n+/).map(p => '<p>' + esc(p) + '</p>').join('')); setStatus('Replace completed in plain text.'); };
   const deleteDoc = (id: string) => { if (!window.confirm('Delete this saved document from this device?')) return; setDocs(current => { const next = current.filter(d => d.id !== id); localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); };
-  const ribbonButton = (label: string, icon: React.ReactNode, action: () => void) => <button type="button" title={label} aria-label={label} onMouseDown={e => e.preventDefault()} onClick={action}>{icon}</button>;
+  const ribbonButton = (label: string, icon: ReactNode, action: () => void) => <button type="button" title={label} aria-label={label} onMouseDown={e => e.preventDefault()} onClick={action}>{icon}</button>;
 
   return <section className="aurora-docs">
     <header className="aurora-docs-top"><button className="docs-back" onClick={screen === 'editor' ? () => setScreen('home') : onBack} type="button"><ArrowLeft size={17}/>{screen === 'editor' ? 'All documents' : 'Back to workspace'}</button><div className="docs-brand"><span className="docs-brand-icon"><FileText size={19}/></span><span><b>AURORA Docs</b><small>DOCUMENT WORKSPACE</small></span></div><span className="docs-save-indicator"><Check size={14}/> {screen === 'editor' ? 'Saved on device' : 'Your documents'}</span></header>
