@@ -465,6 +465,36 @@ function isVideoMediaFile(file: File): boolean {
   return file.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name);
 }
 
+async function getAudioDurationFromUrl(url: string, video = false): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const media = document.createElement(video ? 'video' : 'audio');
+    media.preload = 'metadata';
+    let settled = false;
+    const timer = window.setTimeout(() => finish(new Error('Timed out while reading audio duration.')), 15000);
+    const cleanup = () => {
+      media.onloadedmetadata = null;
+      media.onerror = null;
+      media.onabort = null;
+      media.removeAttribute('src');
+      media.load();
+      window.clearTimeout(timer);
+    };
+    const finish = (error?: Error, duration?: number) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error('The selected media did not report a valid duration.'));
+    };
+    media.onloadedmetadata = () => finish(undefined, media.duration);
+    media.onerror = () => finish(new Error('Android could not read the selected audio metadata.'));
+    media.onabort = () => finish(new Error('Audio metadata reading was interrupted.'));
+    media.src = url;
+    media.load();
+  });
+}
+
 async function getAudioDurationSeconds(file: File): Promise<number> {
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -1447,6 +1477,20 @@ function App() {
     });
     setFiles(current => [...current, ...next]);
     void saveWorkspaceAudio(next).catch(() => setStatus('Audio is loaded, but this device could not save a reload-safe copy. Save your transcript to the library as a backup.'));
+    // Android's native picker can return a valid file even when its media metadata
+    // reader reports 0 ms. Read the copied file through the WebView media pipeline
+    // as a second source, then persist the resolved duration with the workspace.
+    next.filter(item => item.nativePath && !(item.nativeDurationMs && item.nativeDurationMs > 0)).forEach(item => {
+      void getAudioDurationFromUrl(item.url, isVideoMediaFile(item.file)).then(seconds => {
+        const durationMs = Math.round(seconds * 1000);
+        setFiles(current => {
+          const updated = current.map(existing => existing.id === item.id ? { ...existing, nativeDurationMs: durationMs } : existing);
+          const resolved = updated.find(existing => existing.id === item.id);
+          if (resolved) void saveWorkspaceAudio([resolved]).catch(() => undefined);
+          return updated;
+        });
+      }).catch(() => undefined);
+    });
     setActiveId(current => current ?? next[0].id);
     setError('');
   }
