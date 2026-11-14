@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { FileUp, FileText, Sparkles, Send, Download, RotateCcw, X, WandSparkles, Check, AlertCircle } from 'lucide-react';
+import { FileUp, FileText, Sparkles, Send, Download, RotateCcw, X, WandSparkles, Check, AlertCircle, Save } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
 type Message = { id: string; role: 'user' | 'assistant'; text: string };
-type Props = { onAssist: (input: AssistInput) => Promise<string>; workspaceId: string };
+type Props = { onAssist: (input: AssistInput) => Promise<string>; onSaveToLibrary: (record: { name: string; text: string }) => void; workspaceId: string };
 
 const STORAGE_KEY = 'aurora-voicetext-document-studio-v1';
 const workspaceStorageKey = (id: string) => STORAGE_KEY + ':' + id;
@@ -86,7 +86,7 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export default function DocumentStudio({ onAssist, workspaceId }: Props) {
+export default function DocumentStudio({ onAssist, onSaveToLibrary, workspaceId }: Props) {
   const [name, setName] = useState('Untitled document');
   const [text, setText] = useState('');
   const [savedText, setSavedText] = useState('');
@@ -215,6 +215,7 @@ export default function DocumentStudio({ onAssist, workspaceId }: Props) {
         <div className="document-name-wrap"><FileText size={18}/><input aria-label="Document name" value={name} onChange={event => setName(event.target.value)} maxLength={100}/><span className="document-save-state">{text === savedText ? <><Check size={13}/> Saved locally</> : 'Saving…'}</span></div>
         <div className="document-toolbar-actions">
           <button className="secondary small-button" type="button" onClick={() => fileRef.current?.click()} disabled={importBusy}>{importBusy ? 'Opening…' : <><FileUp size={15}/> Import DOCX</>}</button>
+          <button className="secondary small-button" type="button" onClick={() => { if (!text.trim()) return; onSaveToLibrary({ name: name.trim() || 'Untitled document', text: text.trim() }); setStatus('Document saved to your Library. AURORA can now search it in this project.'); }} disabled={!text.trim()}><Save size={15}/> Save to Library</button>
           <button className="secondary small-button" type="button" onClick={saveAsText} disabled={!text.trim()}><Download size={15}/> TXT</button>
           <button className="primary small-button" type="button" onClick={() => void exportDocx()} disabled={!text.trim()}><Download size={15}/> Export DOCX</button>
         </div>
