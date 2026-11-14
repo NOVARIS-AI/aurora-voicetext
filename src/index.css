@@ -872,3 +872,35 @@ button:disabled{opacity:.52;cursor:not-allowed}
   .home-project-open small{font-size:8px}
   .home-footer-note{align-items:flex-start;font-size:8px;line-height:1.5}
 }
+
+
+/* AURORA unified knowledge assistant and project-aware Library */
+.assistant-source-note{margin-left:auto;color:#79d6d9;font-size:9px;white-space:nowrap}
+.assistant-global-panel{margin-top:24px;padding:18px 0 4px;border-top:1px solid rgba(145,171,216,.12)}
+.assistant-global-heading{display:flex;align-items:flex-start;gap:11px;margin-bottom:15px;color:#83e0e5}
+.assistant-global-heading>svg{flex:none;margin-top:2px}
+.assistant-global-heading strong{color:#e7f1fa;font-size:13px}
+.assistant-global-heading p{max-width:620px;margin:5px 0 0;color:#8fa2b9;font-size:11px;line-height:1.65}
+.assistant-global-feed{max-height:340px;overflow-y:auto;margin:10px 0}
+.assistant-global-panel .preview-composer{margin-top:10px}
+.library-card-v2 .library-card-content>small{display:block;color:#7f94ad;font-size:9px}
+.library-detail-tools{flex-wrap:wrap}
+@media(max-width:680px){
+  .assistant-source-note{order:3;width:100%;margin-left:16px;white-space:normal}
+  .assistant-global-panel{margin-top:19px;padding-top:15px}
+  .assistant-global-heading strong{font-size:12px}
+  .assistant-global-heading p{font-size:10px}
+  .assistant-global-feed{max-height:280px}
+  .library-toolbar-v2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .library-toolbar-v2 .search-box{grid-column:1/-1}
+  .library-toolbar-v2 select{min-width:0;width:100%;min-height:38px}
+  .library-toolbar-v2 .count{grid-column:1/-1}
+  .library-grid-v2{grid-template-columns:1fr}
+  .library-card-v2{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;padding:11px}
+  .library-card-v2 .library-cover{grid-row:1;min-height:124px}
+  .library-card-v2 .library-card-content{min-width:0}
+  .library-card-v2 .library-card-content h3{margin-top:8px;font-size:11px}
+  .library-card-v2 .library-card-content>p{min-height:0;max-height:65px;overflow:hidden;font-size:10px}
+  .library-card-v2 .library-actions{gap:5px}
+  .library-card-v2 .library-actions button{font-size:9px;padding-inline:7px}
+}
