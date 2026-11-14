@@ -263,11 +263,12 @@ type StoredAudioMeta = {
 function openSessionDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) { reject(new Error('IndexedDB unavailable.')); return; }
-    const request = indexedDB.open(SESSION_DB, 1);
+    const request = indexedDB.open(SESSION_DB, 2);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('workspace')) db.createObjectStore('workspace', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Could not open workspace storage.'));
@@ -297,7 +298,7 @@ async function removeWorkspaceAudio(id: string): Promise<void> {
     });
   } finally { db.close(); }
 }
-async function saveWorkspaceState(items: AudioFile[], activeId: string | null, page: Page): Promise<void> {
+async function saveWorkspaceState(items: AudioFile[], activeId: string | null, page: Page, projectId: string): Promise<void> {
   const db = await openSessionDb();
   try {
     const files: StoredAudioMeta[] = items.map(item => ({
@@ -309,22 +310,36 @@ async function saveWorkspaceState(items: AudioFile[], activeId: string | null, p
     }));
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('workspace', 'readwrite');
-      tx.objectStore('workspace').put({ key: 'current', files, activeId, page, savedAt: Date.now() });
+      const savedAt = Date.now();
+      const title = items[0]?.file.name || 'Untitled work';
+      tx.objectStore('workspace').put({ key: 'project:' + projectId, projectId, files, activeId, page, savedAt, title });
+      tx.objectStore('workspace').put({ key: 'current', projectId, savedAt });
+      const projectsTx = db.transaction('projects', 'readwrite');
+      projectsTx.objectStore('projects').put({ id: projectId, title, fileCount: items.length, savedAt, page });
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error('Could not save workspace state.'));
     });
   } finally { db.close(); }
 }
-async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: string | null; page: Page } | null> {
+async function restoreWorkspaceState(projectId?: string): Promise<{ files: AudioFile[]; activeId: string | null; page: Page; projectId: string } | null> {
   const db = await openSessionDb();
   try {
     const snapshot = await new Promise<any>((resolve, reject) => {
-      const request = db.transaction('workspace', 'readonly').objectStore('workspace').get('current');
+      const store = db.transaction('workspace', 'readonly').objectStore('workspace');
+      const request = projectId ? store.get('project:' + projectId) : store.get('current');
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error || new Error('Could not read saved workspace.'));
     });
-    if (!snapshot || !Array.isArray(snapshot.files)) return null;
-    const files = await Promise.all(snapshot.files.map(async (meta: StoredAudioMeta) => {
+    if (!snapshot) return null;
+    const project = projectId || snapshot.projectId || 'legacy-work';
+    const projectSnapshot = projectId ? snapshot : await new Promise<any>((resolve, reject) => {
+      const request = db.transaction('workspace', 'readonly').objectStore('workspace').get('project:' + project);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error('Could not read saved project.'));
+    });
+    const data = Array.isArray(projectSnapshot?.files) ? projectSnapshot : Array.isArray(snapshot.files) ? snapshot : null;
+    if (!data) return null;
+    const files = await Promise.all(data.files.map(async (meta: StoredAudioMeta) => {
       const saved = await new Promise<any>((resolve, reject) => {
         const request = db.transaction('audio', 'readonly').objectStore('audio').get(meta.id);
         request.onsuccess = () => resolve(request.result || null);
@@ -336,7 +351,7 @@ async function restoreWorkspaceState(): Promise<{ files: AudioFile[]; activeId: 
       return { ...meta, file, url: nativePath ? Capacitor.convertFileSrc(nativePath) : URL.createObjectURL(file), nativePath } as AudioFile;
     }));
     const pages: Page[] = ['home','transcribe','library','preview','studio','subtitles','movieDetails','settings','admin','documents'];
-    return { files, activeId: typeof snapshot.activeId === 'string' ? snapshot.activeId : files[0]?.id ?? null, page: pages.includes(snapshot.page) ? snapshot.page : 'home' };
+    return { files, activeId: typeof data.activeId === 'string' ? data.activeId : files[0]?.id ?? null, page: pages.includes(data.page) ? data.page : 'home', projectId: project };
   } finally { db.close(); }
 }
 
@@ -1160,6 +1175,8 @@ function AppSelect({ value, onChange, options, ariaLabel }: { value: string; onC
 
 function App() {
   const [page, setPage] = useState<Page>('home');
+  const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem('aurora-voicetext-active-project-v1') || 'legacy-work'; } catch { return 'legacy-work'; } });
+  const [recentProjects, setRecentProjects] = useState<Array<{id:string;title:string;fileCount:number;savedAt:number;page:Page}>>([]);
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sessionHydrated, setSessionHydrated] = useState(false);
@@ -1390,17 +1407,22 @@ function App() {
     let cancelled = false;
     void restoreWorkspaceState().then(saved => {
       if (cancelled) return;
-      if (saved) { setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); }
+      if (saved) { setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(saved.projectId); try { localStorage.setItem('aurora-voicetext-active-project-v1', saved.projectId); } catch {} }
     }).catch(() => {
       // Recovery is best-effort; saved library transcripts remain available.
-    }).finally(() => { if (!cancelled) setSessionHydrated(true); });
+    }).finally(async () => {
+      if (!cancelled) {
+        try { const db = await openSessionDb(); const rows = await new Promise<any[]>((resolve, reject) => { const req = db.transaction('projects','readonly').objectStore('projects').getAll(); req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error); }); db.close(); if (!cancelled) setRecentProjects(rows.sort((a,b)=>b.savedAt-a.savedAt).slice(0,12)); } catch {}
+        setSessionHydrated(true);
+      }
+    });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!sessionHydrated) return;
-    void saveWorkspaceState(files, activeId, page).catch(() => undefined);
-  }, [files, activeId, page, sessionHydrated]);
+    void saveWorkspaceState(files, activeId, page, projectId).then(() => { try { localStorage.setItem('aurora-voicetext-active-project-v1', projectId); } catch {} }).catch(() => undefined);
+  }, [files, activeId, page, projectId, sessionHydrated]);
 
   useEffect(() => {
     void pruneSavedCheckpoints().catch(() => {
@@ -1429,6 +1451,35 @@ function App() {
 
   useEffect(() => () => filesRef.current.forEach(item => URL.revokeObjectURL(item.url)), []);
 
+
+  async function refreshRecentProjects() {
+    try {
+      const db = await openSessionDb();
+      const rows = await new Promise<any[]>((resolve, reject) => { const req = db.transaction('projects','readonly').objectStore('projects').getAll(); req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error); });
+      db.close(); setRecentProjects(rows.sort((a,b)=>b.savedAt-a.savedAt).slice(0,12));
+    } catch {}
+  }
+
+  async function openSavedProject(id: string) {
+    try {
+      const saved = await restoreWorkspaceState(id);
+      if (!saved) throw new Error('This saved work could not be opened.');
+      setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(id);
+      try { localStorage.setItem('aurora-voicetext-active-project-v1', id); } catch {}
+      setError(''); setStatus('Saved work reopened. Changes will autosave here.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open saved work.'); }
+  }
+
+  async function startNewWork() {
+    if (busy || exportBusy || voiceBusy || previewBusy) { setError('Finish or cancel the current operation before starting new work.'); return; }
+    try { await saveWorkspaceState(files, activeId, page, projectId); await refreshRecentProjects(); } catch { setError('AURORA could not save the current work. Please export or copy anything important before starting a new workspace.'); return; }
+    const nextId = (crypto.randomUUID?.() || ('work-' + Date.now()));
+    setProjectId(nextId); setFiles([]); setActiveId(null); setPage('home');
+    setPreviewMessages([]); setPreviewInput(''); setSummary(''); setStudioText(''); setVoiceChatMessages([]); setVoiceChatInput('');
+    setSubtitleText(''); setSubtitleQuery(''); setSelectedSubtitleId(null); setMediaChapters([]);
+    setError(''); setStatus('New work started. Your previous work is saved in Recent Work.');
+    try { localStorage.setItem('aurora-voicetext-active-project-v1', nextId); } catch {}
+  }
 
   async function pickNativeAudioFiles() {
     if (!Capacitor.isNativePlatform()) { inputRef.current?.click(); return; }
@@ -2317,7 +2368,7 @@ function App() {
           <span className="brand-mark"><img src="/aurora-mark.svg" alt="" /></span>
           <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE + DOCUMENT INTELLIGENCE</small></span>
         </button>
-        <span className="local-badge"><span /> VOICE + DOCUMENT AI</span>
+        <div className="topbar-actions"><span className="local-badge"><span /> VOICE + DOCUMENT AI</span><button className="new-work-button" type="button" onClick={() => void startNewWork()}><Plus size={16}/> New Work</button></div>
       </header>
 
       <nav className="main-nav" aria-label="Main navigation">
@@ -2338,6 +2389,7 @@ function App() {
           <button className="secondary" onClick={() => setPage('library')} type="button"><BookOpen size={17}/> Open my library</button>
         </div>
         <div className="info-strip"><ShieldCheck size={18}/><div><strong>Private by default</strong><p>Choose automatic, online or offline transcription. Your original recording stays unchanged.</p></div></div>
+        {recentProjects.length > 0 && <section className="recent-work-panel"><div className="recent-work-heading"><div><small>YOUR SAVED PROJECTS</small><h2>Recent Work</h2><p>Pick up where you left off. Each project keeps its own recordings and progress.</p></div><button type="button" className="secondary small-button" onClick={() => void refreshRecentProjects()}>Refresh</button></div><div className="recent-work-grid">{recentProjects.filter(item => item.id !== projectId).map(item => <article className="recent-work-card" key={item.id}><span><FileAudio size={17}/></span><div><strong>{item.title || 'Untitled work'}</strong><small>{item.fileCount || 0} recording(s) · {new Date(item.savedAt).toLocaleString()}</small></div><button type="button" className="secondary small-button" onClick={() => void openSavedProject(item.id)}>Open</button></article>)}</div></section>}
         <div className="feature-grid">
           <button onClick={() => setPage('transcribe')} type="button"><FileAudio/><strong>Transcribe</strong><span>Import, listen and correct audio text.</span></button>
           <button onClick={() => setPage('library')} type="button"><BookOpen/><strong>Library</strong><span>Keep transcripts in this browser.</span></button>
@@ -2441,7 +2493,7 @@ function App() {
 
       </section>}
 
-      {page === 'documents' && <DocumentStudio onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
+      {page === 'documents' && <DocumentStudio key={projectId} workspaceId={projectId} onAssist={async input => { const { data } = await requestFeature('/api/assist', input); if (typeof data?.text !== 'string') throw new Error('The AI assistant returned an invalid response.'); return data.text; }} />}
 
       {page === 'library' && <section className="page-content library-page">
         <div className="page-heading"><div className="eyebrow">YOUR MEDIA ARCHIVE</div><h1>Library <span className="library-total">{library.length} saved</span></h1><p>Keep transcripts, recordings, video notes and AI insights organised in one searchable place on this device.</p></div>
