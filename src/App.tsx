@@ -480,7 +480,6 @@ function isVideoMediaFile(file: File): boolean {
   return file.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name);
 }
 
-async 
 async function getAudioDurationSeconds(file: File): Promise<number> {
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
