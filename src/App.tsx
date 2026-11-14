@@ -2854,7 +2854,7 @@ function App() {
               <div className="subtitle-match-tags"><span><Star size={11}/> {item.rating ? item.rating+'/10' : 'TITLE MATCH'}</span>{item.season != null && <span><CalendarDays size={11}/> S{item.season} E{item.episode ?? '—'}</span>}</div>
             </div>
             <div className="subtitle-actions">
-              <button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName,true)} type="button"><Play size={14}/> Preview</button>
+              <button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>{setSelectedSubtitleId(item.id);void downloadSubtitle(item.fileId!,false,item.fileName,true);}} type="button"><Play size={14}/> Preview</button>
               <button className="secondary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,false,item.fileName)} type="button"><Download size={14}/> Download</button>
               <button className="primary small-button" disabled={subtitleBusy||!item.fileId} onClick={()=>downloadSubtitle(item.fileId!,true,item.fileName)} type="button"><Languages size={14}/> Translate</button>
             </div>
@@ -2864,15 +2864,40 @@ function App() {
       </section>}
 
 
-      {page === 'subtitlePreview' && <section className="page-content subtitle-preview-page">
+      {page === 'subtitlePreview' && <section className="page-content subtitle-preview-page cinematic-subtitle-page">
         <div className="movie-detail-toolbar">
           <button className="secondary small-button" type="button" onClick={()=>setPage('subtitles')}><ArrowLeft size={15}/> Back to Subtitle Finder</button>
-          <span>SUBTITLE EDITOR</span>
+          <span> CINEMATIC SUBTITLE PREVIEW</span>
         </div>
-        {subtitleText && <div className="subtitle-preview"><div className="card-title"><div><small>SUBTITLE PREVIEW · TIMING CHECK</small><h2>{subtitleFilename}</h2><p>Review captions and timestamps before exporting.</p></div><span className="count">Editable</span></div>
-            <div className="subtitle-cue-list">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).slice(0,8).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <div className="subtitle-cue" key={index}><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div>;})}</div>
-            <details className="subtitle-edit-details"><summary>Edit full subtitle file</summary><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={10} aria-label="Edit subtitle text"/></details>
-            <div className="studio-actions"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div></div>}
+        <section className="subtitle-cinema-shell">
+          <div className="subtitle-cinema-hero" style={selectedSubtitle?.backdrop ? {backgroundImage:'linear-gradient(90deg,rgba(5,9,17,.96),rgba(5,9,17,.78),rgba(5,9,17,.52)),url('+selectedSubtitle.backdrop+')'} : undefined}>
+            <div className="subtitle-cinema-poster">
+              <span className="subtitle-poster-fallback"><Film size={28}/><span>POSTER</span></span>
+              {selectedSubtitle && (selectedSubtitle.poster || selectedSubtitle.imdbId) && <img src={selectedSubtitle.poster || 'https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId || '')+'/img'} alt={selectedSubtitle.title+' poster'} onError={event=>{const image=event.currentTarget;if(selectedSubtitle.imdbId && image.dataset.fallback!=='used'){image.dataset.fallback='used';image.src='https://images.metahub.space/poster/medium/'+encodeURIComponent(selectedSubtitle.imdbId)+'/img';}else image.style.display='none';}}/>}
+            </div>
+            <div className="subtitle-cinema-heading">
+              <small>SUBTITLE PREVIEW · TIMING CHECK</small>
+              <h1>{selectedSubtitle?.title || subtitleFilename}</h1>
+              <div className="subtitle-cinema-facts">
+                {selectedSubtitle?.year && <span>{selectedSubtitle.year}</span>}
+                <span>{selectedSubtitle?.season != null ? 'TV SERIES' : 'MOVIE'}</span>
+                {selectedSubtitle?.rating && <span><Star size={13}/> {selectedSubtitle.rating}/10</span>}
+                <span>{subtitleFilename}</span>
+              </div>
+              {selectedSubtitle?.genres?.length ? <div className="subtitle-detail-genres">{selectedSubtitle.genres.map(genre=><span key={genre}>{genre}</span>)}</div> : null}
+              <p>{selectedSubtitle?.overview || 'Review the selected subtitle release, check its timing and edit captions before exporting.'}</p>
+            </div>
+          </div>
+          <div className="subtitle-cinema-content">
+            <div className="subtitle-cinema-section-head">
+              <div><small>CAPTION PLAYBACK</small><h2>Subtitle preview</h2><p>Check the timing and wording before you export.</p></div>
+              <span className="count">EDITABLE</span>
+            </div>
+            {subtitleText && <div className="subtitle-cinema-cues">{subtitleText.split(/\n\s*\n/).filter(block=>/-->/.test(block)).slice(0,12).map((block,index)=>{const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);const timing=lines.find(line=>line.includes('-->'))||'';const caption=lines.slice(lines.indexOf(timing)+1).join(' ');return <article className="subtitle-cinema-cue" key={index}><span>{String(index+1).padStart(2,'0')}</span><div><time>{timing.replace(/\s*-->\s*/, '  →  ')}</time><p>{caption}</p></div></article>;})}</div>}
+            <details className="subtitle-cinema-editor"><summary>Edit full subtitle file</summary><textarea value={subtitleText} onChange={event=>setSubtitleText(event.target.value)} rows={12} aria-label="Edit subtitle text"/></details>
+            <div className="subtitle-cinema-export"><button className="secondary" onClick={()=>void downloadFile(subtitleFilename+'.srt',subtitleToSrt(subtitleText),'application/x-subrip;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export SRT.'))} type="button"><FileDown size={15}/> Export SRT</button><button className="primary" onClick={()=>void downloadFile(subtitleFilename+'.vtt',subtitleToVtt(subtitleText),'text/vtt;charset=utf-8').catch(reason=>setSubtitleStatus(reason instanceof Error ? reason.message : 'Could not export VTT.'))} type="button"><FileDown size={15}/> Export VTT</button></div>
+          </div>
+        </section>
       </section>}
 
       {page === 'movieDetails' && <section className="page-content movie-detail-page">
