@@ -15,7 +15,7 @@ import {
   Mic2, Volume2, BookOpen, Trash2, Save, Languages, Search, FileDown, AudioWaveform, Settings2,
 } from 'lucide-react';
 
-type Recording = { id: string; name: string; transcript: string; updatedAt: number; folder?: string; kind?: 'audio' | 'video' | 'text' | 'insight'; tags?: string[]; favorite?: boolean; insight?: string };
+type Recording = { id: string; name: string; transcript: string; updatedAt: number; folder?: string; kind?: 'audio' | 'video' | 'text' | 'insight'; tags?: string[]; favorite?: boolean; insight?: string; projectId?: string };
 type PreviewMessage = { id: string; role: 'user' | 'assistant'; text: string };
 type TimedSegment = { start: number; end: number; text: string; speaker?: string };
 type NativeAudioDetails = { codec?: string; sampleRate?: number; channels?: number };
@@ -1811,20 +1811,41 @@ function App() {
   async function sendPreviewMessage(overridePrompt?: string) {
     const prompt = (overridePrompt ?? previewInput).trim();
     if (!prompt || previewBusy) return;
-    if (!active?.transcript.trim()) { setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'assistant', text: 'Choose a transcript in Transcribe before using AI Preview.' }]); return; }
+    const lower = prompt.toLowerCase();
+    const wantsKnowledgeSearch = /\b(search|find|look up|what did i|what have i|previous|saved|library|project|earlier|last time|across|remember)\b/.test(lower);
+    const localSources = [
+      ...(active?.transcript.trim() ? [{ id: active.id, name: active.file.name, transcript: active.transcript, updatedAt: Date.now(), kind: isVideoMediaFile(active.file) ? 'video' : 'audio', projectId, current: true }] : []),
+      ...library.map(item => ({ ...item, current: false })),
+    ];
+    const uniqueSources = localSources.filter((item,index,all)=>all.findIndex(other=>other.id===item.id)===index);
+    const tokens = [...new Set(lower.split(/[^\p{L}\p{N}]+/u).filter(token=>token.length>2 && !['the','and','for','that','this','with','from','into','about','please','could','would','have','what','when','where','which','your','you','are','was','were','did','does','can','tell','show','give','make','create','summarize','summary'].includes(token)))];
+    const rankedSources = uniqueSources.map(item => {
+      const name = item.name.toLowerCase();
+      const tags = (item.tags || []).join(' ').toLowerCase();
+      const body = item.transcript.toLowerCase();
+      let score = item.current ? 3 : 0;
+      for (const token of tokens) {
+        if (name.includes(token)) score += 7;
+        if (tags.includes(token)) score += 4;
+        if (body.includes(token)) score += Math.min(4, body.split(token).length - 1);
+      }
+      return { item, score };
+    }).sort((a,b)=>b.score-a.score || b.item.updatedAt-a.item.updatedAt);
+    const chosenSources = wantsKnowledgeSearch || !active?.transcript.trim()
+      ? rankedSources.filter(entry=>entry.score>0).slice(0,5).map(entry=>entry.item)
+      : active?.transcript.trim() ? [localSources[0]] : rankedSources.slice(0,3).map(entry=>entry.item);
     const userMessage: PreviewMessage = { id: crypto.randomUUID?.() ?? String(Date.now()), role: 'user', text: prompt };
     setPreviewMessages(current => [...current, userMessage]); setPreviewInput(''); setPreviewBusy(true); setError('');
     try {
-      const lower = prompt.toLowerCase();
       let result = '';
       const translateMatch = lower.match(/(?:translate|translation)\s+(?:this\s+)?(?:transcript\s+)?(?:to|into)\s+([a-z][a-z -]{1,30})/i) || lower.match(/(?:to|into)\s+([a-z][a-z -]{1,30})\s+please\s*$/i);
-      if (translateMatch) {
+      if (active?.transcript.trim() && translateMatch && !wantsKnowledgeSearch) {
         const target = translateMatch[1].trim().replace(/[.!?]+$/, '');
         result = await translateText(active.transcript, target);
         setFiles(current => current.map(item => item.id === active.id ? { ...item, translatedTranscript: result } : item));
         setTranscriptTargetLanguage(target);
-        result = `Here is the transcript translated into ${target}:\n\n${result}`;
-      } else if (/\b(summar|key points|main points|brief|chapter|action item|task list|meeting notes|decision|quote)\b/.test(lower)) {
+        result = 'Here is the transcript translated into ' + target + ':\n\n' + result;
+      } else if (active?.transcript.trim() && /\b(summar|key points|main points|brief|chapter|action item|task list|meeting notes|decision|quote)\b/.test(lower) && !wantsKnowledgeSearch) {
         const task = /\b(chapter|chapters|timeline)\b/.test(lower)
           ? 'Create a chapter outline with concise chapter titles and timestamps only when timestamps are present in the supplied transcript. Never invent timestamps.'
           : /\b(action item|task list|tasks|todo)\b/.test(lower)
@@ -1834,8 +1855,7 @@ function App() {
               : /\b(quote|quotes)\b/.test(lower)
                 ? 'Extract a short list of useful verbatim quotes from the transcript. Do not invent quotations.'
                 : 'Create a useful summary with an overview, key points, important names or facts, and any explicit next steps.';
-        const source = active.transcript;
-        const chunks = splitLongText(source, 10000);
+        const chunks = splitLongText(active.transcript, 10000);
         if (chunks.length > 12) throw new Error('This transcript is very long. Please split it into smaller recordings so the AI can analyse every section reliably.');
         const insights: string[] = [];
         for (let index = 0; index < chunks.length; index++) {
@@ -1844,7 +1864,7 @@ function App() {
           insights.push(String(data.text).trim());
         }
         result = insights.length === 1 ? insights[0] : insights.map((item, index) => 'SECTION ' + (index + 1) + '\n' + item).join('\n\n');
-      } else if (/\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\b/.test(lower)) {
+      } else if (active?.transcript.trim() && /\b(polish|clean up|proofread|correct grammar|fix grammar|punctuat)\b/.test(lower) && !wantsKnowledgeSearch) {
         const chunks = splitLongText(active.transcript, 18000); const output: string[] = [];
         for (const chunk of chunks) {
           const { data } = await requestFeature('/api/assist', { text: chunk });
@@ -1853,9 +1873,18 @@ function App() {
         }
         result = output.join('\n\n'); updateTranscript(result);
       } else {
-        const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: 'Answer the following request using only the supplied transcript as source material. Be clear about uncertainty and never invent facts. Request: ' + prompt + '\n\nTranscript:\n' + active.transcript.slice(0, 11000) + (active.transcript.length > 11000 ? '\n\n[Transcript excerpt: remaining text omitted. Ask for a specific section if needed.]' : '') }] });
+        const context = chosenSources.map((source,index) =>
+          'SOURCE ' + (index + 1) + ': ' + source.name + (source.current ? ' [CURRENT WORKSPACE]' : '') + (source.projectId ? ' [PROJECT ' + source.projectId + ']' : '') + '\n' + source.transcript.slice(0, 6500)
+        ).join('\n\n---\n\n').slice(0, 20000);
+        const instruction = context
+          ? 'You are AURORA, an AI information workspace assistant. Answer the user using the supplied saved information when relevant. Cite source titles in plain text when using them. Do not claim a fact exists if it is not in the sources; clearly separate general knowledge from saved information. If the user asks about previous work and no matching source is supplied, say you could not find it in the current on-device Library.\n\nSAVED INFORMATION SOURCES:\n' + context + '\n\nUSER REQUEST: ' + prompt
+          : 'You are AURORA, an AI information workspace assistant. Help with general questions and information tasks. Be clear about uncertainty. No saved Library sources are currently available, so do not pretend to have read the user’s files.\n\nUSER REQUEST: ' + prompt;
+        const { data } = await requestFeature('/api/voice-chat', { messages: [{ role: 'user', content: instruction }] });
         result = String(data?.text || '').trim();
-        if (!result) throw new Error('AURORA could not complete that transcript request.');
+        if (!result) throw new Error('AURORA could not complete that request.');
+        if (!context && /\b(search|find|look up|what did i|previous|saved|library|project|earlier|last time)\b/.test(lower)) {
+          result = 'I could not find matching saved information in this device’s Library.\n\n' + result;
+        }
       }
       setPreviewMessages(current => [...current, { id: crypto.randomUUID?.() ?? String(Date.now()+1), role: 'assistant', text: result }]);
     } catch (reason) {
@@ -2022,7 +2051,7 @@ function App() {
   }
   function saveToLibrary() {
     if (!active?.transcript.trim()) { setError('Add or transcribe some text before saving.'); return; }
-    const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now(), folder: library.find(item => item.id === active.id)?.folder || 'Unsorted', kind: isVideoMediaFile(active.file) ? 'video' : 'audio', tags: library.find(item => item.id === active.id)?.tags || [] };
+    const record: Recording = { id: active.id, name: active.file.name, transcript: active.transcript.trim(), updatedAt: Date.now(), folder: library.find(item => item.id === active.id)?.folder || 'Unsorted', kind: isVideoMediaFile(active.file) ? 'video' : 'audio', tags: library.find(item => item.id === active.id)?.tags || [], projectId };
     setLibrary(current => [record, ...current.filter(item => item.id !== record.id)]);
     setError(''); setStatus('Saved to your on-device library.');
   }
@@ -2037,7 +2066,7 @@ function App() {
         name: item.name,
         transcript: item.transcript,
         updatedAt: item.updatedAt,
-        folder: item.folder || 'Unsorted', kind: item.kind || 'text', tags: item.tags || [], favorite: Boolean(item.favorite), insight: item.insight || '',
+        folder: item.folder || 'Unsorted', kind: item.kind || 'text', tags: item.tags || [], favorite: Boolean(item.favorite), insight: item.insight || '', projectId: item.projectId || undefined,
       })),
     };
     const stamp = new Date().toISOString().slice(0, 10);
@@ -2071,7 +2100,7 @@ function App() {
           folder: typeof item.folder === 'string' ? item.folder.slice(0, 80) : 'Unsorted',
           kind: item.kind === 'audio' || item.kind === 'video' || item.kind === 'insight' ? item.kind : 'text',
           tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 20) : [],
-          favorite: Boolean(item.favorite), insight: typeof item.insight === 'string' ? item.insight.slice(0, 200000) : '',
+          favorite: Boolean(item.favorite), insight: typeof item.insight === 'string' ? item.insight.slice(0, 200000) : '', projectId: typeof item.projectId === 'string' ? item.projectId.slice(0, 160) : undefined,
         });
       }
       if (!imported.length) throw new Error('No valid saved transcripts were found in this backup.');
@@ -2434,7 +2463,7 @@ function App() {
   function saveCurrentInsight() {
     const latest = [...previewMessages].reverse().find(message => message.role === 'assistant');
     if (!active || !latest?.text.trim()) { setError('Generate an AI insight first, then save it here.'); return; }
-    const insight: Recording = { id: 'insight-' + crypto.randomUUID(), name: active.file.name.replace(/\\.[^.]+$/, '') + ' · AI Insight', transcript: latest.text.trim(), insight: latest.text.trim(), updatedAt: Date.now(), folder: 'AI Insights', kind: 'insight', tags: ['AI insight', 'from ' + active.file.name] };
+    const insight: Recording = { id: 'insight-' + crypto.randomUUID(), name: active.file.name.replace(/\\.[^.]+$/, '') + ' · AI Insight', transcript: latest.text.trim(), insight: latest.text.trim(), updatedAt: Date.now(), folder: 'AI Insights', kind: 'insight', tags: ['AI insight', 'from ' + active.file.name], projectId };
     setLibrary(current => [insight, ...current]); setStatus('AI insight saved to your Library.'); setError('');
   }
   function addLibraryFolder() {
