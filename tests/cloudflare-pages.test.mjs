@@ -97,3 +97,28 @@ test("Backup Worker deploy name, Pages health target, and provider readiness sta
   assert.match(worker, /openrouter:\s*Boolean\(env\.OPENROUTER_API_KEY\)/);
   assert.match(worker, /subtitleDownload:\s*Boolean\(env\.OPENSUBTITLES_API_KEY && env\.OPENSUBTITLES_USERNAME && env\.OPENSUBTITLES_PASSWORD\)/);
 });
+
+
+test("Cloudflare gateway falls back to the authenticated Worker only for supported primary API failures", () => {
+  assert.match(proxy, /workerFallbackEndpoints = new Set\(\["transcribe", "tts", "translate", "voice-chat"\]\)/);
+  assert.match(proxy, /request\.clone\(\)/);
+  assert.match(proxy, /upstream\.status >= 500/);
+  assert.match(proxy, /fallbackHeaders\.set\("Authorization", "Bearer " \+ workerToken\)/);
+  assert.match(proxy, /AbortSignal\.timeout\(110000\)/);
+  assert.match(proxy, /Both upstreams failed/);
+  assert.doesNotMatch(proxy.match(/const workerFallbackEndpoints[\s\S]*?const makeResponse/)?.[0] || "", /"admin"|"bug-report"|"diagnostics"|"aurora-transcribe"/);
+});
+
+test("movie detail subtitle action is explicitly caption preview, not film preview", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(app, /Preview captions/);
+  assert.match(app, /Spotify <span>Soundtracks & audio/);
+});
+
+test("production README documents Cloudflare Pages and Nigerian language validation honestly", async () => {
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(readme, /Cloudflare Pages/);
+  assert.match(readme, /Nigerian English and Nigerian Pidgin/);
+  assert.match(readme, /small US-English model/);
+  assert.match(readme, /do not prove that a title is available/);
+});
