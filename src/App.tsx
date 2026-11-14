@@ -480,6 +480,10 @@ function isVideoMediaFile(file: File): boolean {
   return file.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name);
 }
 
+function isAmrMediaFile(file: File): boolean {
+  return /\\.amr$/i.test(file.name) || file.type === 'audio/amr' || file.type === 'audio/3gpp';
+}
+
 function getAmrDurationSeconds(bytes: Uint8Array): number | null {
   // AMR frame timing is fixed at 20 ms. Read the file signature and TOC
   // frame types directly so duration does not depend on browser codec support.
@@ -880,7 +884,7 @@ async function transcribeOpusOfflineInSegments(
   const cancelNativeSpeech = () => { if (useNativeSpeech) void nativeSpeech.cancel().catch(() => undefined); };
   signal?.addEventListener('abort', cancelNativeSpeech, { once: true });
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-  const inputPath = '/audio-input/' + safeAudioInputName(file.name);
+  let inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-offline-current.wav';
   const parts: string[] = [];
   let timedSegments: TimedSegment[] = [];
@@ -918,6 +922,16 @@ async function transcribeOpusOfflineInSegments(
       const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
       const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
       if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
+      if (isAmrMediaFile(file)) {
+        onStatus('Converting AMR recording to clean WAV audio…');
+        const normalizedPath = '/audio-input/aurora-amr-normalized.wav';
+        const exitCode = await ffmpeg.exec([
+          '-y', '-f', 'amr', '-i', inputPath, '-map', '0:a:0', '-vn',
+          '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', normalizedPath,
+        ]);
+        if (exitCode !== 0) throw new Error('AURORA recognised the AMR recording but could not decode its audio. Please re-import the original recording and try again.');
+        inputPath = normalizedPath;
+      }
     }
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
@@ -1086,6 +1100,16 @@ async function transcribeOpusInSegments(
     const mountedFile = new File([file], safeAudioInputName(file.name), { type: file.type || 'application/octet-stream', lastModified: file.lastModified });
     const mounted = await ffmpeg.mount(FFFSType.WORKERFS, { files: [mountedFile] }, '/audio-input');
     if (!mounted) throw new Error('This browser could not mount the audio file for section-by-section processing. Try Chrome or a smaller MP3/WAV recording.');
+    if (isAmrMediaFile(file)) {
+      onStatus('Converting AMR recording to clean WAV audio…');
+      const normalizedPath = '/audio-input/aurora-amr-normalized.wav';
+      const exitCode = await ffmpeg.exec([
+        '-y', '-f', 'amr', '-i', inputPath, '-map', '0:a:0', '-vn',
+        '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', normalizedPath,
+      ]);
+      if (exitCode !== 0) throw new Error('AURORA recognised the AMR recording but could not decode its audio. Please re-import the original recording and try again.');
+      inputPath = normalizedPath;
+    }
     const duration = Number.isFinite(durationOverrideSeconds) && (durationOverrideSeconds as number) > 0
       ? durationOverrideSeconds as number
       : await getMediaDurationSeconds(ffmpeg, inputPath, file);
