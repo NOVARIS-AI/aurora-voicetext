@@ -2456,7 +2456,7 @@ function App() {
       <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} type="button" aria-label="AURORA VoiceText home">
           <span className="brand-mark"><img src="/aurora-mark.svg" alt="" /></span>
-          <span><strong>AURORA <i>VoiceText</i></strong><small>VOICE + DOCUMENT INTELLIGENCE</small></span>
+          <span><strong>AURORA <i>VoiceText</i></strong><small>AI INFORMATION WORKSPACE</small></span>
         </button>
         <div className="topbar-actions"><span className="local-badge"><span /> INFORMATION AI</span><button className="topbar-settings-button" type="button" aria-label="Settings" onClick={() => setPage('settings')}><Settings2 size={17}/></button><button className="new-work-button" type="button" onClick={() => void startNewWork()}><Plus size={16}/> New Project</button></div>
       </header>
