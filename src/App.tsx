@@ -1078,7 +1078,7 @@ async function transcribeOpusInSegments(
 ): Promise<string[]> {
   const ffmpeg = new FFmpeg();
   const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-  const inputPath = '/audio-input/' + safeAudioInputName(file.name);
+  let inputPath = '/audio-input/' + safeAudioInputName(file.name);
   const outputName = 'aurora-online-current.mp3';
   let onlineCoreUrl = '';
   let onlineWasmUrl = '';
