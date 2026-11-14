@@ -80,7 +80,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return Response.json({ error: "Method not allowed." }, { status: 405, headers });
   }
 
-  const baseUrl = (env.BACKUP_API_BASE_URL || "https://aurora-voicetext-backup.schoolershubit5.workers.dev").replace(/\/+$/, "");
+  const configuredBaseUrl = env.BACKUP_API_BASE_URL || "https://aurora-voicetext-backup.schoolershubit5.workers.dev";
+  const baseUrl = configuredBaseUrl.endsWith("/") ? configuredBaseUrl.slice(0, -1) : configuredBaseUrl;
   const token = env.BACKUP_API_TOKEN;
   if (!isVercelEndpoint && !token) {
     return Response.json(
