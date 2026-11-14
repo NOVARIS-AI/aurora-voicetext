@@ -6,7 +6,7 @@ import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, getTranscriptionLanguageHint, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint, isAmrMediaFile, getAmrDurationSeconds, getAmrFileDurationSeconds } from './audio-utils';
+import { createEstimatedSubtitles, createTimedSubtitles, mergeTranscriptParts, normalizeSubtitleText, safeAudioInputName, chooseAudioSegmentSeconds, getTranscriptionLanguageHint, throwIfTranscriptionAborted, createNativeAudioResumeKey, isValidTranscriptionCheckpoint, isAmrMediaFile, getAmrFileDurationSeconds } from './audio-utils';
 import { FFmpeg, FFFSType } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import {
