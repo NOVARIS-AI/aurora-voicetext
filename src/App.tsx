@@ -2526,7 +2526,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={page === 'documents' ? 'app-shell document-app-shell' : 'app-shell'}>
       <input ref={inputRef} className="hidden-input" type="file" accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.3gp,.webm" multiple onChange={event => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
       <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} type="button" aria-label="AURORA VoiceText home">
