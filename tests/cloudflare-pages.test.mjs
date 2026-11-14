@@ -131,6 +131,7 @@ test("TTS recovers from a stale ElevenLabs voice ID by resolving an active accou
     assert.match(source, /v1\/voices/);
     assert.match(source, /response\.status === 404/);
     assert.match(source, /elevenlabs-account-fallback/);
+    assert.match(source, /eleven_turbo_v2_5/);
     assert.match(source, /OPENAI_API_KEY/);
   }
 });
@@ -143,7 +144,7 @@ test("App opens at Home, restores project data, and confirms destructive media a
   assert.match(app, /Clear the entire transcript/);
   assert.match(app, /Remove .* from this project/);
   assert.match(app, /Delete .* from your Library/);
-  assert.match(app, /createPosterPlaceholder\(item\.title\)/);
+  assert.match(app, /createPosterPlaceholder\(item\.title \+ .*item\.release/);
 });
 
 test("Subtitle results are deduplicated and grouped into one artwork card per title", async () => {
