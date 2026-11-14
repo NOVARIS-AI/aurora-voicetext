@@ -1234,12 +1234,7 @@ function createPosterPlaceholder(title: string): string {
 }
 
 function App() {
-  const [page, setPage] = useState<Page>(() => {
-    try {
-      const saved = localStorage.getItem('aurora-voicetext-last-page-v1');
-      return saved && ['home','transcribe','library','preview','studio','subtitles','subtitlePreview','movieDetails','settings','admin','documents'].includes(saved) ? saved as Page : 'home';
-    } catch { return 'home'; }
-  });
+  const [page, setPage] = useState<Page>('home');
   const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem('aurora-voicetext-active-project-v1') || 'legacy-work'; } catch { return 'legacy-work'; } });
   const [projectTitle, setProjectTitle] = useState('Untitled project');
   const [recentProjects, setRecentProjects] = useState<Array<{id:string;title:string;fileCount:number;savedAt:number;page:Page}>>([]);
@@ -1500,13 +1495,6 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(library)); } catch { /* Browser storage can be full or disabled. */ }
   }, [library]);
-
-  // Persist the active route synchronously after hydration so reopening the app
-  // restores the last workspace instead of unexpectedly returning to Home.
-  useEffect(() => {
-    if (!sessionHydrated) return;
-    try { localStorage.setItem('aurora-voicetext-last-page-v1', page); } catch {}
-  }, [page, sessionHydrated]);
 useEffect(() => {
     try { localStorage.setItem('aurora-voicetext-folders-v1', JSON.stringify(libraryFolders)); } catch { /* Folder metadata is best-effort on low-storage devices. */ }
   }, [libraryFolders]);
@@ -1517,7 +1505,7 @@ useEffect(() => {
     void restoreWorkspaceState().then(saved => {
       if (cancelled) return;
       if (saved) {
-        setFiles(saved.files); setActiveId(saved.activeId); setPage(saved.page); setProjectId(saved.projectId);
+        setFiles(saved.files); setActiveId(saved.activeId); setPage('home'); setProjectId(saved.projectId);
         const drafts = saved.drafts;
         if (typeof drafts.projectTitle === 'string' && drafts.projectTitle.trim()) setProjectTitle(drafts.projectTitle.trim());
         else if (saved.files[0]?.file.name) setProjectTitle(safeFileBaseName(saved.files[0].file.name.replace(/\.[^.]+$/, ''), 'Untitled project'));
