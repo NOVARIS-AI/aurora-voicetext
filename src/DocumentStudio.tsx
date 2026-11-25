@@ -7,7 +7,7 @@ type AssistInput = { text: string; instruction: string; task: string };
 type Props = { onAssist: (input: AssistInput) => Promise<string>; onSaveToLibrary: (record: { name: string; text: string }) => void; workspaceId: string; onBack: () => void };
 type SavedDoc = { id: string; name: string; html: string; updatedAt: number };
 const KEY = 'aurora-docs-library-v2:';
-const esc = (value: string) => value.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c);
+const esc = (value: string) => value.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c));
 function downloadBlob(blob: Blob, filename: string) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1500); }
 async function readDocx(file: File): Promise<string> {
   if (file.size > 20 * 1024 * 1024) throw new Error('Please choose a DOCX file smaller than 20 MB.');
