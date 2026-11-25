@@ -44,7 +44,7 @@ jobs:
           java-version: '21'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --onnxruntime-node-install-cuda=skip
 
       - name: Run regression tests
         run: npm test
