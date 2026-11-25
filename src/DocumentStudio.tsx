@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
+import { Document, HeadingLevel, Packer, Paragraph } from 'docx';
 import { ArrowLeft, FileText, FilePlus2, FolderOpen, Search, Clock3, Download, Printer, Save, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Heading1, Heading2, ImagePlus, Link2, Table2, Undo2, Redo2, Sparkles, X, Check, FileUp, Layout, Eye, Type, Replace, Trash2, Plus, PanelRightClose } from 'lucide-react';
 
 type AssistInput = { text: string; instruction: string; task: string };
